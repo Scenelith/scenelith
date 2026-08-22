@@ -49,6 +49,8 @@ jobs:
           grep -Fx "SCENELITH_VERSION=${version}" deploy/selfhost/.env.example
       - name: Re-run the complete source quality gate for this tag
         run: |
+          sudo apt-get update
+          sudo apt-get install -y ffmpeg
           npm ci
           npm run selfhost:audit
           npm test
