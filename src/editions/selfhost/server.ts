@@ -15,4 +15,7 @@ export const editionServer: EditionServer = Object.freeze({
     return { status: 403, body: { error: `${label} are disabled for this instance`, code: "FEATURE_DISABLED" } };
   },
   operationsQueueProjectionSql: "",
+  async recoveryDrillStatus() {
+    return null;
+  },
 });

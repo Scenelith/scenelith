@@ -24,7 +24,7 @@ export async function databaseSchemaStatus() {
 
 export async function operationsSnapshot() {
   const pool = relationalPool();
-  const [queues, workers, storage, collaboration, backup, archiver] = await Promise.all([
+  const [queues, workers, storage, collaboration, backup, archiver, recoveryDrill] = await Promise.all([
     pool.query(`SELECT
       (SELECT COUNT(*) FROM generation_dispatch_jobs WHERE status = 'queued') AS generation_queued,
       (SELECT COUNT(*) FROM generation_dispatch_jobs WHERE status = 'dispatching') AS generation_processing,
@@ -65,6 +65,7 @@ export async function operationsSnapshot() {
       EXTRACT(EPOCH FROM (now() - last_archived_time)) AS last_archived_age_seconds,
       CASE WHEN failed_count = 0 OR last_failed_time < last_archived_time THEN true ELSE false END AS healthy
       FROM pg_stat_archiver`),
+    editionServer.recoveryDrillStatus(),
   ]);
   return {
     queues: queues.rows[0] as Record<string, Scalar>,
@@ -73,6 +74,7 @@ export async function operationsSnapshot() {
     collaboration: collaboration.rows[0] as Record<string, Scalar>,
     backup: (backup.rows[0] || null) as Record<string, Scalar> | null,
     archiver: archiver.rows[0] as Record<string, Scalar>,
+    recoveryDrill,
     databasePool: {
       total: pool.totalCount,
       idle: pool.idleCount,
@@ -114,6 +116,13 @@ export function operationsPrometheus(snapshot: Awaited<ReturnType<typeof operati
   lines.push(`scenelith_backup_healthy ${snapshot.backup?.status === "healthy" ? 1 : 0}`);
   lines.push(`scenelith_wal_archiver_healthy ${number(snapshot.archiver.healthy)}`);
   lines.push(`scenelith_wal_last_archived_age_seconds ${number(snapshot.archiver.last_archived_age_seconds)}`);
+  if (snapshot.recoveryDrill) {
+    lines.push(`scenelith_restore_drill_healthy ${snapshot.recoveryDrill.healthy ? 1 : 0}`);
+    lines.push(`scenelith_restore_drill_last_completed_timestamp_seconds ${number(snapshot.recoveryDrill.completedAtUnixSeconds)}`);
+    lines.push(`scenelith_restore_drill_age_seconds ${number(snapshot.recoveryDrill.ageSeconds)}`);
+    lines.push(`scenelith_restore_drill_recovery_point_age_seconds ${number(snapshot.recoveryDrill.recoveryPointAgeSeconds)}`);
+    lines.push(`scenelith_restore_drill_recovery_time_seconds ${number(snapshot.recoveryDrill.recoveryTimeSeconds)}`);
+  }
   for (const [key, value] of Object.entries(snapshot.databasePool)) {
     lines.push(`scenelith_database_pool_${metricName(key)} ${number(value)}`);
   }
