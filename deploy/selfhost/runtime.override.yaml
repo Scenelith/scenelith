@@ -1,5 +1,5 @@
 x-selfhost-application: &selfhost-application
-  image: ${SCENELITH_APP_IMAGE:-ghcr.io/scenelith/scenelith}:${SCENELITH_VERSION:-0.2.3}
+  image: ${SCENELITH_APP_IMAGE:-ghcr.io/scenelith/scenelith}:${SCENELITH_VERSION:-0.3.0}
   build:
     context: .
     dockerfile: Dockerfile
