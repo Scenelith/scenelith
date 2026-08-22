@@ -25,6 +25,9 @@ x-collaboration-client-environment: &collaboration-client-environment
   COLLABORATION_INTERNAL_URL: ${COLLABORATION_INTERNAL_URL:-http://collaboration:1234}
   COLLABORATION_JWT_SECRET: ${COLLABORATION_JWT_SECRET}
 
+x-observability-environment: &observability-environment
+  SCENELITH_INTERNAL_METRICS_SECRET: ${SCENELITH_INTERNAL_METRICS_SECRET}
+
 x-runtime-security: &runtime-security
   security_opt:
     - no-new-privileges:true
@@ -80,7 +83,7 @@ services:
     <<: *runtime-security
     restart: unless-stopped
     environment:
-      <<: [*deployment-environment, *storage-environment, *collaboration-client-environment]
+      <<: [*deployment-environment, *storage-environment, *collaboration-client-environment, *observability-environment]
       DATABASE_URL: postgresql://${POSTGRES_USER}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB}
       DATABASE_POOL_SIZE: ${DATABASE_POOL_SIZE:-12}
       REDIS_URL: redis://redis:6379
@@ -116,7 +119,7 @@ services:
   generation-worker:
     <<: *worker
     environment:
-      <<: [*deployment-environment, *storage-environment, *collaboration-client-environment]
+      <<: [*deployment-environment, *storage-environment, *collaboration-client-environment, *observability-environment]
       DATABASE_URL: postgresql://${POSTGRES_USER}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB}
       REDIS_URL: redis://redis:6379
       PUBLIC_URL: ${PUBLIC_URL}
@@ -130,7 +133,7 @@ services:
     <<: *worker
     stop_grace_period: 5m
     environment:
-      <<: [*deployment-environment, *storage-environment, *collaboration-client-environment]
+      <<: [*deployment-environment, *storage-environment, *collaboration-client-environment, *observability-environment]
       DATABASE_URL: postgresql://${POSTGRES_USER}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB}
       REDIS_URL: redis://redis:6379
       PUBLIC_URL: ${PUBLIC_URL}
@@ -146,7 +149,7 @@ services:
   storage-worker:
     <<: *worker
     environment:
-      <<: [*deployment-environment, *storage-environment]
+      <<: [*deployment-environment, *storage-environment, *observability-environment]
       DATABASE_URL: postgresql://${POSTGRES_USER}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB}
       WORKER_ROLE: storage
       WORKER_HEALTH_PORT: 3001
@@ -158,6 +161,7 @@ services:
       COLLABORATION_DATABASE_URL: postgresql://${POSTGRES_USER}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB}
       COLLABORATION_INTERNAL_SECRET: ${COLLABORATION_INTERNAL_SECRET}
       COLLABORATION_JWT_SECRET: ${COLLABORATION_JWT_SECRET}
+      SCENELITH_INTERNAL_METRICS_SECRET: ${SCENELITH_INTERNAL_METRICS_SECRET}
       REDIS_URL: redis://redis:6379
       FRAMEFLOW_INTERNAL_URL: http://frameflow:3000
     depends_on:

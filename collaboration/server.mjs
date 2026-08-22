@@ -13,6 +13,7 @@ const required = [
   "COLLABORATION_INTERNAL_SECRET",
   "COLLABORATION_JWT_SECRET",
   "FRAMEFLOW_INTERNAL_URL",
+  "SCENELITH_INTERNAL_METRICS_SECRET",
 ];
 if (process.env.COLLABORATION_DISABLE_REDIS !== "true") required.push("REDIS_URL");
 for (const key of required) {
@@ -27,6 +28,7 @@ const pool = new Pool({
 });
 const jwtSecret = new TextEncoder().encode(process.env.COLLABORATION_JWT_SECRET);
 const internalSecret = process.env.COLLABORATION_INTERNAL_SECRET;
+const metricsSecret = process.env.SCENELITH_INTERNAL_METRICS_SECRET;
 const bootstrapUrl = new URL(process.env.FRAMEFLOW_INTERNAL_URL);
 const tokenRefreshIntervals = new Map();
 const tokenRefreshDeadlines = new Map();
@@ -39,6 +41,24 @@ const journalRetentionDays = Math.max(1, Number(process.env.COLLABORATION_JOURNA
 const versionRetentionDays = Math.max(journalRetentionDays, Number(process.env.COLLABORATION_VERSION_RETENTION_DAYS || 90));
 const mirrorWorkerId = `${process.env.HOSTNAME || "collaboration"}:${process.pid}:${randomUUID()}`;
 const collaborationControlChannel = "frameflow-collaboration-control-v1";
+const telemetry = {
+  authenticationAttempts: 0,
+  authenticationFailures: 0,
+  connectionsAccepted: 0,
+  connectionsRejected: 0,
+  syncUpdates: 0,
+  syncBytes: 0,
+  syncFailures: 0,
+  documentStoreFailures: 0,
+  projectionFailures: 0,
+};
+
+function operationalLog(level, event, attributes = {}) {
+  const entry = JSON.stringify({ timestamp: new Date().toISOString(), level, event, ...attributes });
+  if (level === "error") console.error(entry);
+  else if (level === "warn") console.warn(entry);
+  else console.info(entry);
+}
 
 async function verifyCollaborationToken(token, documentName) {
   const verified = await jwtVerify(token, jwtSecret, {
@@ -405,6 +425,7 @@ async function flushMirrorOutbox() {
           [item.document_name, item.revision, mirrorWorkerId],
         );
       } catch (error) {
+        telemetry.projectionFailures += 1;
         const attempts = Number(item.attempts || 0) + 1;
         const delaySeconds = Math.min(300, 2 ** Math.min(8, attempts));
         await pool.query(
@@ -544,6 +565,10 @@ function authorizedInternal(request) {
   return request.headers.authorization === `Bearer ${internalSecret}`;
 }
 
+function authorizedMetrics(request) {
+  return request.headers.authorization === `Bearer ${metricsSecret}`;
+}
+
 function json(response, status, body) {
   response.writeHead(status, { "content-type": "application/json", "cache-control": "no-store" });
   response.end(JSON.stringify(body));
@@ -611,9 +636,16 @@ const server = new Server({
     prefix: "frameflow-collaboration",
   })] : [],
   async onAuthenticate({ token, documentName, connectionConfig }) {
-    const context = await verifyCollaborationToken(token, documentName);
-    connectionConfig.readOnly = context.permission !== "write";
-    return context;
+    telemetry.authenticationAttempts += 1;
+    try {
+      const context = await verifyCollaborationToken(token, documentName);
+      connectionConfig.readOnly = context.permission !== "write";
+      return context;
+    } catch (error) {
+      telemetry.authenticationFailures += 1;
+      operationalLog("warn", "collaboration_authentication_failed", { documentName, error: error instanceof Error ? error.message : String(error) });
+      throw error;
+    }
   },
   async connected({ connection, socketId, documentName, context }) {
     const key = connectionKey(socketId, documentName);
@@ -624,9 +656,11 @@ const server = new Server({
       return;
     }
     if (!registerLiveConnection(context, documentName, socketId, connection)) {
+      telemetry.connectionsRejected += 1;
       connection.close({ code: 4429, reason: "Too many canvas sessions" });
       return;
     }
+    telemetry.connectionsAccepted += 1;
     const requestFreshToken = () => {
       connection.requestToken();
       const oldDeadline = tokenRefreshDeadlines.get(key);
@@ -664,7 +698,15 @@ const server = new Server({
     if (context?.permission !== "write") throw new Error("Canvas is read only");
     if (payload.byteLength > maxSyncUpdateBytes) throw new Error("Canvas update is too large");
     consumeSyncRate(connection.socketId, documentName, payload.byteLength);
-    await journalDocumentUpdate(documentName, payload, context?.userId);
+    try {
+      await journalDocumentUpdate(documentName, payload, context?.userId);
+      telemetry.syncUpdates += 1;
+      telemetry.syncBytes += payload.byteLength;
+    } catch (error) {
+      telemetry.syncFailures += 1;
+      operationalLog("error", "collaboration_sync_journal_failed", { documentName, error: error instanceof Error ? error.message : String(error) });
+      throw error;
+    }
   },
   async beforeHandleAwareness({ states, context }) {
     if (!context?.userId) return;
@@ -689,7 +731,13 @@ const server = new Server({
     await journalDocumentUpdate(documentName, update, context?.userId);
   },
   async onStoreDocument({ document, documentName, lastContext }) {
-    await persistDocument(documentName, document, lastContext?.userId || null, lastContext?.documentEpoch ?? null);
+    try {
+      await persistDocument(documentName, document, lastContext?.userId || null, lastContext?.documentEpoch ?? null);
+    } catch (error) {
+      telemetry.documentStoreFailures += 1;
+      operationalLog("error", "collaboration_document_store_failed", { documentName, error: error instanceof Error ? error.message : String(error) });
+      throw error;
+    }
   },
   async onRequest({ request, response, instance }) {
     const url = new URL(request.url || "/", "http://collaboration");
@@ -700,11 +748,11 @@ const server = new Server({
       throw null;
     }
     if (!url.pathname.startsWith("/internal/")) return;
-    if (!authorizedInternal(request)) {
-      json(response, 401, { error: "Unauthorized" });
-      throw null;
-    }
     if (request.method === "GET" && url.pathname === "/internal/metrics") {
+      if (!authorizedMetrics(request)) {
+        json(response, 401, { error: "Unauthorized" });
+        throw null;
+      }
       const measured = await pool.query(`SELECT
         COUNT(*) AS documents,
         COUNT(*) FILTER (WHERE compacting) AS compacting,
@@ -721,11 +769,24 @@ const server = new Server({
         `scenelith_collaboration_largest_state_bytes ${Number(row.largest_state_bytes || 0)}`,
         `scenelith_collaboration_journal_bytes ${Number(row.journal_bytes || 0)}`,
         `scenelith_collaboration_projection_pending ${Number(row.projection_pending || 0)}`,
+        `scenelith_collaboration_authentication_attempts_total ${telemetry.authenticationAttempts}`,
+        `scenelith_collaboration_authentication_failures_total ${telemetry.authenticationFailures}`,
+        `scenelith_collaboration_connections_accepted_total ${telemetry.connectionsAccepted}`,
+        `scenelith_collaboration_connections_rejected_total ${telemetry.connectionsRejected}`,
+        `scenelith_collaboration_sync_updates_total ${telemetry.syncUpdates}`,
+        `scenelith_collaboration_sync_bytes_total ${telemetry.syncBytes}`,
+        `scenelith_collaboration_sync_failures_total ${telemetry.syncFailures}`,
+        `scenelith_collaboration_document_store_failures_total ${telemetry.documentStoreFailures}`,
+        `scenelith_collaboration_projection_failures_total ${telemetry.projectionFailures}`,
         `scenelith_collaboration_database_pool_total ${pool.totalCount}`,
         `scenelith_collaboration_database_pool_idle ${pool.idleCount}`,
         `scenelith_collaboration_database_pool_waiting ${pool.waitingCount}`,
         "",
       ].join("\n"));
+      throw null;
+    }
+    if (!authorizedInternal(request)) {
+      json(response, 401, { error: "Unauthorized" });
       throw null;
     }
     if (request.method === "POST" && url.pathname === "/internal/access/revoke") {

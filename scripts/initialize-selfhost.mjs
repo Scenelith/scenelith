@@ -19,7 +19,7 @@ try {
 }
 
 let contents = await readFile(targetPath, "utf8");
-for (const key of ["POSTGRES_PASSWORD", "SESSION_SECRET", "COLLABORATION_JWT_SECRET", "COLLABORATION_INTERNAL_SECRET"]) {
+for (const key of ["POSTGRES_PASSWORD", "SESSION_SECRET", "COLLABORATION_JWT_SECRET", "COLLABORATION_INTERNAL_SECRET", "SCENELITH_INTERNAL_METRICS_SECRET"]) {
   contents = contents.replace(new RegExp(`^${key}=$`, "m"), `${key}=${randomBytes(32).toString("base64url")}`);
 }
 await writeFile(targetPath, contents, { mode: 0o600 });

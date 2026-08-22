@@ -57,7 +57,7 @@ if (!existsSync(envPath)) {
   if ((mode & 0o077) !== 0) add("error", "permissions", "deploy/selfhost/.env must not be readable by group or other users (use mode 0600).");
   else add("ok", "permissions", "Instance secrets file is private (0600).");
 
-  for (const key of ["POSTGRES_PASSWORD", "SESSION_SECRET", "COLLABORATION_JWT_SECRET", "COLLABORATION_INTERNAL_SECRET"]) {
+  for (const key of ["POSTGRES_PASSWORD", "SESSION_SECRET", "COLLABORATION_JWT_SECRET", "COLLABORATION_INTERNAL_SECRET", "SCENELITH_INTERNAL_METRICS_SECRET"]) {
     const value = environment.get(key) || "";
     if (value.length < 32 || /change|replace|example/i.test(value)) add("error", `secret:${key}`, `${key} is missing or still uses a placeholder. Run npm run selfhost:init on a clean environment file.`);
     else add("ok", `secret:${key}`, `${key} is configured.`);

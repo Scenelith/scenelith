@@ -73,6 +73,7 @@ try {
     COLLABORATION_DATABASE_URL: databaseUrl,
     TEST_DATABASE_URL: databaseUrl,
     COLLABORATION_INTERNAL_SECRET: "",
+    SCENELITH_INTERNAL_METRICS_SECRET: "test-internal-metrics-secret-test-internal-metrics-secret",
     COLLABORATION_INTERNAL_URL: "",
     STORAGE_PROVIDER: "local",
     STORAGE_PATH: join(temporaryRoot, "storage"),

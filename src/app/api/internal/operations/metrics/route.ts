@@ -3,7 +3,7 @@ import { operationsPrometheus, operationsSnapshot } from "@/lib/operations-obser
 export const runtime = "nodejs";
 
 export async function GET(request: Request) {
-  const secret = process.env.COLLABORATION_INTERNAL_SECRET;
+  const secret = process.env.SCENELITH_INTERNAL_METRICS_SECRET;
   if (!secret || request.headers.get("authorization") !== `Bearer ${secret}`) {
     return new Response("Unauthorized\n", { status: 401, headers: { "cache-control": "no-store" } });
   }
