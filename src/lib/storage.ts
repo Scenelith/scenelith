@@ -6,6 +6,7 @@ import { dirname, extname, join, normalize, relative } from "node:path";
 import { AbortMultipartUploadCommand, CompleteMultipartUploadCommand, CreateMultipartUploadCommand, DeleteObjectCommand, GetObjectCommand, HeadObjectCommand, ListPartsCommand, PutObjectCommand, S3Client, UploadPartCommand } from "@aws-sdk/client-s3";
 import { getSignedUrl } from "@aws-sdk/s3-request-presigner";
 import { readInstanceSecret, requireInstanceSecret } from "@/platform/secrets";
+import { incrementOperationalCounter } from "@/lib/operational-telemetry";
 
 export const storageRoot = process.env.STORAGE_PATH || join(/* turbopackIgnore: true */ process.cwd(), "data", "storage");
 
@@ -26,6 +27,18 @@ type PutStorageOptions = {
 
 let objectStorageClient: S3Client | null = null;
 
+async function objectStorageRequest<T>(operation: string, request: () => Promise<T>) {
+  const provider = storageProvider();
+  try {
+    const result = await request();
+    incrementOperationalCounter("scenelith_object_storage_requests_total", "S3-compatible object storage requests by operation and result.", { operation, provider, result: "success" });
+    return result;
+  } catch (error) {
+    incrementOperationalCounter("scenelith_object_storage_requests_total", "S3-compatible object storage requests by operation and result.", { operation, provider, result: "failure" });
+    throw error;
+  }
+}
+
 export function storageProvider() {
   const provider = (process.env.STORAGE_PROVIDER || "local").toLowerCase();
   if (provider === "r2" || provider === "s3") return provider;
@@ -44,12 +57,12 @@ export async function createDirectMultipartUpload(key: string, options: PutStora
   if (provider === "local") throw new Error("Direct uploads require S3-compatible object storage");
   const normalizedKey = safeObjectKey(key);
   const bucket = bucketName(options.bucket);
-  const created = await getObjectStorageClient().send(new CreateMultipartUploadCommand({
+  const created = await objectStorageRequest("create_multipart_upload", () => getObjectStorageClient().send(new CreateMultipartUploadCommand({
     Bucket: bucket,
     Key: normalizedKey,
     ContentType: options.contentType,
     CacheControl: options.cacheControl,
-  }));
+  })));
   if (!created.UploadId) throw new Error("Object storage did not create an upload session");
   return { bucket, key: normalizedKey, reference: objectStorageReference(provider, bucket, normalizedKey), uploadId: created.UploadId };
 }
@@ -68,34 +81,34 @@ export async function signedDirectUploadPartUrls(upload: DirectMultipartUpload, 
 }
 
 export async function completeDirectMultipartUpload(upload: DirectMultipartUpload, expectedParts: number) {
-  const listed = await getObjectStorageClient().send(new ListPartsCommand({
+  const listed = await objectStorageRequest("list_multipart_parts", () => getObjectStorageClient().send(new ListPartsCommand({
     Bucket: upload.bucket,
     Key: upload.key,
     UploadId: upload.uploadId,
     MaxParts: 10_000,
-  }));
+  })));
   const parts = (listed.Parts || [])
     .filter((part) => part.PartNumber && part.ETag)
     .sort((left, right) => Number(left.PartNumber) - Number(right.PartNumber));
   if (parts.length !== expectedParts || parts.some((part, index) => part.PartNumber !== index + 1)) {
     throw new Error("Upload is incomplete");
   }
-  await getObjectStorageClient().send(new CompleteMultipartUploadCommand({
+  await objectStorageRequest("complete_multipart_upload", () => getObjectStorageClient().send(new CompleteMultipartUploadCommand({
     Bucket: upload.bucket,
     Key: upload.key,
     UploadId: upload.uploadId,
     MultipartUpload: { Parts: parts.map((part) => ({ ETag: part.ETag, PartNumber: part.PartNumber })) },
-  }));
-  const stored = await getObjectStorageClient().send(new HeadObjectCommand({ Bucket: upload.bucket, Key: upload.key }));
+  })));
+  const stored = await objectStorageRequest("head_object", () => getObjectStorageClient().send(new HeadObjectCommand({ Bucket: upload.bucket, Key: upload.key })));
   return { size: Number(stored.ContentLength || 0), contentType: stored.ContentType || "application/octet-stream" };
 }
 
 export async function abortDirectMultipartUpload(upload: DirectMultipartUpload) {
-  await getObjectStorageClient().send(new AbortMultipartUploadCommand({
+  await objectStorageRequest("abort_multipart_upload", () => getObjectStorageClient().send(new AbortMultipartUploadCommand({
     Bucket: upload.bucket,
     Key: upload.key,
     UploadId: upload.uploadId,
-  }));
+  })));
 }
 
 function getObjectStorageClient() {
@@ -179,14 +192,14 @@ export async function putStorageObject(bytes: ArrayBuffer | Uint8Array, key: str
   const provider = storageProvider();
   if (provider !== "local") {
     const bucket = bucketName(options.bucket);
-    await getObjectStorageClient().send(new PutObjectCommand({
+    await objectStorageRequest("put_object", () => getObjectStorageClient().send(new PutObjectCommand({
       Bucket: bucket,
       Key: normalizedKey,
       Body: buffer,
       ContentType: options.contentType,
       CacheControl: options.cacheControl,
       Metadata: { sha256: contentHash },
-    }));
+    })));
     return { provider, bucket, key: normalizedKey, reference: objectStorageReference(provider, bucket, normalizedKey), size: buffer.byteLength, contentHash };
   }
   const path = localPathForKey(normalizedKey);
@@ -210,7 +223,7 @@ export async function downloadToStorage(url: string, group: string, filename: st
 export async function readStorageObject(reference: string) {
   const object = parseObjectStorageReference(reference);
   if (!object) return readFile(/* turbopackIgnore: true */ reference);
-  const response = await getObjectStorageClient().send(new GetObjectCommand({ Bucket: object.bucket, Key: object.key }));
+  const response = await objectStorageRequest("get_object", () => getObjectStorageClient().send(new GetObjectCommand({ Bucket: object.bucket, Key: object.key })));
   if (!response.Body) throw new Error("Object storage returned no body");
   return Buffer.from(await response.Body.transformToByteArray());
 }
@@ -218,7 +231,7 @@ export async function readStorageObject(reference: string) {
 export async function statStorageObject(reference: string) {
   const object = parseObjectStorageReference(reference);
   if (!object) return stat(/* turbopackIgnore: true */ reference);
-  const response = await getObjectStorageClient().send(new HeadObjectCommand({ Bucket: object.bucket, Key: object.key }));
+  const response = await objectStorageRequest("head_object", () => getObjectStorageClient().send(new HeadObjectCommand({ Bucket: object.bucket, Key: object.key })));
   return { size: Number(response.ContentLength || 0) };
 }
 
@@ -228,11 +241,11 @@ export async function streamStorageObject(reference: string, range?: { start: nu
     const stream = range ? createReadStream(/* turbopackIgnore: true */ reference, range) : createReadStream(/* turbopackIgnore: true */ reference);
     return Readable.toWeb(stream) as ReadableStream;
   }
-  const response = await getObjectStorageClient().send(new GetObjectCommand({
+  const response = await objectStorageRequest("get_object_range", () => getObjectStorageClient().send(new GetObjectCommand({
     Bucket: object.bucket,
     Key: object.key,
     Range: range ? `bytes=${range.start}-${range.end}` : undefined,
-  }));
+  })));
   if (!response.Body) throw new Error("Object storage returned no body");
   return response.Body.transformToWebStream();
 }
@@ -288,7 +301,7 @@ export async function signedStorageReadUrl(reference: string, options: SignedRea
 export async function deleteStorageObject(reference: string) {
   const object = parseObjectStorageReference(reference);
   if (object) {
-    await getObjectStorageClient().send(new DeleteObjectCommand({ Bucket: object.bucket, Key: object.key }));
+    await objectStorageRequest("delete_object", () => getObjectStorageClient().send(new DeleteObjectCommand({ Bucket: object.bucket, Key: object.key })));
     return;
   }
   await unlink(/* turbopackIgnore: true */ reference).catch((error: NodeJS.ErrnoException) => {

@@ -1,4 +1,5 @@
 import { operationsPrometheus, operationsSnapshot } from "@/lib/operations-observability";
+import { operationalCountersPrometheus, operationalLog } from "@/lib/operational-telemetry";
 
 export const runtime = "nodejs";
 
@@ -8,7 +9,7 @@ export async function GET(request: Request) {
     return new Response("Unauthorized\n", { status: 401, headers: { "cache-control": "no-store" } });
   }
   try {
-    const body = operationsPrometheus(await operationsSnapshot());
+    const body = `${operationsPrometheus(await operationsSnapshot())}${operationalCountersPrometheus()}`;
     return new Response(body, {
       headers: {
         "content-type": "text/plain; version=0.0.4; charset=utf-8",
@@ -16,7 +17,7 @@ export async function GET(request: Request) {
       },
     });
   } catch (error) {
-    console.error("[operations:metrics-failed]", { error });
+    operationalLog("error", "operations_metrics_failed", { error: error instanceof Error ? error.message : String(error) });
     return new Response("Metrics unavailable\n", { status: 503, headers: { "cache-control": "no-store" } });
   }
 }

@@ -10,7 +10,7 @@ import { workerIdentity } from "./lib/worker-identity";
 import { drainStorageLifecycle } from "./lib/storage-lifecycle";
 import { readRuntimeConfig } from "./platform/runtime-config";
 import { editionWorker } from "./editions/current/worker";
-import { metric, metricFamily, operationalLog, prometheusDocument } from "./lib/operational-telemetry";
+import { metric, metricFamily, operationalCountersPrometheus, operationalLog, prometheusDocument } from "./lib/operational-telemetry";
 
 const role = process.env.WORKER_ROLE || "all";
 const runtimeConfig = readRuntimeConfig();
@@ -123,7 +123,7 @@ function metricsResponse() {
   const labels = { role };
   const memory = process.memoryUsage();
   const cpu = process.cpuUsage();
-  return prometheusDocument([
+  return `${prometheusDocument([
     metricFamily("scenelith_worker_up", "gauge", "Whether the worker process is running.", [metric("scenelith_worker_up", 1, labels)]),
     metricFamily("scenelith_worker_cycle_runs_total", "counter", "Worker cycles started since process start.", [metric("scenelith_worker_cycle_runs_total", cycleRuns, labels)]),
     metricFamily("scenelith_worker_cycle_failures_total", "counter", "Worker cycles that raised an error.", [metric("scenelith_worker_cycle_failures_total", cycleFailures, labels)]),
@@ -142,7 +142,7 @@ function metricsResponse() {
       metric("scenelith_worker_process_cpu_seconds_total", cpu.system / 1e6, { ...labels, mode: "system" }),
     ]),
     metricFamily("scenelith_worker_process_uptime_seconds", "gauge", "Worker process uptime.", [metric("scenelith_worker_process_uptime_seconds", process.uptime(), labels)]),
-  ]);
+  ])}${operationalCountersPrometheus()}`;
 }
 
 const healthServer = createServer((request, response) => {
