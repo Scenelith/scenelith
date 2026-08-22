@@ -41,7 +41,7 @@ Open <http://localhost>. The first account becomes the instance owner, and publi
 
 The normal installation pulls one signed, versioned, multi-architecture application image. Web, workers, migrations, and realtime collaboration run that exact image with different commands. Contributors can build the checked-out source with `npm run selfhost:up:source`.
 
-For domains, automatic HTTPS, S3-compatible storage, SMTP, backups, upgrades, rollback, and the complete service topology, read the [self-hosting guide](docs/SELF_HOSTING.md).
+For domains, automatic HTTPS, S3-compatible storage, backups, upgrades, rollback, and the complete service topology, read the [self-hosting guide](docs/SELF_HOSTING.md).
 
 ## Providers and outbound connections
 
@@ -53,7 +53,6 @@ Provider keys stay in the server environment. They are sent only to the provider
 | **OpenRouter** | Assistant, automation planning, and visual text analysis | OpenRouter key and the prompt or media required by the selected model |
 | **Tikwm** | Resolving public TikTok posts during import | TikTok URL; Tikwm returns post metadata and direct media URLs |
 | **S3-compatible storage** | Optional operator-owned media storage | Media and object metadata configured by the operator |
-| **SMTP or Resend** | Optional account verification and password recovery | Recipient and message data |
 | **Google OAuth** | Optional sign-in | Standard OAuth identity data |
 
 TikTok import does not use a logged-in TikTok account or TikTok cookies. Video scene detection, thumbnails, and timeline sprites are processed locally with FFmpeg after download. The default interface makes no automatic request to a Scenelith media server.
@@ -68,7 +67,7 @@ TikTok import does not use a logged-in TikTok account or TikTok cookies. Video s
 - Caddy gateway with automatic HTTPS for public domains;
 - database migrations, backup/restore tools, and an installation doctor.
 
-The public runtime uses your own provider credentials and has no payment service, hosted-account dependency, or license server.
+The public runtime uses your own provider credentials and has no payment service, hosted-account dependency, account-email service, or license server. Its instance owner signs in directly after local registration; email confirmation and email-based password recovery are Cloud-only services.
 
 ## Portable projects and recipes
 

@@ -49,7 +49,7 @@ The default distribution starts:
 - Redis with append-only persistence;
 - Caddy for HTTP/WebSocket routing and automatic TLS on a public domain.
 
-Hosted payment and account services are not part of the self-hosted runtime. SMTP or Resend email and Google OAuth are optional operator-owned integrations.
+Hosted payment and account-email services are not part of the self-hosted runtime. The instance owner signs in directly after local registration; email confirmation and email-based password recovery are intentionally absent. Google OAuth remains an optional operator-owned integration.
 
 Uploaded and generated media uses the `scenelith-data` Docker volume by default. PostgreSQL and Redis use separate persistent volumes. Removing containers does not remove these volumes. Do not run `docker compose down -v` unless permanent deletion is intended.
 

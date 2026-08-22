@@ -111,18 +111,6 @@ if (!existsSync(envPath)) {
     add("error", "origin", "SCENELITH_HOST or PUBLIC_URL is not a valid host/origin.");
   }
 
-  const emailTransport = (environment.get("EMAIL_TRANSPORT") || "noop").toLowerCase();
-  if (emailTransport === "smtp") {
-    const missing = ["SMTP_HOST", "SMTP_USER", "SMTP_PASSWORD"].filter((key) => !environment.get(key));
-    if (missing.length) add("error", "email", `SMTP is selected but ${missing.join(", ")} is not configured.`);
-    else add("ok", "email", "SMTP account email delivery is configured.");
-  } else if (emailTransport === "noop") {
-    add("warning", "email", "Email is disabled; password recovery and optional email verification are unavailable.");
-  } else if (emailTransport === "resend" && !environment.get("RESEND_API_KEY")) {
-    add("error", "email", "Resend is selected but RESEND_API_KEY is not configured.");
-  } else {
-    add("ok", "email", `${emailTransport} account email delivery is configured.`);
-  }
 }
 
 try {

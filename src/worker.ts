@@ -49,7 +49,6 @@ async function heartbeat() {
     await Promise.all([
       db.prepare("DELETE FROM worker_heartbeats WHERE last_seen_at < ?").run(sevenDaysAgo),
       db.prepare("DELETE FROM sessions WHERE expires_at < ?").run(now),
-      db.prepare("DELETE FROM auth_tokens WHERE expires_at < ? OR (used_at IS NOT NULL AND used_at < ?)").run(now, sevenDaysAgo),
       runsGeneration
         ? db.prepare("DELETE FROM generation_dispatch_jobs WHERE status IN ('dispatched', 'failed') AND updated_at < ?").run(thirtyDaysAgo)
         : Promise.resolve({ changes: 0 }),

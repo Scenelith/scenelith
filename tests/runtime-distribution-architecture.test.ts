@@ -41,6 +41,14 @@ test("hosted product source and dependencies are absent", () => {
     "src/lib/community-policy.ts",
     "src/lib/community.ts",
     "src/lib/team.ts",
+    "src/app/forgot-password/page.tsx",
+    "src/app/reset-password/page.tsx",
+    "src/app/api/auth/password/forgot/route.ts",
+    "src/app/api/auth/password/reset/route.ts",
+    "src/app/api/auth/verify-email/route.ts",
+    "src/components/ui/auth-recovery-form.tsx",
+    "src/lib/auth-tokens.ts",
+    "src/lib/email.ts",
   ]) assert.equal(existsSync(join(root, path)), false, path);
 
   const packageJson = JSON.parse(source("package.json"));
@@ -48,8 +56,14 @@ test("hosted product source and dependencies are absent", () => {
   const sdkPackage = ["@", "whop/sdk"].join("");
   assert.equal(packageJson.dependencies?.[checkoutPackage], undefined);
   assert.equal(packageJson.dependencies?.[sdkPackage], undefined);
+  assert.equal(packageJson.dependencies?.nodemailer, undefined);
+  assert.equal(packageJson.devDependencies?.["@types/nodemailer"], undefined);
   assert.doesNotMatch(source("src/worker.ts"), /webhooks\/whop|billing_webhook_events/);
+  assert.doesNotMatch(source("src/worker.ts"), /auth_tokens/);
   assert.doesNotMatch(source("src/proxy.ts"), /@\/lib\/affiliate/);
+  assert.doesNotMatch(source("src/components/ui/auth-section-2.tsx"), /forgot-password|Create your team|teamInvite/);
+  assert.doesNotMatch(source("deploy/compose/runtime.yaml"), /EMAIL_TRANSPORT|RESEND_API_KEY|SMTP_/);
+  assert.doesNotMatch(source("deploy/selfhost/.env.example"), /EMAIL_TRANSPORT|RESEND_API_KEY|SMTP_/);
 });
 
 test("self-hosted compose selects the BYOK profile and contains no hosted worker", () => {

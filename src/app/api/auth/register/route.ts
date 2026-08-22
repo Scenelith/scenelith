@@ -13,8 +13,7 @@ import {
   sameOriginRequest,
 } from "@/lib/auth";
 import { claimUnownedWorkspaces, db, ensureDefaultWorkspace, ensureStarterProject, isConfiguredAdminEmail, rowToUser } from "@/lib/postgres-db";
-import { createAuthToken } from "@/lib/auth-tokens";
-import { sendVerificationEmail } from "@/lib/email";
+import { completeDistributionRegistration } from "@/distribution/auth-server-extension";
 import { readRuntimeConfig } from "@/platform/runtime-config";
 
 export const runtime = "nodejs";
@@ -81,8 +80,7 @@ export async function POST(request: Request) {
   await clearAuthFailures(rateKey);
 
   const user = rowToUser(await db.prepare("SELECT * FROM users WHERE id = ?").get(id) as Record<string, unknown>);
-  const verificationToken = await createAuthToken(id, "email_verification", 24 * 60);
-  const emailResult = await sendVerificationEmail(user.email, user.name, verificationToken);
+  const distributionCompletion = await completeDistributionRegistration(user);
   const session = await createSession(id);
-  return attachLastAuthMethodCookie(attachSessionCookie(NextResponse.json({ ok: true, user, claimedLegacyWorkspace: claimed > 0, verificationEmailSent: emailResult.ok }), session.token, session.expiresAt), "email");
+  return attachLastAuthMethodCookie(attachSessionCookie(NextResponse.json({ ok: true, user, claimedLegacyWorkspace: claimed > 0, ...distributionCompletion }), session.token, session.expiresAt), "email");
 }

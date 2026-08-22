@@ -1,6 +1,6 @@
 {
   "name": "scenelith",
-  "version": "0.2.2",
+  "version": "0.2.3",
   "private": true,
   "scripts": {
     "dev": "next dev",
@@ -39,7 +39,6 @@
     "lucide-react": "^1.28.0",
     "motion": "^12.43.0",
     "next": "16.2.12",
-    "nodemailer": "^9.0.5",
     "pg": "^8.23.0",
     "react": "19.2.4",
     "react-dom": "19.2.4",
@@ -53,7 +52,6 @@
     "@tailwindcss/postcss": "^4",
     "@types/canvas-confetti": "^1.9.0",
     "@types/node": "^20",
-    "@types/nodemailer": "^8.0.1",
     "@types/pg": "^8.21.0",
     "@types/react": "^19",
     "@types/react-dom": "^19",

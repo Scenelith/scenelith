@@ -4,6 +4,7 @@ import { useEffect, useState } from "react";
 import { ArrowRight, LoaderCircle } from "lucide-react";
 import AuthCanvasPreview from "@/components/ui/auth-canvas-preview";
 import BrandMark from "@/components/BrandMark";
+import { DistributionAuthRecoveryLink, distributionRegistrationCopy } from "@/distribution/auth-ui-extension";
 
 const workflowMoments = [
   { stage: "Import", text: "Paste a TikTok link. Scenelith reads the slideshow and keeps the source intact." },
@@ -14,7 +15,7 @@ const workflowMoments = [
 
 type AuthMode = "login" | "register";
 
-export default function AuthSectionTwo({ googleEnabled, registrationEnabled = true, initialMode = "login", initialEmail = "", teamInvite = false, lastAuthMethod = null, initialError = "", initialNotice = "", returnTo = "/canvas" }: { googleEnabled: boolean; registrationEnabled?: boolean; initialMode?: AuthMode; initialEmail?: string; teamInvite?: boolean; lastAuthMethod?: "email" | "google" | null; initialError?: string; initialNotice?: string; returnTo?: string }) {
+export default function AuthSectionTwo({ googleEnabled, registrationEnabled = true, initialMode = "login", initialEmail = "", invitationRegistration = false, lastAuthMethod = null, initialError = "", initialNotice = "", returnTo = "/canvas" }: { googleEnabled: boolean; registrationEnabled?: boolean; initialMode?: AuthMode; initialEmail?: string; invitationRegistration?: boolean; lastAuthMethod?: "email" | "google" | null; initialError?: string; initialNotice?: string; returnTo?: string }) {
   const [activeIndex, setActiveIndex] = useState(0);
   const [cycleRevision, setCycleRevision] = useState(0);
   const [mode, setMode] = useState<AuthMode>(initialMode);
@@ -25,6 +26,7 @@ export default function AuthSectionTwo({ googleEnabled, registrationEnabled = tr
   const [terms, setTerms] = useState(false);
   const [error, setError] = useState(initialError);
   const [loading, setLoading] = useState(false);
+  const registrationCopy = distributionRegistrationCopy(invitationRegistration);
 
   useEffect(() => {
     const interval = window.setInterval(() => setActiveIndex((current) => (current + 1) % workflowMoments.length), 3200);
@@ -77,24 +79,24 @@ export default function AuthSectionTwo({ googleEnabled, registrationEnabled = tr
             <button type="button" role="tab" aria-selected={mode === "login"} className={mode === "login" ? "is-active" : ""} onClick={() => { setMode("login"); setError(""); }}>Sign in</button>
             {registrationEnabled && <button type="button" role="tab" aria-selected={mode === "register"} className={mode === "register" ? "is-active" : ""} onClick={() => { setMode("register"); setError(""); }}>Create account</button>}
           </div>
-          <h1>{mode === "register" ? teamInvite ? "Create your team login" : "Create your workspace" : "Welcome back"}</h1>
-          <p className="auth-v2-lead">{mode === "register" ? teamInvite ? "Set a password for the invited email. After confirming it, your shared workspace will stay attached to this login." : "Your canvases, identities and assets stay private to your account." : "Continue building in your private creative graph."}</p>
+          <h1>{mode === "register" ? registrationCopy.title : "Welcome back"}</h1>
+          <p className="auth-v2-lead">{mode === "register" ? registrationCopy.lead : "Continue building in your private creative graph."}</p>
 
-          {!(teamInvite && mode === "register") && <>
+          {!(registrationCopy.hideSocialRegistration && mode === "register") && <>
             <a className={`auth-v2-google ${googleEnabled ? "" : "is-disabled"}`} href={googleEnabled ? `/api/auth/google?next=${encodeURIComponent(returnTo)}` : undefined} aria-disabled={!googleEnabled} onClick={(event) => { if (!googleEnabled) { event.preventDefault(); setError("Google sign-in is not configured yet"); } }}><GoogleIcon /><span>Continue with Google</span>{lastAuthMethod === "google" && <small>Last used</small>}</a>
             <div className="auth-v2-divider"><span />or continue with email<span /></div>
           </>}
 
           <form onSubmit={submit} className="auth-v2-form">
             {mode === "register" && <AuthField label="Name" type="text" value={name} onChange={setName} autoComplete="name" placeholder="Your name" />}
-            <AuthField label={teamInvite && mode === "register" ? "Invited email" : "Email"} type="email" value={email} onChange={setEmail} autoComplete="email" placeholder="you@company.com" readOnly={teamInvite && mode === "register"} />
+            <AuthField label={mode === "register" ? registrationCopy.emailLabel : "Email"} type="email" value={email} onChange={setEmail} autoComplete="email" placeholder="you@company.com" readOnly={invitationRegistration && mode === "register"} />
             <AuthField label="Password" type="password" value={password} onChange={setPassword} autoComplete={mode === "register" ? "new-password" : "current-password"} placeholder="At least 8 characters" />
             {mode === "register" && <AuthField label="Confirm password" type="password" value={confirmPassword} onChange={setConfirmPassword} autoComplete="new-password" placeholder="Enter the same password again" />}
-            {mode === "login" && <a className="auth-v2-forgot" href="/forgot-password">Forgot password?</a>}
+            {mode === "login" && <DistributionAuthRecoveryLink />}
             {mode === "register" && <label className="auth-v2-terms"><input type="checkbox" checked={terms} onChange={(event) => setTerms(event.target.checked)} /><span>By creating an account, you agree to the <a href="/terms">Terms</a> and <a href="/privacy">Privacy Policy</a>.</span></label>}
             {initialNotice && !error && <p className="auth-v2-notice" role="status">{initialNotice}</p>}
             {error && <p className="auth-v2-error" role="alert">{error}</p>}
-            <button className="auth-v2-submit" type="submit" disabled={loading || !email || !password || (mode === "register" && (!name || !confirmPassword || password !== confirmPassword))}>{loading ? <LoaderCircle className="spin" size={17} /> : <>{mode === "register" ? teamInvite ? "Create team account" : "Create account" : "Sign in"}<ArrowRight size={16} /></>}</button>
+            <button className="auth-v2-submit" type="submit" disabled={loading || !email || !password || (mode === "register" && (!name || !confirmPassword || password !== confirmPassword))}>{loading ? <LoaderCircle className="spin" size={17} /> : <>{mode === "register" ? registrationCopy.submitLabel : "Sign in"}<ArrowRight size={16} /></>}</button>
           </form>
           <p className="auth-v2-security">Protected with isolated workspaces, hashed passwords and secure server sessions.</p>
         </div>

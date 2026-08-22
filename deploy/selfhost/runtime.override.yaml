@@ -1,5 +1,5 @@
 x-selfhost-application: &selfhost-application
-  image: ${SCENELITH_APP_IMAGE:-ghcr.io/scenelith/scenelith}:${SCENELITH_VERSION:-0.2.1}
+  image: ${SCENELITH_APP_IMAGE:-ghcr.io/scenelith/scenelith}:${SCENELITH_VERSION:-0.2.3}
   build:
     context: .
     dockerfile: Dockerfile
@@ -23,8 +23,6 @@ services:
       SCENELITH_REGISTRATION_MODE: ${SCENELITH_REGISTRATION_MODE:-owner_only}
       PUBLIC_URL: ${PUBLIC_URL:-http://localhost}
       COOKIE_SECURE: ${COOKIE_SECURE:-false}
-      EMAIL_TRANSPORT: ${EMAIL_TRANSPORT:-noop}
-      EMAIL_FROM: ${EMAIL_FROM:-Scenelith <account@localhost>}
     volumes:
       - scenelith-data:/app/data
   generation-worker:
