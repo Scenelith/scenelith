@@ -16,7 +16,7 @@
     "collaboration:compact": "node scripts/compact-collaboration-document.mjs",
     "package:compose": "node scripts/compose-edition-package.mjs",
     "package:verify": "node scripts/compose-edition-package.mjs --check",
-    "test": "SCENELITH_DEPLOYMENT_TYPE=selfhost SCENELITH_USAGE_MODE=bring_your_own node scripts/run-tests.mjs",
+    "test": "SCENELITH_DEPLOYMENT_TYPE=selfhost SCENELITH_USAGE_MODE=bring_your_own node scripts/run-tests.mjs --edition selfhost",
     "selfhost:init": "node scripts/initialize-selfhost.mjs",
     "selfhost:doctor": "node scripts/selfhost-doctor.mjs",
     "selfhost:backup": "node scripts/selfhost-backup.mjs",

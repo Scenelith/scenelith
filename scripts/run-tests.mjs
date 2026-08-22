@@ -33,6 +33,19 @@ function run(command, args, options = {}) {
   if (result.status !== 0) throw new Error(`${command} exited with ${result.status}`);
 }
 
+function testFiles(directory) {
+  return readdirSync(directory, { withFileTypes: true }).flatMap((entry) => {
+    const path = join(directory, entry.name);
+    if (entry.isDirectory()) return testFiles(path);
+    return entry.isFile() && entry.name.endsWith(".test.ts") ? [path] : [];
+  });
+}
+
+const argument = (name) => {
+  const index = process.argv.indexOf(name);
+  return index === -1 ? undefined : process.argv[index + 1];
+};
+
 const temporaryRoot = mkdtempSync(join(tmpdir(), "scenelith-tests-"));
 let pgCtl;
 let pgData;
@@ -67,11 +80,11 @@ try {
   };
   run(process.execPath, ["database/migrate.mjs"], { env });
   run(process.execPath, ["collaboration/migrate.mjs"], { env });
-  const excludedTests = new Set(process.argv.flatMap((value, index, values) => value === "--exclude" ? [values[index + 1]] : []).filter(Boolean));
-  const tests = readdirSync("tests")
-    .filter((name) => name.endsWith(".test.ts") && !excludedTests.has(name))
-    .sort()
-    .map((name) => join("tests", name));
+  const edition = argument("--edition");
+  if (edition && !["selfhost", "cloud"].includes(edition)) throw new Error(`Unsupported test edition: ${edition}`);
+  const tests = testFiles("tests")
+    .filter((path) => !path.includes(`${join("tests", "editions")}${process.platform === "win32" ? "\\" : "/"}`) || !edition || path.includes(join("tests", "editions", edition)))
+    .sort();
   const testProcess = spawn(join("node_modules", ".bin", "tsx"), ["--test", "--test-concurrency=1", ...tests], {
     env,
     stdio: "inherit",

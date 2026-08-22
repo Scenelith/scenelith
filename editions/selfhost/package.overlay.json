@@ -11,7 +11,7 @@
   },
   "homepage": "https://github.com/Scenelith/scenelith#readme",
   "scripts": {
-    "test": "SCENELITH_DEPLOYMENT_TYPE=selfhost SCENELITH_USAGE_MODE=bring_your_own node scripts/run-tests.mjs",
+    "test": "SCENELITH_DEPLOYMENT_TYPE=selfhost SCENELITH_USAGE_MODE=bring_your_own node scripts/run-tests.mjs --edition selfhost",
     "selfhost:init": "node scripts/initialize-selfhost.mjs",
     "selfhost:doctor": "node scripts/selfhost-doctor.mjs",
     "selfhost:backup": "node scripts/selfhost-backup.mjs",
