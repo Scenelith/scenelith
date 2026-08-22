@@ -1,0 +1,57 @@
+{
+  "format": "scenelith.canvas",
+  "version": 1,
+  "minimumScenelithVersion": "0.1.0",
+  "metadata": {
+    "title": "Controlled image to video",
+    "description": "Animate a local still image as the exact first frame of a short vertical video.",
+    "tags": ["video", "image-to-video", "start-frame"]
+  },
+  "requirements": {
+    "providers": ["kie"],
+    "capabilities": ["video-generation"],
+    "models": [{ "provider": "kie", "id": "kling-3-turbo-image" }]
+  },
+  "inputs": [
+    { "nodeId": "node-1", "kind": "image", "label": "Start frame", "required": true }
+  ],
+  "graph": {
+    "nodes": [
+      {
+        "id": "node-1",
+        "type": "frameNode",
+        "position": { "x": 0, "y": 80 },
+        "data": { "kind": "scene", "title": "Start frame", "mediaType": "image", "nodeWidth": 280 }
+      },
+      {
+        "id": "node-2",
+        "type": "frameNode",
+        "position": { "x": 420, "y": 0 },
+        "data": {
+          "kind": "prompt",
+          "title": "Natural camera motion",
+          "prompt": "Begin from the supplied frame without changing its composition. Add subtle handheld camera drift and natural subject movement. Preserve appearance, clothing, lighting, and environment. No cuts, morphing, text, or new objects.",
+          "mediaType": "video",
+          "modelId": "kling-3-turbo-image",
+          "duration": "5",
+          "generateAudio": false,
+          "aspectRatio": "9:16",
+          "resolution": "720P",
+          "generationCount": 1,
+          "nodeWidth": 420
+        }
+      }
+    ],
+    "edges": [
+      {
+        "id": "edge-1",
+        "source": "node-1",
+        "target": "node-2",
+        "sourceHandle": "output",
+        "targetHandle": "start-frame-input",
+        "data": { "portType": "image", "inputRole": "start-frame" }
+      }
+    ],
+    "viewport": { "x": 100, "y": 100, "zoom": 0.9 }
+  }
+}

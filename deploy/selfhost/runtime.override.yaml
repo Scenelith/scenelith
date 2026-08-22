@@ -1,0 +1,64 @@
+x-selfhost-application: &selfhost-application
+  image: ${SCENELITH_APP_IMAGE:-ghcr.io/scenelith/scenelith}:${SCENELITH_VERSION:-0.2.0}
+  build:
+    context: .
+    dockerfile: Dockerfile
+    target: production
+
+services:
+  collaboration-migrate:
+    <<: *selfhost-application
+    command: ["node", "collaboration/migrate.mjs"]
+
+  application-migrate:
+    <<: *selfhost-application
+    command: ["node", "database/migrate.mjs"]
+
+  frameflow:
+    <<: *selfhost-application
+    command: ["node", "server.js"]
+    environment:
+      SCENELITH_DEPLOYMENT_TYPE: selfhost
+      SCENELITH_USAGE_MODE: bring_your_own
+      SCENELITH_REGISTRATION_MODE: ${SCENELITH_REGISTRATION_MODE:-owner_only}
+      PUBLIC_URL: ${PUBLIC_URL:-http://localhost}
+      COOKIE_SECURE: ${COOKIE_SECURE:-false}
+      EMAIL_TRANSPORT: ${EMAIL_TRANSPORT:-noop}
+      EMAIL_FROM: ${EMAIL_FROM:-Scenelith <account@localhost>}
+    volumes:
+      - scenelith-data:/app/data
+  generation-worker:
+    <<: *selfhost-application
+    command: ["node", "--import", "tsx", "src/worker.ts"]
+    environment:
+      SCENELITH_DEPLOYMENT_TYPE: selfhost
+      SCENELITH_USAGE_MODE: bring_your_own
+      SCENELITH_REGISTRATION_MODE: ${SCENELITH_REGISTRATION_MODE:-owner_only}
+      PUBLIC_URL: ${PUBLIC_URL:-http://localhost}
+    volumes:
+      - scenelith-data:/app/data
+
+  automation-worker:
+    <<: *selfhost-application
+    command: ["node", "--import", "tsx", "src/worker.ts"]
+    environment:
+      SCENELITH_DEPLOYMENT_TYPE: selfhost
+      SCENELITH_USAGE_MODE: bring_your_own
+      SCENELITH_REGISTRATION_MODE: ${SCENELITH_REGISTRATION_MODE:-owner_only}
+      PUBLIC_URL: ${PUBLIC_URL:-http://localhost}
+    volumes:
+      - scenelith-data:/app/data
+
+  storage-worker:
+    <<: *selfhost-application
+    command: ["node", "--import", "tsx", "src/worker.ts"]
+    environment:
+      SCENELITH_DEPLOYMENT_TYPE: selfhost
+      SCENELITH_USAGE_MODE: bring_your_own
+      SCENELITH_REGISTRATION_MODE: ${SCENELITH_REGISTRATION_MODE:-owner_only}
+    volumes:
+      - scenelith-data:/app/data
+
+  collaboration:
+    <<: *selfhost-application
+    command: ["node", "collaboration/server.mjs"]

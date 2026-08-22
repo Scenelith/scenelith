@@ -1,0 +1,8 @@
+{
+  "version": "1.0",
+  "githubLogin": "YOUR-GITHUB-LOGIN",
+  "legalName": "YOUR LEGAL NAME",
+  "signature": "YOUR LEGAL NAME",
+  "signedAt": "YYYY-MM-DD",
+  "statement": "I have read and agree to the Scenelith Individual Contributor License Agreement v1.0 in CLA.md."
+}

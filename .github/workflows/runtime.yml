@@ -1,0 +1,92 @@
+name: Scenelith runtime
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  quality:
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:17-alpine@sha256:18cfe3ef5e6815560c98237d6216d1e5119702fb0f3894c8785dd58b8bbe5d73
+        env:
+          POSTGRES_DB: scenelith_test
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres -d scenelith_test"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    env:
+      TEST_DATABASE_URL: postgresql://postgres:postgres@127.0.0.1:5432/scenelith_test
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: 24
+          cache: npm
+      - run: sudo apt-get update && sudo apt-get install -y ffmpeg
+      - run: npm ci
+      - run: npm run selfhost:audit
+      - run: npm test
+      - run: npm run build
+        env:
+          SCENELITH_DEPLOYMENT_TYPE: selfhost
+          SCENELITH_USAGE_MODE: bring_your_own
+
+  complete-distribution:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: 24
+          cache: npm
+      - run: npm ci
+      - run: npm run selfhost:init
+      - run: npm run selfhost:config
+      - name: Start every self-hosted service
+        run: npm run selfhost:up:source
+      - name: Verify runtime and public boundary
+        run: |
+          curl --fail --silent --show-error --retry 30 --retry-delay 5 --retry-all-errors http://localhost/api/health/ready
+          curl --fail --silent http://localhost/api/runtime/settings > /tmp/scenelith-runtime.json
+          jq -e '.deployment.type == "selfhost"' /tmp/scenelith-runtime.json
+          jq -e '.capabilities.usageMode == "bring_your_own"' /tmp/scenelith-runtime.json
+          jq -e '[.providers.connections[].name] == ["Kie", "OpenRouter", "Tikwm"]' /tmp/scenelith-runtime.json
+      - name: Exercise owner onboarding, canvas persistence, and realtime collaboration
+        run: npm run selfhost:e2e -- --phase seed --state /tmp/scenelith-e2e.json
+      - name: Verify data survives an application restart
+        run: |
+          docker compose --env-file deploy/selfhost/.env -f deploy/selfhost/compose.yaml restart frameflow collaboration generation-worker automation-worker storage-worker
+          curl --fail --silent --show-error --retry 30 --retry-delay 5 --retry-all-errors http://localhost/api/health/ready
+          npm run selfhost:e2e -- --phase verify --state /tmp/scenelith-e2e.json
+      - name: Rehearse a checksummed backup and destructive restore
+        run: |
+          npm run selfhost:backup -- --output /tmp/scenelith-backups
+          npm run selfhost:e2e -- --phase mutate --state /tmp/scenelith-e2e.json
+          backup_path="$(find /tmp/scenelith-backups -mindepth 1 -maxdepth 1 -type d | head -1)"
+          npm run selfhost:restore -- --from "$backup_path" --confirm
+          curl --fail --silent --show-error --retry 30 --retry-delay 5 --retry-all-errors http://localhost/api/health/ready
+          npm run selfhost:e2e -- --phase verify --state /tmp/scenelith-e2e.json
+      - name: Prove hosted commercial schema is absent
+        run: |
+          tables="$(docker compose --env-file deploy/selfhost/.env -f deploy/selfhost/compose.yaml exec -T postgres psql -U scenelith -d scenelith -Atc "SELECT tablename FROM pg_tables WHERE schemaname='public' ORDER BY tablename")"
+          ! grep -Eq '^(billing_orders|subscriptions|billing_payments|billing_adjustments|credit_accounts|credit_ledger|generation_credit_reservations|automation_credit_reservations|billing_webhook_events)$' <<< "$tables"
+      - name: Show service state
+        if: always()
+        run: docker compose --env-file deploy/selfhost/.env -f deploy/selfhost/compose.yaml ps
+      - name: Show logs on failure
+        if: failure()
+        run: docker compose --env-file deploy/selfhost/.env -f deploy/selfhost/compose.yaml logs --no-color --tail 200
+      - name: Stop the distribution
+        if: always()
+        run: npm run selfhost:down

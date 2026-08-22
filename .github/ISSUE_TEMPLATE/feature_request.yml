@@ -1,0 +1,48 @@
+name: Feature request
+description: Propose a focused improvement for Scenelith self-hosted.
+title: "[Feature]: "
+labels: ["enhancement", "needs-triage"]
+body:
+  - type: textarea
+    id: problem
+    attributes:
+      label: Problem
+      description: Describe the workflow or limitation, not only the proposed interface.
+      placeholder: When I … I cannot … because …
+    validations:
+      required: true
+  - type: textarea
+    id: outcome
+    attributes:
+      label: Desired outcome
+      description: What should become possible?
+    validations:
+      required: true
+  - type: dropdown
+    id: area
+    attributes:
+      label: Area
+      options:
+        - Canvas and nodes
+        - Generation or editing
+        - Providers
+        - Identity library
+        - TikTok import or automation
+        - Collaboration and teams
+        - Storage, backup, or deployment
+        - Developer experience
+        - Other
+    validations:
+      required: true
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: Alternatives considered
+      description: Optional workarounds or implementation ideas.
+  - type: checkboxes
+    id: scope
+    attributes:
+      label: Scope
+      options:
+        - label: This request is useful in the public self-hosted product.
+          required: true

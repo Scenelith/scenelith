@@ -1,0 +1,55 @@
+{
+  "format": "scenelith.canvas",
+  "version": 1,
+  "minimumScenelithVersion": "0.1.0",
+  "metadata": {
+    "title": "Portrait reference variation",
+    "description": "Use one local portrait as an identity and composition reference for a clean image variation.",
+    "tags": ["image", "portrait", "reference"]
+  },
+  "requirements": {
+    "providers": ["kie"],
+    "capabilities": ["image-generation"],
+    "models": [{ "provider": "kie", "id": "nano-banana-2" }]
+  },
+  "inputs": [
+    { "nodeId": "node-1", "kind": "image", "label": "Portrait reference", "required": true }
+  ],
+  "graph": {
+    "nodes": [
+      {
+        "id": "node-1",
+        "type": "frameNode",
+        "position": { "x": 0, "y": 80 },
+        "data": { "kind": "scene", "title": "Portrait reference", "mediaType": "image", "nodeWidth": 280 }
+      },
+      {
+        "id": "node-2",
+        "type": "frameNode",
+        "position": { "x": 420, "y": 0 },
+        "data": {
+          "kind": "prompt",
+          "title": "Portrait variation",
+          "prompt": "Create a natural editorial portrait of the same person. Preserve facial identity and realistic skin texture exactly. Use soft window light, a quiet neutral interior, and an unstaged camera feel.",
+          "mediaType": "image",
+          "modelId": "nano-banana-2",
+          "aspectRatio": "4:5",
+          "resolution": "1K",
+          "generationCount": 1,
+          "nodeWidth": 420
+        }
+      }
+    ],
+    "edges": [
+      {
+        "id": "edge-1",
+        "source": "node-1",
+        "target": "node-2",
+        "sourceHandle": "output",
+        "targetHandle": "reference-image-input",
+        "data": { "portType": "image", "inputRole": "reference-image" }
+      }
+    ],
+    "viewport": { "x": 100, "y": 100, "zoom": 0.9 }
+  }
+}

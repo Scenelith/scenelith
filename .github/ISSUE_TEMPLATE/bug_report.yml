@@ -1,0 +1,67 @@
+name: Bug report
+description: Report a reproducible problem in the latest Scenelith self-hosted release.
+title: "[Bug]: "
+labels: ["bug", "needs-triage"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Do not include provider keys, `.env` files, private media, database dumps, or session cookies. Report security issues privately through the repository Security tab.
+  - type: input
+    id: version
+    attributes:
+      label: Scenelith version
+      description: Run `git describe --tags --always` or read `SCENELITH_VERSION`.
+      placeholder: v0.1.1
+    validations:
+      required: true
+  - type: input
+    id: host
+    attributes:
+      label: Host environment
+      description: OS, CPU architecture, Docker version, and Docker Compose version.
+      placeholder: Ubuntu 24.04, amd64, Docker 28, Compose 2.39
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: Expected behavior
+      description: What should have happened?
+    validations:
+      required: true
+  - type: textarea
+    id: actual
+    attributes:
+      label: Actual behavior
+      description: What happened instead?
+    validations:
+      required: true
+  - type: textarea
+    id: reproduce
+    attributes:
+      label: Reproduction steps
+      description: Provide the smallest reliable sequence that reproduces the problem.
+      placeholder: |
+        1. Open …
+        2. Configure …
+        3. Run …
+    validations:
+      required: true
+  - type: textarea
+    id: diagnostics
+    attributes:
+      label: Redacted diagnostics
+      description: Paste relevant output from `npm run selfhost:doctor` and redacted logs.
+      render: shell
+  - type: checkboxes
+    id: checks
+    attributes:
+      label: Safety checks
+      options:
+        - label: I reproduced this on the latest released version.
+          required: true
+        - label: I removed credentials, private URLs, user content, and personal data.
+          required: true
+        - label: This is not a security vulnerability.
+          required: true

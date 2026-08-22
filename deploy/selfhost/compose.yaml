@@ -1,0 +1,75 @@
+name: scenelith
+
+include:
+  - path:
+      - ../compose/runtime.yaml
+      - ./runtime.override.yaml
+    project_directory: ../..
+
+services:
+  postgres:
+    image: postgres:17-alpine@sha256:18cfe3ef5e6815560c98237d6216d1e5119702fb0f3894c8785dd58b8bbe5d73
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:-scenelith}
+      POSTGRES_USER: ${POSTGRES_USER:-scenelith}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?Run npm run selfhost:init}
+    volumes:
+      - scenelith-postgres:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-scenelith} -d ${POSTGRES_DB:-scenelith}"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+    logging:
+      driver: json-file
+      options:
+        max-size: "20m"
+        max-file: "5"
+
+  redis:
+    image: redis:7.4-alpine@sha256:ff02b58f971e7d7d156a1267e283fcbbeee91773b6aa36c49dac28ecfe28eadf
+    restart: unless-stopped
+    command: ["redis-server", "--appendonly", "yes", "--appendfsync", "everysec"]
+    volumes:
+      - scenelith-redis:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+    logging:
+      driver: json-file
+      options:
+        max-size: "20m"
+        max-file: "5"
+
+  gateway:
+    image: caddy:2-alpine@sha256:5f5c8640aae01df9654968d946d8f1a56c497f1dd5c5cda4cf95ab7c14d58648
+    restart: unless-stopped
+    environment:
+      SCENELITH_HOST: ${SCENELITH_HOST:-http://localhost}
+    depends_on:
+      frameflow:
+        condition: service_healthy
+      collaboration:
+        condition: service_healthy
+    ports:
+      - "${HTTP_PORT:-80}:80"
+      - "${HTTPS_PORT:-443}:443"
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - scenelith-caddy-data:/data
+      - scenelith-caddy-config:/config
+    logging:
+      driver: json-file
+      options:
+        max-size: "20m"
+        max-file: "5"
+
+volumes:
+  scenelith-data:
+  scenelith-postgres:
+  scenelith-redis:
+  scenelith-caddy-data:
+  scenelith-caddy-config:

@@ -1,0 +1,24 @@
+{$SCENELITH_HOST:http://localhost} {
+  encode zstd gzip
+  header {
+    Strict-Transport-Security "max-age=31536000; includeSubDomains"
+    X-Content-Type-Options "nosniff"
+    X-Frame-Options "DENY"
+    Referrer-Policy "strict-origin-when-cross-origin"
+    Permissions-Policy "camera=(), microphone=(), geolocation=()"
+    Content-Security-Policy "default-src 'self'; base-uri 'self'; object-src 'none'; frame-ancestors 'none'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob: https:; media-src 'self' blob: https:; connect-src 'self' https: wss:; frame-src 'none'; form-action 'self'; worker-src 'self' blob:"
+    -Server
+  }
+  request_body {
+    max_size 300MB
+  }
+  handle /collaboration* {
+    reverse_proxy collaboration:1234
+  }
+  handle /api/internal/* {
+    respond 404
+  }
+  handle {
+	reverse_proxy frameflow:3000
+  }
+}

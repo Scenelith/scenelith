@@ -1,0 +1,8 @@
+blank_issues_enabled: false
+contact_links:
+  - name: Setup and usage questions
+    url: https://github.com/Scenelith/scenelith/discussions
+    about: Ask the community before filing a defect.
+  - name: Private security report
+    url: https://github.com/Scenelith/scenelith/security/advisories/new
+    about: Never disclose a suspected vulnerability in a public issue.

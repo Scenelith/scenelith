@@ -1,0 +1,213 @@
+x-deployment-environment: &deployment-environment
+  SCENELITH_DEPLOYMENT_TYPE: ${SCENELITH_DEPLOYMENT_TYPE:-cloud}
+  SCENELITH_USAGE_MODE: ${SCENELITH_USAGE_MODE:-bring_your_own}
+  SCENELITH_REGISTRATION_MODE: ${SCENELITH_REGISTRATION_MODE:-open}
+
+x-storage-environment: &storage-environment
+  STORAGE_PROVIDER: ${STORAGE_PROVIDER:-local}
+  STORAGE_PATH: ${STORAGE_PATH:-/app/data/storage}
+  R2_ACCOUNT_ID: ${R2_ACCOUNT_ID:-}
+  R2_ACCESS_KEY_ID: ${R2_ACCESS_KEY_ID:-}
+  R2_SECRET_ACCESS_KEY: ${R2_SECRET_ACCESS_KEY:-}
+  R2_PRIVATE_BUCKET: ${R2_PRIVATE_BUCKET:-}
+  R2_PUBLIC_BUCKET: ${R2_PUBLIC_BUCKET:-}
+  NEXT_PUBLIC_MEDIA_BASE_URL: ${NEXT_PUBLIC_MEDIA_BASE_URL:-}
+  S3_ENDPOINT: ${S3_ENDPOINT:-}
+  S3_REGION: ${S3_REGION:-us-east-1}
+  S3_ACCESS_KEY_ID: ${S3_ACCESS_KEY_ID:-}
+  S3_SECRET_ACCESS_KEY: ${S3_SECRET_ACCESS_KEY:-}
+  S3_PRIVATE_BUCKET: ${S3_PRIVATE_BUCKET:-scenelith-private}
+  S3_PUBLIC_BUCKET: ${S3_PUBLIC_BUCKET:-scenelith-public}
+  S3_FORCE_PATH_STYLE: ${S3_FORCE_PATH_STYLE:-false}
+
+x-collaboration-client-environment: &collaboration-client-environment
+  COLLABORATION_INTERNAL_SECRET: ${COLLABORATION_INTERNAL_SECRET}
+  COLLABORATION_INTERNAL_URL: ${COLLABORATION_INTERNAL_URL:-http://collaboration:1234}
+  COLLABORATION_JWT_SECRET: ${COLLABORATION_JWT_SECRET}
+
+x-runtime-security: &runtime-security
+  security_opt:
+    - no-new-privileges:true
+  cap_drop:
+    - ALL
+  logging:
+    driver: json-file
+    options:
+      max-size: "20m"
+      max-file: "5"
+
+x-worker: &worker
+  <<: *runtime-security
+  image: ${SCENELITH_WORKER_IMAGE:-ghcr.io/scenelith/scenelith-worker}:${SCENELITH_VERSION:-0.1.1}
+  build:
+    context: .
+    dockerfile: Dockerfile
+    target: worker
+  restart: unless-stopped
+  init: true
+  stop_grace_period: 2m
+  depends_on:
+    application-migrate:
+      condition: service_completed_successfully
+    postgres:
+      condition: service_healthy
+    redis:
+      condition: service_healthy
+  healthcheck:
+    test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:3001').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"]
+    interval: 15s
+    timeout: 5s
+    retries: 8
+    start_period: 20s
+
+services:
+  collaboration-migrate:
+    <<: *runtime-security
+    image: ${SCENELITH_COLLABORATION_IMAGE:-ghcr.io/scenelith/scenelith-collaboration}:${SCENELITH_VERSION:-0.1.1}
+    build:
+      context: .
+      dockerfile: Dockerfile.collaboration
+    restart: "no"
+    environment:
+      COLLABORATION_DATABASE_URL: postgresql://${POSTGRES_USER}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB}
+    depends_on:
+      postgres:
+        condition: service_healthy
+    command: ["node", "collaboration/migrate.mjs"]
+
+  application-migrate:
+    <<: *runtime-security
+    image: ${SCENELITH_MIGRATION_IMAGE:-ghcr.io/scenelith/scenelith-migration}:${SCENELITH_VERSION:-0.1.1}
+    build:
+      context: .
+      dockerfile: Dockerfile
+      target: migration
+    restart: "no"
+    environment:
+      DATABASE_URL: postgresql://${POSTGRES_USER}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB}
+    depends_on:
+      postgres:
+        condition: service_healthy
+    command: ["node", "database/migrate.mjs"]
+
+  frameflow:
+    <<: *runtime-security
+    image: ${SCENELITH_WEB_IMAGE:-ghcr.io/scenelith/scenelith-web}:${SCENELITH_VERSION:-0.1.1}
+    build:
+      context: .
+      dockerfile: Dockerfile
+      target: runner
+    restart: unless-stopped
+    environment:
+      <<: [*deployment-environment, *storage-environment, *collaboration-client-environment]
+      DATABASE_URL: postgresql://${POSTGRES_USER}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB}
+      DATABASE_POOL_SIZE: ${DATABASE_POOL_SIZE:-12}
+      REDIS_URL: redis://redis:6379
+      PUBLIC_URL: ${PUBLIC_URL}
+      COOKIE_SECURE: ${COOKIE_SECURE:-false}
+      SESSION_SECRET: ${SESSION_SECRET}
+      GOOGLE_CLIENT_ID: ${GOOGLE_CLIENT_ID:-}
+      GOOGLE_CLIENT_SECRET: ${GOOGLE_CLIENT_SECRET:-}
+      ADMIN_EMAILS: ${ADMIN_EMAILS:-}
+      EMAIL_TRANSPORT: ${EMAIL_TRANSPORT:-auto}
+      EMAIL_FROM: ${EMAIL_FROM:-Scenelith <account@noreply.scenelith.com>}
+      RESEND_API_KEY: ${RESEND_API_KEY:-}
+      SMTP_HOST: ${SMTP_HOST:-}
+      SMTP_PORT: ${SMTP_PORT:-587}
+      SMTP_SECURE: ${SMTP_SECURE:-false}
+      SMTP_USER: ${SMTP_USER:-}
+      SMTP_PASSWORD: ${SMTP_PASSWORD:-}
+      OPENROUTER_API_KEY: ${OPENROUTER_API_KEY:-}
+      KIE_API_KEY: ${KIE_API_KEY:-}
+      KIE_WEBHOOK_HMAC_KEY: ${KIE_WEBHOOK_HMAC_KEY:-}
+      SELFHOST_GENERATION_CONCURRENCY: ${SELFHOST_GENERATION_CONCURRENCY:-8}
+      SELFHOST_TEAM_SEATS: ${SELFHOST_TEAM_SEATS:-100}
+      VIDEO_SCENE_ANALYSIS_CONCURRENCY: ${VIDEO_SCENE_ANALYSIS_CONCURRENCY:-2}
+    depends_on:
+      application-migrate:
+        condition: service_completed_successfully
+      collaboration-migrate:
+        condition: service_completed_successfully
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    expose:
+      - "3000"
+    healthcheck:
+      test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:3000/api/health/ready').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"]
+      interval: 20s
+      timeout: 10s
+      retries: 8
+      start_period: 30s
+
+  generation-worker:
+    <<: *worker
+    environment:
+      <<: [*deployment-environment, *storage-environment, *collaboration-client-environment]
+      DATABASE_URL: postgresql://${POSTGRES_USER}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB}
+      REDIS_URL: redis://redis:6379
+      PUBLIC_URL: ${PUBLIC_URL}
+      KIE_API_KEY: ${KIE_API_KEY:-}
+      KIE_WEBHOOK_HMAC_KEY: ${KIE_WEBHOOK_HMAC_KEY:-}
+      SELFHOST_GENERATION_CONCURRENCY: ${SELFHOST_GENERATION_CONCURRENCY:-8}
+      WORKER_ROLE: generation
+      WORKER_HEALTH_PORT: 3001
+
+  automation-worker:
+    <<: *worker
+    stop_grace_period: 5m
+    environment:
+      <<: [*deployment-environment, *storage-environment, *collaboration-client-environment]
+      DATABASE_URL: postgresql://${POSTGRES_USER}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB}
+      REDIS_URL: redis://redis:6379
+      PUBLIC_URL: ${PUBLIC_URL}
+      KIE_API_KEY: ${KIE_API_KEY:-}
+      KIE_WEBHOOK_HMAC_KEY: ${KIE_WEBHOOK_HMAC_KEY:-}
+      OPENROUTER_API_KEY: ${OPENROUTER_API_KEY:-}
+      SELFHOST_GENERATION_CONCURRENCY: ${SELFHOST_GENERATION_CONCURRENCY:-8}
+      TIKTOK_AUTOMATION_CONCURRENCY: ${TIKTOK_AUTOMATION_CONCURRENCY:-3}
+      TIKTOK_AUTOMATION_STALE_MS: ${TIKTOK_AUTOMATION_STALE_MS:-900000}
+      WORKER_ROLE: automation
+      WORKER_HEALTH_PORT: 3001
+
+  storage-worker:
+    <<: *worker
+    environment:
+      <<: [*deployment-environment, *storage-environment]
+      DATABASE_URL: postgresql://${POSTGRES_USER}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB}
+      WORKER_ROLE: storage
+      WORKER_HEALTH_PORT: 3001
+
+  collaboration:
+    <<: *runtime-security
+    image: ${SCENELITH_COLLABORATION_IMAGE:-ghcr.io/scenelith/scenelith-collaboration}:${SCENELITH_VERSION:-0.1.1}
+    build:
+      context: .
+      dockerfile: Dockerfile.collaboration
+    restart: unless-stopped
+    environment:
+      COLLABORATION_DATABASE_URL: postgresql://${POSTGRES_USER}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB}
+      COLLABORATION_INTERNAL_SECRET: ${COLLABORATION_INTERNAL_SECRET}
+      COLLABORATION_JWT_SECRET: ${COLLABORATION_JWT_SECRET}
+      REDIS_URL: redis://redis:6379
+      FRAMEFLOW_INTERNAL_URL: http://frameflow:3000
+    depends_on:
+      application-migrate:
+        condition: service_completed_successfully
+      collaboration-migrate:
+        condition: service_completed_successfully
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      frameflow:
+        condition: service_healthy
+    expose:
+      - "1234"
+    healthcheck:
+      test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:1234/healthz').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"]
+      interval: 15s
+      timeout: 5s
+      retries: 10
+      start_period: 20s

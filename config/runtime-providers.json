@@ -1,0 +1,23 @@
+[
+  {
+    "id": "kie",
+    "name": "Kie",
+    "description": "Image and video generation",
+    "capabilities": ["Images", "Video"],
+    "environmentVariable": "KIE_API_KEY"
+  },
+  {
+    "id": "openrouter",
+    "name": "OpenRouter",
+    "description": "Assistant and automation planning",
+    "capabilities": ["Assistant", "Automation"],
+    "environmentVariable": "OPENROUTER_API_KEY"
+  },
+  {
+    "id": "tikwm",
+    "name": "Tikwm",
+    "description": "Public TikTok media import resolver",
+    "capabilities": ["TikTok import"],
+    "environmentVariable": null
+  }
+]

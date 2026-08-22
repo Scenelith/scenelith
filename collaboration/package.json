@@ -1,0 +1,20 @@
+{
+  "name": "frameflow-collaboration",
+  "private": true,
+  "version": "1.0.0",
+  "type": "module",
+  "engines": {
+    "node": ">=24"
+  },
+  "scripts": {
+    "migrate": "node migrate.mjs"
+  },
+  "dependencies": {
+    "@hocuspocus/extension-redis": "^4.6.0",
+    "@hocuspocus/server": "^4.6.0",
+    "ioredis": "^5.11.1",
+    "jose": "^6.2.7",
+    "pg": "^8.23.0",
+    "yjs": "^13.6.32"
+  }
+}

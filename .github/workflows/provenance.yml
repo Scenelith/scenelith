@@ -1,0 +1,51 @@
+name: Verify release provenance
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  packages: read
+  attestations: read
+
+jobs:
+  release-provenance:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: Require a public repository and immutable release tag
+        run: |
+          version="$(node -p "require('./package.json').version")"
+          test "$(curl --fail --silent --show-error \
+            -H 'Accept: application/vnd.github+json' \
+            "https://api.github.com/repos/${GITHUB_REPOSITORY}" | jq -r '.visibility')" = public
+          git -c credential.helper= -c http.https://github.com/.extraheader= \
+            ls-remote --exit-code "https://github.com/${GITHUB_REPOSITORY}.git" "refs/tags/v${version}" >/dev/null
+      - name: Pull the release manifest without credentials
+        env:
+          PACKAGE_NAME: scenelith
+        run: |
+          version="$(node -p "require('./package.json').version")"
+          owner="${GITHUB_REPOSITORY_OWNER,,}"
+          token="$(curl --fail --silent --show-error --get 'https://ghcr.io/token' \
+            --data-urlencode "scope=repository:${owner}/${PACKAGE_NAME}:pull" \
+            --data-urlencode 'service=ghcr.io' | jq -er '.token')"
+          manifest="$(curl --fail --silent --show-error \
+            -H "Authorization: Bearer ${token}" \
+            -H 'Accept: application/vnd.oci.image.index.v1+json, application/vnd.docker.distribution.manifest.list.v2+json' \
+            "https://ghcr.io/v2/${owner}/${PACKAGE_NAME}/manifests/${version}")"
+          jq -e 'any(.manifests[]; .platform.os == "linux" and .platform.architecture == "amd64")' <<<"${manifest}" >/dev/null
+          jq -e 'any(.manifests[]; .platform.os == "linux" and .platform.architecture == "arm64")' <<<"${manifest}" >/dev/null
+      - name: Verify build provenance against this repository
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PACKAGE_NAME: scenelith
+        run: |
+          version="$(node -p "require('./package.json').version")"
+          owner="${GITHUB_REPOSITORY_OWNER,,}"
+          printf '%s' "${GH_TOKEN}" | docker login ghcr.io --username "${GITHUB_ACTOR}" --password-stdin
+          gh attestation verify "oci://ghcr.io/${owner}/${PACKAGE_NAME}:${version}" \
+            --repo "${GITHUB_REPOSITORY}" \
+            --signer-workflow "${GITHUB_REPOSITORY}/.github/workflows/release.yml" \
+            --source-ref "refs/tags/v${version}"
+          docker logout ghcr.io
