@@ -14,11 +14,6 @@ export type AuthPageContext = {
   notice: string;
 };
 
-export type AssistantUsagePolicy = {
-  metered: boolean;
-  description: string;
-};
-
 export type FeatureAccessKind = "assistant" | "prompt" | "automation";
 export type FeatureAccessDenial = {
   status: number;
@@ -29,8 +24,6 @@ export type EditionServer = Readonly<{
   authPageContext(params: AuthSearchParams): AuthPageContext;
   completeRegistration(user: UserRecord): Promise<Record<string, unknown>>;
   authProviderSettings(): Record<string, unknown>;
-  assistantUsagePolicy(modelId: string): AssistantUsagePolicy;
   featureAccessDenial(kind: FeatureAccessKind): FeatureAccessDenial;
-  providerCostToUsageUnits(costUsd: number): number;
   operationsQueueProjectionSql: string;
 }>;

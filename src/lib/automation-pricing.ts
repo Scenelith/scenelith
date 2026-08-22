@@ -1,7 +1,7 @@
 import { DEFAULT_ASSISTANT_MODEL_ID, getAssistantModel } from "./assistant-models";
-import { editionServer } from "@/editions/current/server";
+import { editionEconomics } from "@/editions/current/economics";
 
-export const providerCostToUsageUnits = editionServer.providerCostToUsageUnits;
+export const providerCostToUsageUnits = editionEconomics.providerCostToUsageUnits;
 
 // Keep automation pricing anchored to the original planning workload rate.
 // The default assistant model may change without silently repricing runs.
@@ -29,7 +29,7 @@ export function assistantRequestReserveCredits(input: {
   maxOutputTokens?: number;
 }) {
   const selected = getAssistantModel(input.modelId);
-  if (!editionServer.assistantUsagePolicy(selected.id).metered) return 0;
+  if (!editionEconomics.assistantUsagePolicy(selected.id).metered) return 0;
   const estimatedInputTokens = Math.ceil(Math.max(0, input.inputCharacters) / 3.5) + Math.max(0, input.imageCount) * 2_500;
   const outputTokens = Math.max(256, input.maxOutputTokens || 4_096);
   const estimatedCost = estimatedInputTokens * selected.promptUsdPerToken + outputTokens * selected.completionUsdPerToken;
