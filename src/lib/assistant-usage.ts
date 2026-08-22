@@ -3,7 +3,7 @@ import { usageAuthority } from "@/modules/usage";
 import { assistantRequestReserveCredits, providerCostToUsageUnits } from "./automation-pricing";
 import { getAssistantModel } from "./assistant-models";
 import { createOpenRouterUsageTracker, summarizeOpenRouterUsage, withOpenRouterModel, withOpenRouterUsage } from "./openrouter";
-import { assistantUsagePolicy } from "@/distribution/assistant-usage-policy";
+import { editionServer } from "@/editions/current/server";
 
 export class AssistantCreditError extends Error {
   status = 402;
@@ -26,7 +26,7 @@ export async function runAssistantUsage<T>(input: {
   const selected = getAssistantModel(input.modelId);
   const tracker = createOpenRouterUsageTracker();
   const execute = () => withOpenRouterUsage(tracker, () => withOpenRouterModel(selected.id, input.run));
-  if (!assistantUsagePolicy(selected.id).metered) {
+  if (!editionServer.assistantUsagePolicy(selected.id).metered) {
     const result = await execute();
     return { result, chargedCredits: 0, costUsd: summarizeOpenRouterUsage(tracker).costUsd };
   }

@@ -3,7 +3,7 @@ import { requireApiUser, sameOriginRequest } from "@/lib/auth";
 import { db, usageWorkspaceForUserProject, userCanAccessAsset, userCanAccessProject } from "@/lib/postgres-db";
 import { intelligenceProvider } from "@/platform/providers/registry";
 import { usageSummary } from "@/modules/usage";
-import { featureAccessDenial } from "@/distribution/feature-access-policy";
+import { editionServer } from "@/editions/current/server";
 import { AssistantCreditError, runAssistantUsage } from "@/lib/assistant-usage";
 import { DEFAULT_ASSISTANT_MODEL_ID, getAssistantModel } from "@/lib/assistant-models";
 import { persistedProjectIdSchema } from "@/lib/project-id";
@@ -32,7 +32,7 @@ export async function POST(request: Request) {
   if (!await userCanAccessProject(auth.user.id, parsed.data.projectId)) return Response.json({ error: "Canvas not found" }, { status: 404 });
   const workspaceId = await usageWorkspaceForUserProject(auth.user.id, parsed.data.projectId);
   if (!workspaceId || !(await usageSummary(workspaceId)).assistantEnabled) {
-    const denial = featureAccessDenial("assistant");
+    const denial = editionServer.featureAccessDenial("assistant");
     return Response.json(denial.body, { status: denial.status });
   }
   try {

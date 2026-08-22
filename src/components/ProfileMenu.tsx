@@ -2,8 +2,7 @@
 
 import { useEffect, useRef, useState } from "react";
 import { CircleAlert, CircleCheck, PlugZap, UserRound } from "lucide-react";
-import { AccountMenuExtension, accountMenuPresentation } from "@/distribution/account-extension";
-import { ProductAccountMenuExtension, type ProductPanelKind } from "@/distribution/product-extension";
+import { editionClient, type ProductPanelKind } from "@/editions/current/client";
 import type { UsageSummary } from "@/modules/usage/contracts";
 import type { UserRecord, WorkspaceRole } from "@/lib/types";
 
@@ -31,7 +30,9 @@ export function ProfileMenu({ user, workspaceId, workspaceName, workspaceRole, u
   const [providers, setProviders] = useState<ProviderConnection[] | null>(null);
   const [providersError, setProvidersError] = useState("");
   const rootRef = useRef<HTMLDivElement>(null);
-  const account = accountMenuPresentation(usage);
+  const account = editionClient.accountMenuPresentation(usage);
+  const ProductAccountMenuExtension = editionClient.ProductAccountMenuExtension;
+  const AccountMenuExtension = editionClient.AccountMenuExtension;
 
   useEffect(() => {
     if (!open) return;
@@ -87,9 +88,9 @@ export function ProfileMenu({ user, workspaceId, workspaceName, workspaceRole, u
         <div className="profile-identity"><span className="profile-avatar is-large"><UserRound aria-hidden="true" /></span><span><strong>{user.name || "Scenelith creator"}</strong><small>{user.email}</small></span></div>
         <div className="profile-plan"><span><small>{account.summaryLabel}</small><strong>{account.summaryValue}</strong></span></div>
         <div className="profile-settings-list">
-          <ProductAccountMenuExtension user={user} workspaceName={workspaceName} workspaceRole={workspaceRole} onOpen={(kind) => { dismiss(); onOpenProductPanel(kind); }} />
+          {ProductAccountMenuExtension && <ProductAccountMenuExtension user={user} workspaceName={workspaceName} workspaceRole={workspaceRole} onOpen={(kind) => { dismiss(); onOpenProductPanel(kind); }} />}
           {usage.usageMode === "unmetered" && <button type="button" role="menuitem" onClick={() => setSection("providers")}><span><strong><PlugZap size={13} />Providers</strong><small>Kie · OpenRouter · Tikwm</small></span><i aria-hidden="true" /></button>}
-          <AccountMenuExtension usage={usage} workspaceId={workspaceId} workspaceOwner={workspaceRole === "owner"} onDismiss={dismiss} onRequestView={onRequestAccountView} />
+          {AccountMenuExtension && <AccountMenuExtension usage={usage} workspaceId={workspaceId} workspaceOwner={workspaceRole === "owner"} onDismiss={dismiss} onRequestView={onRequestAccountView} />}
           <a role="menuitem" href="https://docs.scenelith.com" target="_blank" rel="noreferrer"><span><strong>Docs</strong><small>Workflows, nodes and generation</small></span><i aria-hidden="true" /></a>
         </div>
         <button type="button" className="profile-sign-out" role="menuitem" onClick={() => void signOut()}>Sign out</button>

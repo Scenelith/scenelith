@@ -4,7 +4,7 @@ import AuthSectionTwo from "@/components/ui/auth-section-2";
 import { isAuthenticated, LAST_AUTH_METHOD_COOKIE, safeReturnTo } from "@/lib/auth";
 import { db } from "@/lib/postgres-db";
 import { readRuntimeConfig } from "@/platform/runtime-config";
-import { distributionAuthPageContext } from "@/distribution/auth-server-extension";
+import { editionServer } from "@/editions/current/server";
 
 const oauthErrors: Record<string, string> = {
   google_unavailable: "Google sign-in is not configured yet",
@@ -22,7 +22,7 @@ export default async function LoginPage({ searchParams }: { searchParams: Promis
   const accountCount = runtimeConfig.registrationMode === "open"
     ? 0
     : Number((await db.prepare("SELECT COUNT(*) AS count FROM users").get() as { count: number }).count);
-  const distributionAuth = distributionAuthPageContext(params);
+  const distributionAuth = editionServer.authPageContext(params);
   const registrationEnabled = distributionAuth.invitationRegistration || runtimeConfig.registrationMode === "open" || accountCount === 0;
   return <AuthSectionTwo registrationEnabled={registrationEnabled} googleEnabled={Boolean(process.env.GOOGLE_CLIENT_ID && process.env.GOOGLE_CLIENT_SECRET)} initialMode={registrationEnabled && params.mode === "register" ? "register" : "login"} initialEmail={distributionAuth.initialEmail} invitationRegistration={distributionAuth.invitationRegistration} lastAuthMethod={lastAuthMethod === "google" ? "google" : lastAuthMethod === "email" ? "email" : null} initialError={distributionAuth.error || (params.error ? oauthErrors[params.error] || "Could not sign in" : "")} initialNotice={distributionAuth.notice} returnTo={returnTo} />;
 }

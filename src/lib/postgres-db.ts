@@ -11,7 +11,7 @@ import {
   userCanAccessWorkspace,
   userCanManageWorkspace,
   workspaceRoleForUser,
-} from "@/distribution/workspace-access";
+} from "@/editions/current/access";
 
 export {
   canUserCreateWorkspace,

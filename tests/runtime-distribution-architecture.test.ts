@@ -3,6 +3,7 @@ import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import test from "node:test";
 import { readRuntimeConfig } from "@/platform/runtime-config";
+import { runtimeCapabilities } from "@/platform/runtime-capabilities";
 
 const root = process.cwd();
 const source = (path: string) => readFileSync(join(root, path), "utf8");
@@ -16,6 +17,20 @@ test("the public runtime is permanently self-hosted", () => {
   });
   assert.throws(() => readRuntimeConfig({ SCENELITH_DEPLOYMENT_TYPE: "cloud" }));
   assert.throws(() => readRuntimeConfig({ SCENELITH_USAGE_MODE: "managed_credits" }));
+  assert.throws(() => readRuntimeConfig({ SCENELITH_REGISTRATION_MODE: "invite" }));
+  assert.deepEqual(runtimeCapabilities(), {
+    deploymentType: "selfhost",
+    usageMode: "bring_your_own",
+    billing: false,
+    managedCredits: false,
+    bringYourOwnKeys: true,
+    teamWorkspaces: false,
+    emailDelivery: false,
+    passwordRecovery: false,
+    productSupport: false,
+    featureRequests: false,
+    marketingSite: false,
+  });
 });
 
 test("hosted product source and dependencies are absent", () => {
@@ -49,6 +64,8 @@ test("hosted product source and dependencies are absent", () => {
     "src/components/ui/auth-recovery-form.tsx",
     "src/lib/auth-tokens.ts",
     "src/lib/email.ts",
+    "src/cloud",
+    "src/distribution",
   ]) assert.equal(existsSync(join(root, path)), false, path);
 
   const packageJson = JSON.parse(source("package.json"));
@@ -64,6 +81,10 @@ test("hosted product source and dependencies are absent", () => {
   assert.doesNotMatch(source("src/components/ui/auth-section-2.tsx"), /forgot-password|Create your team|teamInvite/);
   assert.doesNotMatch(source("deploy/compose/runtime.yaml"), /EMAIL_TRANSPORT|RESEND_API_KEY|SMTP_/);
   assert.doesNotMatch(source("deploy/selfhost/.env.example"), /EMAIL_TRANSPORT|RESEND_API_KEY|SMTP_/);
+  const baseline = source("database/baselines/core-v1.sql");
+  for (const cloudTable of ["workspace_invitations", "team_memberships", "team_canvas_grants", "workspace_invitation_grants", "auth_tokens", "support_tickets", "support_messages", "feature_requests", "feature_votes", "notifications", "notification_reads"]) {
+    assert.doesNotMatch(baseline, new RegExp(`CREATE TABLE public\\.${cloudTable}\\b`, "i"), cloudTable);
+  }
 });
 
 test("self-hosted compose selects the BYOK profile and contains no hosted worker", () => {

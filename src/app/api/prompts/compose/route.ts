@@ -2,7 +2,7 @@ import { requireApiUser, sameOriginRequest } from "@/lib/auth";
 import { db, readProjectGraphSnapshot, usageWorkspaceForUserProject, userCanAccessAsset, userCanAccessProject } from "@/lib/postgres-db";
 import { intelligenceProvider } from "@/platform/providers/registry";
 import { usageSummary } from "@/modules/usage";
-import { featureAccessDenial } from "@/distribution/feature-access-policy";
+import { editionServer } from "@/editions/current/server";
 import { AssistantCreditError, runAssistantUsage } from "@/lib/assistant-usage";
 import { getAssistantModel } from "@/lib/assistant-models";
 import { promptComposeRequestSchema, promptComposeValidationMessage } from "@/lib/prompt-compose-request";
@@ -23,7 +23,7 @@ export async function POST(request: Request) {
   if (!await userCanAccessProject(auth.user.id, parsed.data.projectId)) return Response.json({ error: "Canvas not found" }, { status: 404 });
   const workspaceId = await usageWorkspaceForUserProject(auth.user.id, parsed.data.projectId);
   if (!workspaceId || !(await usageSummary(workspaceId)).assistantEnabled) {
-    const denial = featureAccessDenial("prompt");
+    const denial = editionServer.featureAccessDenial("prompt");
     return Response.json(denial.body, { status: denial.status });
   }
   try {

@@ -13,7 +13,7 @@ import {
   sameOriginRequest,
 } from "@/lib/auth";
 import { claimUnownedWorkspaces, db, ensureDefaultWorkspace, ensureStarterProject, isConfiguredAdminEmail, rowToUser } from "@/lib/postgres-db";
-import { completeDistributionRegistration } from "@/distribution/auth-server-extension";
+import { editionServer } from "@/editions/current/server";
 import { readRuntimeConfig } from "@/platform/runtime-config";
 
 export const runtime = "nodejs";
@@ -80,7 +80,7 @@ export async function POST(request: Request) {
   await clearAuthFailures(rateKey);
 
   const user = rowToUser(await db.prepare("SELECT * FROM users WHERE id = ?").get(id) as Record<string, unknown>);
-  const distributionCompletion = await completeDistributionRegistration(user);
+  const distributionCompletion = await editionServer.completeRegistration(user);
   const session = await createSession(id);
   return attachLastAuthMethodCookie(attachSessionCookie(NextResponse.json({ ok: true, user, claimedLegacyWorkspace: claimed > 0, ...distributionCompletion }), session.token, session.expiresAt), "email");
 }

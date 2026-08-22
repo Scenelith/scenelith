@@ -1,4 +1,5 @@
 import { createHash } from "node:crypto";
+import { execFileSync } from "node:child_process";
 import { existsSync, lstatSync, readFileSync, readdirSync, realpathSync } from "node:fs";
 import { dirname, join, relative, resolve, sep } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -9,6 +10,12 @@ const root = realpathSync(rootArgIndex === -1 ? defaultRoot : resolve(process.ar
 const failures = [];
 const files = [];
 const ignoredDirectories = new Set([".git", ".next", "node_modules", "dist", "backups"]);
+
+try {
+  execFileSync(process.execPath, [join(root, "scripts/compose-edition-package.mjs"), "--check", "--base", join(root, "package.base.json"), "--overlay", join(root, "editions/selfhost/package.overlay.json"), "--output", join(root, "package.json")], { stdio: "pipe" });
+} catch {
+  failures.push("package.json is not the deterministic self-hosted composition");
+}
 
 function visit(directory) {
   for (const entry of readdirSync(directory, { withFileTypes: true })) {
@@ -47,13 +54,18 @@ const requiredPaths = [
   "deploy/selfhost/.env.example",
   "docs/DISTRIBUTION_ARCHITECTURE.md",
   "recipes/README.md",
-  "src/distribution/account-extension.tsx",
-  "src/distribution/assistant-usage-policy.ts",
-  "src/distribution/extension.css",
-  "src/distribution/feature-access-policy.ts",
-  "src/distribution/operations-extension.ts",
-  "src/distribution/usage-economics.ts",
-  "src/distribution/worker-extension.ts",
+  "src/editions/contracts/runtime.ts",
+  "src/editions/contracts/server.ts",
+  "src/editions/contracts/client.ts",
+  "src/editions/contracts/access.ts",
+  "src/editions/selfhost/runtime.ts",
+  "src/editions/selfhost/server.ts",
+  "src/editions/selfhost/client.tsx",
+  "src/editions/current/runtime.ts",
+  "src/editions/current/server.ts",
+  "src/core/access/owner-workspace-access.ts",
+  "database/baselines/core-v1.sql",
+  "database/edition.mjs",
   "src/lib/scenelith-document.ts",
   "src/platform/providers/registry.ts",
 ];
@@ -82,6 +94,8 @@ for (const path of [
   "src/lib/pricing.ts",
   "src/lib/whop.ts",
   "src/modules/usage/cloud-usage-authority.ts",
+  "src/cloud",
+  "src/distribution",
 ]) {
   if (existsSync(join(root, path))) failures.push(`hosted-only path crossed the public boundary: ${path}`);
 }
@@ -122,9 +136,11 @@ const hostedRuntimePatterns = [
   [/\bmanaged_credits\b/i, "hosted usage mode"],
   [/\bpricingUrl\b/, "hosted upgrade link"],
   [/\b(?:commerce|subscription|affiliate)\b/i, "hosted commercial policy"],
+  [/\b(?:support_tickets|support_messages|feature_requests|feature_votes|notification_reads|team_memberships|team_canvas_grants|workspace_invitations|auth_tokens)\b/i, "hosted account or community schema"],
   [/(?:media|api|cloud)\.scenelith\.com/i, "automatic Scenelith-operated runtime endpoint"],
 ];
 for (const path of runtimeFiles) {
+  if (path.startsWith("src/editions/contracts/")) continue;
   const content = readFileSync(join(root, path), "utf8");
   for (const [pattern, label] of hostedRuntimePatterns) {
     if (pattern.test(content)) failures.push(`${label} in public runtime: ${path}`);
@@ -179,14 +195,42 @@ const cloudTables = [
   "automation_credit_reservations",
   "billing_webhook_events",
 ];
-const applicationMigrations = readdirSync(join(root, "database/migrations"))
-  .filter((name) => name.endsWith(".sql"))
-  .map((name) => readFileSync(join(root, "database/migrations", name), "utf8"))
+const migrationDirectories = [join(root, "database/migrations/core")];
+const applicationMigrations = [readFileSync(join(root, "database/baselines/core-v1.sql"), "utf8")]
+  .concat(migrationDirectories.flatMap((directory) => readdirSync(directory)
+    .filter((name) => name.endsWith(".sql"))
+    .map((name) => readFileSync(join(directory, name), "utf8"))))
   .join("\n");
 for (const table of cloudTables) {
   if (new RegExp(`(?:CREATE|ALTER|INSERT\\s+INTO|UPDATE)\\s+(?:TABLE\\s+)?${table}\\b`, "i").test(applicationMigrations)) {
     failures.push(`hosted commercial table must not exist in public migrations: ${table}`);
   }
+}
+
+for (const table of [
+  "workspace_invitations",
+  "team_memberships",
+  "team_canvas_grants",
+  "workspace_invitation_grants",
+  "auth_tokens",
+  "support_tickets",
+  "support_messages",
+  "feature_requests",
+  "feature_votes",
+  "notifications",
+  "notification_reads",
+]) {
+  if (new RegExp(`CREATE\\s+TABLE\\s+(?:public\\.)?${table}\\b`, "i").test(applicationMigrations)) {
+    failures.push(`Cloud-only table must not exist in the self-hosted baseline or core stream: ${table}`);
+  }
+}
+
+for (const path of runtimeFiles) {
+  const content = readFileSync(join(root, path), "utf8");
+  if (!path.startsWith("src/editions/current/") && /@\/editions\/selfhost\//.test(content)) {
+    failures.push(`shared runtime bypasses the edition contract: ${path}`);
+  }
+  if (/@\/cloud\//.test(content)) failures.push(`public runtime imports a private Cloud module: ${path}`);
 }
 
 if (existsSync(join(root, "compose.yaml"))) failures.push("root compose.yaml would confuse the public self-hosted deployment");

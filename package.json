@@ -1,18 +1,22 @@
 {
-  "name": "scenelith",
   "version": "0.2.3",
   "private": true,
+  "engines": {
+    "node": ">=24"
+  },
   "scripts": {
     "dev": "next dev",
     "build": "next build",
     "start": "next start",
     "worker": "tsx src/worker.ts",
     "lint": "eslint",
-    "test": "SCENELITH_DEPLOYMENT_TYPE=selfhost SCENELITH_USAGE_MODE=bring_your_own node scripts/run-tests.mjs",
     "db:migrate": "node database/migrate.mjs",
     "storage:configure-cors": "node scripts/configure-r2-cors.mjs",
     "storage:optimize-generated-videos": "node --import tsx src/scripts/optimize-generated-videos.ts",
     "collaboration:compact": "node scripts/compact-collaboration-document.mjs",
+    "package:compose": "node scripts/compose-edition-package.mjs",
+    "package:verify": "node scripts/compose-edition-package.mjs --check",
+    "test": "SCENELITH_DEPLOYMENT_TYPE=selfhost SCENELITH_USAGE_MODE=bring_your_own node scripts/run-tests.mjs",
     "selfhost:init": "node scripts/initialize-selfhost.mjs",
     "selfhost:doctor": "node scripts/selfhost-doctor.mjs",
     "selfhost:backup": "node scripts/selfhost-backup.mjs",
@@ -50,7 +54,6 @@
   },
   "devDependencies": {
     "@tailwindcss/postcss": "^4",
-    "@types/canvas-confetti": "^1.9.0",
     "@types/node": "^20",
     "@types/pg": "^8.21.0",
     "@types/react": "^19",
@@ -61,7 +64,6 @@
     "tailwindcss": "^4",
     "typescript": "^5"
   },
-  "optionalDependencies": {},
   "overrides": {
     "nanoid": "3.3.18",
     "postcss": "8.5.25",
@@ -71,6 +73,7 @@
     "esbuild@0.28.1": true,
     "unrs-resolver@1.12.2": true
   },
+  "name": "scenelith",
   "description": "Open visual AI creation and automation canvas with first-class self-hosting",
   "license": "SEE LICENSE IN LICENSE.md",
   "repository": {
@@ -80,8 +83,5 @@
   "bugs": {
     "url": "https://github.com/Scenelith/scenelith/issues"
   },
-  "homepage": "https://github.com/Scenelith/scenelith#readme",
-  "engines": {
-    "node": ">=24"
-  }
+  "homepage": "https://github.com/Scenelith/scenelith#readme"
 }

@@ -1,5 +1,4 @@
-import { providerCostToUsageUnits } from "@/distribution/usage-economics";
-import { assistantUsagePolicy } from "@/distribution/assistant-usage-policy";
+import { editionServer } from "@/editions/current/server";
 
 export const DEFAULT_ASSISTANT_MODEL_ID = "google/gemini-3.7-flash";
 
@@ -66,12 +65,12 @@ export function assistantModelEstimatedCredits(model: AssistantModelOption, inpu
   imageCount?: number;
   outputTokens?: number;
 } = {}) {
-  if (!assistantUsagePolicy(model.id).metered) return 0;
+  if (!editionServer.assistantUsagePolicy(model.id).metered) return 0;
   const inputTokens = Math.ceil(Math.max(0, input.inputCharacters ?? 6_000) / 3.5)
     + Math.max(0, input.imageCount || 0) * 2_500;
   const outputTokens = Math.max(256, input.outputTokens ?? 1_200);
   const providerCost = inputTokens * model.promptUsdPerToken + outputTokens * model.completionUsdPerToken;
-  return Math.max(1, providerCostToUsageUnits(providerCost));
+  return Math.max(1, editionServer.providerCostToUsageUnits(providerCost));
 }
 
 export function assistantModelCreditDescription(model: AssistantModelOption, input: {
@@ -79,7 +78,7 @@ export function assistantModelCreditDescription(model: AssistantModelOption, inp
   imageCount?: number;
   outputTokens?: number;
 } = {}) {
-  const policy = assistantUsagePolicy(model.id);
+  const policy = editionServer.assistantUsagePolicy(model.id);
   if (!policy.metered) return policy.description;
   const credits = assistantModelEstimatedCredits(model, input);
   return `≈ ${credits.toLocaleString("en-US")} credit${credits === 1 ? "" : "s"}`;

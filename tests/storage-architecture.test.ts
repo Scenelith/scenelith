@@ -35,10 +35,12 @@ test("application PostgreSQL schema is immutable and versioned", () => {
   assert.match(runner, /pg_advisory_lock\(\$1::bigint\)/);
   assert.match(runner, /Applied application migration changed/);
   assert.match(runner, /Application migration is not expand-only/);
-  assert.match(source("database/migrations/001_core.sql"), /CREATE TABLE projects/);
-  assert.match(source("database/migrations/002_billing_jobs_community.sql"), /CREATE TABLE generation_dispatch_jobs/);
-  assert.match(source("database/migrations/009_recoverable_deletion.sql"), /assets_enqueue_storage_deletion/);
-  assert.match(source("database/migrations/010_audit_events.sql"), /CREATE TABLE audit_events/);
+  assert.match(source("database/baselines/core-v1.sql"), /CREATE TABLE public\.projects/);
+  assert.match(source("database/baselines/core-v1.sql"), /CREATE TABLE public\.generation_dispatch_jobs/);
+  assert.match(source("database/baselines/core-v1.sql"), /assets_enqueue_storage_deletion/);
+  assert.match(source("database/baselines/core-v1.sql"), /CREATE TABLE public\.audit_events/);
+  assert.match(runner, /legacyUrl/);
+  assert.match(runner, /streamLedger/);
 });
 
 test("R2 and generic S3 browser upload CORS are managed without deleting unrelated rules", () => {

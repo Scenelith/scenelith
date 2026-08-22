@@ -1,7 +1,7 @@
 import type { Metadata } from "next";
 import "./globals.css";
 import "./theme.css";
-import "@/distribution/extension.css";
+import "@/editions/current/styles.css";
 
 export const metadata: Metadata = {
   title: "Scenelith — Creative Canvas",

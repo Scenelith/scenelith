@@ -1,11 +1,8 @@
-import { NextRequest, NextResponse } from "next/server";
+import type { NextRequest } from "next/server";
+import { handleEditionRequest } from "@/editions/current/edge";
 
 export function proxy(request: NextRequest) {
-  const path = request.nextUrl.pathname;
-  if (path === "/") {
-    return NextResponse.redirect(new URL("/canvas", request.url));
-  }
-  return NextResponse.next();
+  return handleEditionRequest(request);
 }
 
 export const config = {

@@ -4,7 +4,7 @@ import { useEffect, useState } from "react";
 import { ArrowRight, LoaderCircle } from "lucide-react";
 import AuthCanvasPreview from "@/components/ui/auth-canvas-preview";
 import BrandMark from "@/components/BrandMark";
-import { DistributionAuthRecoveryLink, distributionRegistrationCopy } from "@/distribution/auth-ui-extension";
+import { editionClient } from "@/editions/current/client";
 
 const workflowMoments = [
   { stage: "Import", text: "Paste a TikTok link. Scenelith reads the slideshow and keeps the source intact." },
@@ -26,7 +26,8 @@ export default function AuthSectionTwo({ googleEnabled, registrationEnabled = tr
   const [terms, setTerms] = useState(false);
   const [error, setError] = useState(initialError);
   const [loading, setLoading] = useState(false);
-  const registrationCopy = distributionRegistrationCopy(invitationRegistration);
+  const registrationCopy = editionClient.registrationCopy(invitationRegistration);
+  const AuthRecoveryLink = editionClient.AuthRecoveryLink;
 
   useEffect(() => {
     const interval = window.setInterval(() => setActiveIndex((current) => (current + 1) % workflowMoments.length), 3200);
@@ -92,7 +93,7 @@ export default function AuthSectionTwo({ googleEnabled, registrationEnabled = tr
             <AuthField label={mode === "register" ? registrationCopy.emailLabel : "Email"} type="email" value={email} onChange={setEmail} autoComplete="email" placeholder="you@company.com" readOnly={invitationRegistration && mode === "register"} />
             <AuthField label="Password" type="password" value={password} onChange={setPassword} autoComplete={mode === "register" ? "new-password" : "current-password"} placeholder="At least 8 characters" />
             {mode === "register" && <AuthField label="Confirm password" type="password" value={confirmPassword} onChange={setConfirmPassword} autoComplete="new-password" placeholder="Enter the same password again" />}
-            {mode === "login" && <DistributionAuthRecoveryLink />}
+            {mode === "login" && AuthRecoveryLink && <AuthRecoveryLink />}
             {mode === "register" && <label className="auth-v2-terms"><input type="checkbox" checked={terms} onChange={(event) => setTerms(event.target.checked)} /><span>By creating an account, you agree to the <a href="/terms">Terms</a> and <a href="/privacy">Privacy Policy</a>.</span></label>}
             {initialNotice && !error && <p className="auth-v2-notice" role="status">{initialNotice}</p>}
             {error && <p className="auth-v2-error" role="alert">{error}</p>}

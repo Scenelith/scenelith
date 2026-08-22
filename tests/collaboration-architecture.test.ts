@@ -44,7 +44,7 @@ test("collaboration schema is versioned by a one-shot migration service", () => 
 
 test("deleted canvases are tombstoned and cannot be recreated by a stale realtime replica", () => {
   const server = source("collaboration/server.mjs");
-  const applicationDeletion = source("database/migrations/009_recoverable_deletion.sql");
+  const applicationDeletion = source("database/baselines/core-v1.sql");
   const tombstones = source("collaboration/migrations/004_document_tombstones.sql");
   const projectRoute = source("src/app/api/projects/[id]/route.ts");
   assert.match(tombstones, /collaboration_document_tombstones/);

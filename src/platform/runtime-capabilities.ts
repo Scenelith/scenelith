@@ -1,18 +1,14 @@
 import { readRuntimeConfig } from "./runtime-config";
+import { editionRuntimeProfile } from "@/editions/current/runtime";
+import type { RuntimeCapabilities } from "@/editions/contracts/runtime";
 
-export type RuntimeCapabilities = Readonly<{
-  deploymentType: "selfhost";
-  usageMode: "bring_your_own";
-  bringYourOwnKeys: boolean;
-  teamWorkspaces: boolean;
-}>;
+export type { RuntimeCapabilities } from "@/editions/contracts/runtime";
 
 export function runtimeCapabilities(): RuntimeCapabilities {
   const config = readRuntimeConfig();
   return Object.freeze({
     deploymentType: config.deploymentType,
     usageMode: config.usageMode,
-    bringYourOwnKeys: true,
-    teamWorkspaces: true,
+    ...editionRuntimeProfile.capabilities,
   });
 }

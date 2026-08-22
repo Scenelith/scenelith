@@ -1,19 +1,21 @@
 import { relationalPool } from "./relational-db";
-import { operationsQueueProjectionSql } from "@/distribution/operations-extension";
+import { editionServer } from "@/editions/current/server";
 
-export const REQUIRED_APPLICATION_MIGRATION = "012_usage_workspace_naming.sql";
+export const REQUIRED_APPLICATION_BASELINE = "core-v1";
 export const REQUIRED_COLLABORATION_MIGRATION = "004_document_tombstones.sql";
 
 type Scalar = string | number | boolean | null;
 
 export async function databaseSchemaStatus() {
   const result = await relationalPool().query(`SELECT
-    EXISTS (
-      SELECT 1 FROM application_schema_migrations WHERE version = $1
-    ) AS application_current,
+    (EXISTS (
+      SELECT 1 FROM application_schema_stream_migrations WHERE stream = 'baseline' AND version = $1
+    ) OR EXISTS (
+      SELECT 1 FROM application_schema_migrations WHERE version = '012_usage_workspace_naming.sql'
+    )) AS application_current,
     EXISTS (
       SELECT 1 FROM collaboration_schema_migrations WHERE version = $2
-    ) AS collaboration_current`, [REQUIRED_APPLICATION_MIGRATION, REQUIRED_COLLABORATION_MIGRATION]);
+    ) AS collaboration_current`, [REQUIRED_APPLICATION_BASELINE, REQUIRED_COLLABORATION_MIGRATION]);
   return {
     application: Boolean(result.rows[0]?.application_current),
     collaboration: Boolean(result.rows[0]?.collaboration_current),
@@ -32,7 +34,7 @@ export async function operationsSnapshot() {
       (SELECT COUNT(*) FROM tiktok_automation_jobs WHERE status = 'running') AS automation_processing,
       (SELECT COUNT(*) FROM tiktok_automation_jobs WHERE status = 'failed') AS automation_dead,
       (SELECT EXTRACT(EPOCH FROM (now() - MIN(created_at))) FROM tiktok_automation_jobs WHERE status = 'queued') AS automation_oldest_seconds,
-      ${operationsQueueProjectionSql}
+      ${editionServer.operationsQueueProjectionSql}
       (SELECT COUNT(*) FROM storage_deletion_jobs WHERE status = 'queued') AS storage_gc_queued,
       (SELECT COUNT(*) FROM storage_deletion_jobs WHERE status = 'processing') AS storage_gc_processing,
       (SELECT COUNT(*) FROM storage_deletion_jobs WHERE status = 'dead') AS storage_gc_dead,

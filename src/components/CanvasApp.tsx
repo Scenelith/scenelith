@@ -64,8 +64,7 @@ import { MediaViewer, type ImageEditOptions } from "./MediaViewer";
 import { VideoEditorViewer, type VideoEditorReference } from "./VideoEditorViewer";
 import type { ImageEditPersona, ImageEditReference } from "./ImageEditReferencePicker";
 import { ProfileMenu } from "./ProfileMenu";
-import { ProductNotificationCenter, ProductPanelRouter, PendingProductInvitations, productRailItems, type ProductPanelKind } from "@/distribution/product-extension";
-import { AccountOverlayExtension } from "@/distribution/account-extension";
+import { editionClient, type ProductPanelKind } from "@/editions/current/client";
 import { TaskCenter } from "./TaskCenter";
 import BrandMark from "./BrandMark";
 import type { BackgroundTaskRecord, FrameEdge, FrameNode, GeneratorInputRole, HookRecord, LibraryMediaAsset, PersonaRecord, ProjectRecord, UserRecord, VideoMasterClip, VideoSceneSegment, WorkspaceRecord } from "@/lib/types";
@@ -442,6 +441,10 @@ function applyModelCatalogue(graphNodes: FrameNode[], graphEdges: FrameEdge[], m
 }
 
 function CanvasWorkspace({ initialProject, projects: initialProjects, initialWorkspace, workspaces: initialWorkspaces, user, creditUsage, initialModels }: { initialProject: ProjectRecord; projects: ProjectRecord[]; initialWorkspace: WorkspaceRecord; workspaces: WorkspaceRecord[]; user: UserRecord; creditUsage: UsageSummary; initialModels: ModelOption[] }) {
+  const ProductNotificationCenter = editionClient.NotificationCenter;
+  const ProductPanelRouter = editionClient.PanelRouter;
+  const PendingProductInvitations = editionClient.PendingInvitations;
+  const AccountOverlayExtension = editionClient.AccountOverlayExtension;
   const { fitView, setViewport, screenToFlowPosition } = useReactFlow<FrameNode, FrameEdge>();
   const initialCanvasGraph = useMemo(() => {
     const graphNodes = stableGraphNodes(initialProject.graph.nodes || []);
@@ -4602,12 +4605,12 @@ function CanvasWorkspace({ initialProject, projects: initialProjects, initialWor
             setSidebarOpen(!["prompt", "assistant", "note", "scene", "videoMaster"].includes(taskNode.data.kind) && !(taskNode.data.kind === "source" && Boolean(taskNode.data.videoSegments?.length)));
             void fitView({ nodes: [taskNode], padding: 0.32, minZoom: 0.2, maxZoom: 1.08, duration: 360 });
           }} />
-          <ProductNotificationCenter onNavigate={openProductPanel} />
+          {ProductNotificationCenter && <ProductNotificationCenter onNavigate={openProductPanel} />}
           <ProfileMenu user={user} workspaceId={workspace.id} workspaceName={workspace.name} workspaceRole={workspace.memberRole} usage={liveCreditUsage} onRequestAccountView={setAccountView} onOpenProductPanel={openProductPanel} />
         </div>
       </header>
 
-      <AccountOverlayExtension
+      {AccountOverlayExtension && <AccountOverlayExtension
         view={accountView}
         usage={liveCreditUsage}
         workspaceId={workspace.id}
@@ -4615,8 +4618,8 @@ function CanvasWorkspace({ initialProject, projects: initialProjects, initialWor
         workspaceOwner={workspace.memberRole === "owner"}
         onClose={() => setAccountView(null)}
         onUsageUpdated={setLiveCreditUsage}
-      />
-      <PendingProductInvitations />
+      />}
+      {PendingProductInvitations && <PendingProductInvitations />}
 
       {workspaceLibraryOpen && (
         <div className="workspace-library">
@@ -4660,11 +4663,11 @@ function CanvasWorkspace({ initialProject, projects: initialProjects, initialWor
         <button className={tiktokAutomationOpen ? "is-active" : ""} data-tooltip="TikTok automation" aria-label="Open TikTok automation" onClick={() => { const nextOpen = !tiktokAutomationOpen; setTikTokAutomationOpen(nextOpen); setHookLibraryOpen(false); setIdentityLibraryOpen(false); setProductPanelFocus(null); if (nextOpen && selectedAutomationSourceId) focusAutomationSource(selectedAutomationSourceId); }}><Workflow size={18} /></button>
         <button className={hookLibraryOpen ? "is-active" : ""} data-tooltip="Hooks" aria-label="Open hooks" onClick={() => { setHookLibraryOpen((value) => !value); setIdentityLibraryOpen(false); setTikTokAutomationOpen(false); setProductPanelFocus(null); }}><Quote size={18} /></button>
         <button className={identityLibraryOpen ? "is-active" : ""} data-tooltip="Library" aria-label="Open Library" onClick={() => { setIdentityLibraryOpen((value) => !value); setHookLibraryOpen(false); setTikTokAutomationOpen(false); setProductPanelFocus(null); }}><Images size={18} /></button>
-        <span className="tool-rail-divider" />
-        {productRailItems.map((item) => <button key={item.kind} className={productPanelFocus?.kind === item.kind ? "is-active" : ""} data-tooltip={item.label} aria-label={`Open ${item.label}`} onClick={() => productPanelFocus?.kind === item.kind ? setProductPanelFocus(null) : openProductPanel(item.kind)}><item.icon size={18} /></button>)}
+        {editionClient.railItems.length > 0 && <span className="tool-rail-divider" />}
+        {editionClient.railItems.map((item) => <button key={item.kind} className={productPanelFocus?.kind === item.kind ? "is-active" : ""} data-tooltip={item.label} aria-label={`Open ${item.label}`} onClick={() => productPanelFocus?.kind === item.kind ? setProductPanelFocus(null) : openProductPanel(item.kind)}><item.icon size={18} /></button>)}
       </aside>
 
-      <ProductPanelRouter focus={productPanelFocus} user={user} workspace={workspace} onOpenPricing={() => { setProductPanelFocus(null); setAccountView("access"); }} onClose={() => setProductPanelFocus(null)} />
+      {ProductPanelRouter && <ProductPanelRouter focus={productPanelFocus} user={user} workspace={workspace} onOpenPricing={() => { setProductPanelFocus(null); setAccountView("access"); }} onClose={() => setProductPanelFocus(null)} />}
 
       {tiktokAutomationOpen && <TikTokAutomationPanel
         sources={tiktokAutomationSources}

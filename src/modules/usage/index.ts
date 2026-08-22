@@ -1,12 +1,16 @@
-import { selfhostUsageAuthority } from "@/modules/usage/selfhost-usage-authority";
+import { editionUsage } from "@/editions/current/usage";
 import type { UsageAuthority } from "@/modules/usage/contracts";
 
 export type { UsageAuthority, UsageSummary } from "@/modules/usage/contracts";
 
 export async function usageAuthority(): Promise<UsageAuthority> {
-  return selfhostUsageAuthority;
+  return editionUsage.authority;
 }
 
 export async function usageSummary(workspaceId: string) {
-  return await selfhostUsageAuthority.summary(workspaceId);
+  return await editionUsage.authority.summary(workspaceId);
+}
+
+export async function teamUsageEntitlement(workspaceId: string) {
+  return await editionUsage.teamEntitlement(workspaceId);
 }

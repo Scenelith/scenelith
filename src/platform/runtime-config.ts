@@ -1,29 +1,15 @@
-import { z } from "zod";
+import { editionRuntimeProfile } from "@/editions/current/runtime";
+import type { RegistrationMode, RuntimeConfig, RuntimeEnvironment, RuntimeService } from "@/editions/contracts/runtime";
 
-const deploymentTypeSchema = z.literal("selfhost");
-const usageModeSchema = z.literal("bring_your_own");
-const registrationModeSchema = z.enum(["owner_only", "invite", "open"]);
-
-export type DeploymentType = z.infer<typeof deploymentTypeSchema>;
-export type UsageMode = z.infer<typeof usageModeSchema>;
-export type RegistrationMode = z.infer<typeof registrationModeSchema>;
-export type RuntimeService = "web" | "generation-worker" | "automation-worker" | "storage-worker" | "collaboration" | "migration";
-
-export type RuntimeConfig = Readonly<{
-  deploymentType: DeploymentType;
-  usageMode: UsageMode;
-  registrationMode: RegistrationMode;
-  publicUrl: string;
-}>;
-
-type RuntimeEnvironment = Readonly<Record<string, string | undefined>>;
+export type { DeploymentType, RegistrationMode, RuntimeConfig, RuntimeService, UsageMode } from "@/editions/contracts/runtime";
 
 export function readRuntimeConfig(environment: RuntimeEnvironment = process.env): RuntimeConfig {
-  const deploymentType = deploymentTypeSchema.parse(environment.SCENELITH_DEPLOYMENT_TYPE || "selfhost");
-  const usageMode = usageModeSchema.parse(environment.SCENELITH_USAGE_MODE || "bring_your_own");
-  const registrationMode = environment.SCENELITH_REGISTRATION_MODE
-    ? registrationModeSchema.parse(environment.SCENELITH_REGISTRATION_MODE)
-    : "owner_only";
+  const deploymentType = environment.SCENELITH_DEPLOYMENT_TYPE || editionRuntimeProfile.deploymentType;
+  if (deploymentType !== editionRuntimeProfile.deploymentType) throw new Error(`Invalid deployment type for this edition: ${deploymentType}`);
+  const usageMode = environment.SCENELITH_USAGE_MODE || editionRuntimeProfile.usageMode;
+  if (usageMode !== editionRuntimeProfile.usageMode) throw new Error(`Invalid usage mode for this edition: ${usageMode}`);
+  const registrationMode = (environment.SCENELITH_REGISTRATION_MODE || editionRuntimeProfile.defaultRegistrationMode) as RegistrationMode;
+  if (!editionRuntimeProfile.allowedRegistrationModes.some((allowed) => allowed === registrationMode)) throw new Error(`Invalid registration mode for this edition: ${registrationMode}`);
   return Object.freeze({
     deploymentType,
     usageMode,
@@ -33,15 +19,7 @@ export function readRuntimeConfig(environment: RuntimeEnvironment = process.env)
 }
 
 export function requiredEnvironmentForService(service: RuntimeService) {
-  const byService: Record<RuntimeService, string[]> = {
-    web: ["DATABASE_URL", "SESSION_SECRET"],
-    "generation-worker": ["DATABASE_URL"],
-    "automation-worker": ["DATABASE_URL"],
-    "storage-worker": ["DATABASE_URL"],
-    collaboration: ["COLLABORATION_DATABASE_URL", "COLLABORATION_JWT_SECRET", "COLLABORATION_INTERNAL_SECRET"],
-    migration: ["DATABASE_URL"],
-  };
-  return byService[service];
+  return [...editionRuntimeProfile.requiredEnvironment[service]];
 }
 
 export function validateRuntimeEnvironment(service: RuntimeService, environment: RuntimeEnvironment = process.env) {

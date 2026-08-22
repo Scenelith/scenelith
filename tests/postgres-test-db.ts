@@ -6,7 +6,7 @@ export { db };
 export async function resetTestDatabase() {
   const rows = await db.prepare(`SELECT tablename
     FROM pg_tables
-    WHERE schemaname = 'public' AND tablename <> 'application_schema_migrations'`)
+    WHERE schemaname = 'public' AND tablename NOT IN ('application_schema_migrations', 'application_schema_stream_migrations')`)
     .all() as Array<{ tablename: string }>;
   if (!rows.length) return;
   const tables = rows.map(({ tablename }) => `"${tablename.replaceAll('"', '""')}"`).join(", ");

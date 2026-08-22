@@ -3,7 +3,7 @@ import { z } from "zod";
 import { providerCostToUsageUnits, tiktokPlanningReserveCredits } from "./automation-pricing";
 import { DEFAULT_ASSISTANT_MODEL_ID, getTikTokAutomationPlanningModel } from "./assistant-models";
 import { usageAuthority } from "@/modules/usage";
-import { featureAccessDenial } from "@/distribution/feature-access-policy";
+import { editionServer } from "@/editions/current/server";
 import { db, readProjectGraphSnapshot, usageWorkspaceForUserProject, userCanAccessAsset, userCanAccessProject } from "./postgres-db";
 import { generationCreditCost } from "./generation-pricing";
 import { settleWithConcurrency } from "./generation-queue";
@@ -87,7 +87,7 @@ export async function executeTikTokAutomationPlan(options: {
   const authority = await usageAuthority();
   const usage = usageWorkspaceId ? await authority.summary(usageWorkspaceId) : null;
   if (!projectWorkspaceId || !usageWorkspaceId || !usage?.assistantEnabled) {
-    const denial = featureAccessDenial("automation");
+    const denial = editionServer.featureAccessDenial("automation");
     return failure(denial.status, denial.body);
   }
   const projectGraph = (await readProjectGraphSnapshot(input.projectId)).graph as ProjectGraph;

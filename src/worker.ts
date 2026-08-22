@@ -8,13 +8,13 @@ import { expireAllStaleGenerations } from "./lib/generation-lifecycle";
 import { workerIdentity } from "./lib/worker-identity";
 import { drainStorageLifecycle } from "./lib/storage-lifecycle";
 import { readRuntimeConfig } from "./platform/runtime-config";
-import { distributionWorker } from "./distribution/worker-extension";
+import { editionWorker } from "./editions/current/worker";
 
 const role = process.env.WORKER_ROLE || "all";
 const runtimeConfig = readRuntimeConfig();
 const runsGeneration = role === "all" || role === "generation";
 const runsAutomation = role === "all" || role === "automation";
-const runsDistribution = distributionWorker.enabled(role);
+const runsDistribution = editionWorker.enabled(role);
 const runsStorage = role === "all" || role === "storage";
 const startedAt = new Date().toISOString();
 // Queue leases use role-specific worker ids. When one process runs both queues,
@@ -23,7 +23,7 @@ const startedAt = new Date().toISOString();
 const heartbeatWorkers = [
   ...(runsGeneration ? [{ id: workerIdentity("generation"), role: "generation" }] : []),
   ...(runsAutomation ? [{ id: workerIdentity("automation"), role: "automation" }] : []),
-  ...(runsDistribution ? [{ id: workerIdentity(distributionWorker.heartbeatRole), role: distributionWorker.heartbeatRole }] : []),
+  ...(runsDistribution ? [{ id: workerIdentity(editionWorker.heartbeatRole), role: editionWorker.heartbeatRole }] : []),
   ...(runsStorage ? [{ id: workerIdentity("storage"), role: "storage" }] : []),
 ].filter((worker, index, workers) => workers.findIndex((candidate) => candidate.id === worker.id) === index);
 let stopping = false;
@@ -55,7 +55,7 @@ async function heartbeat() {
       runsAutomation
         ? db.prepare("DELETE FROM tiktok_automation_jobs WHERE status IN ('completed', 'failed', 'cancelled') AND completed_at < ?").run(sevenDaysAgo)
         : Promise.resolve({ changes: 0 }),
-      runsDistribution ? distributionWorker.cleanup(thirtyDaysAgo) : Promise.resolve(),
+      runsDistribution ? editionWorker.cleanup(thirtyDaysAgo) : Promise.resolve(),
       runsStorage
         ? db.prepare("DELETE FROM audit_events WHERE expires_at < ?").run(now)
         : Promise.resolve({ changes: 0 }),
@@ -93,7 +93,7 @@ async function cycle() {
     await Promise.all([
       runsGeneration ? tickGenerationWorker() : Promise.resolve(),
       runsAutomation ? drainTikTokAutomationJobs() : Promise.resolve(),
-      runsDistribution ? distributionWorker.drain() : Promise.resolve(),
+      runsDistribution ? editionWorker.drain() : Promise.resolve(),
       runsStorage ? drainStorageLifecycle() : Promise.resolve(0),
       runsGeneration ? expireAllStaleGenerations() : Promise.resolve(0),
     ]);

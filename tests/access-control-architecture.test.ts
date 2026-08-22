@@ -27,8 +27,8 @@ test("manual hooks cannot combine a workspace with a canvas from another workspa
 
 test("workspace access is selected through a narrow distribution adapter", () => {
   const database = source("src/lib/postgres-db.ts");
-  const access = source("src/distribution/workspace-access.ts");
-  assert.match(database, /@\/distribution\/workspace-access/);
+  const access = source("src/core/access/owner-workspace-access.ts");
+  assert.match(database, /@\/editions\/current\/access/);
   assert.match(access, /wm\.role = 'owner'/);
   assert.doesNotMatch(access, /team_memberships|team_canvas_grants|team_managed/);
 });
@@ -51,11 +51,11 @@ test("expensive authenticated mutations are origin checked and rate limited acro
 });
 
 test("sensitive access and deletion actions append bounded audit evidence", () => {
-  const migration = source("database/migrations/010_audit_events.sql");
+  const migration = source("database/baselines/core-v1.sql");
   const worker = source("src/worker.ts");
   assert.match(migration, /audit_events_append_only/);
-  assert.match(migration, /interval '400 days'/);
+  assert.match(migration, /'400 days'::interval/);
   assert.match(worker, /DELETE FROM audit_events WHERE expires_at/);
   assert.match(source("src/app/api/projects/[id]/route.ts"), /project\.deleted/);
-  assert.doesNotMatch(source("src/distribution/workspace-access.ts"), /member_removed/);
+  assert.doesNotMatch(source("src/core/access/owner-workspace-access.ts"), /member_removed/);
 });
