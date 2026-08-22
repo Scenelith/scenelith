@@ -20,14 +20,14 @@ Shared runtime code imports only stable contracts or `src/editions/current/*`.
 
 ```text
 src/editions/
-├── contracts/       stable server, client, access, worker and runtime types
+├── contracts/       stable server, client, access, economics, worker and runtime types
 ├── selfhost/        complete public policies and implementations
 └── current/         thin edition selectors
 ```
 
 The Cloud repository supplies private implementations under `src/cloud/` and overrides only the thin selectors in `src/editions/current/`. Shared modules never import `src/cloud/` or `src/editions/selfhost/` directly. CI enforces this dependency direction.
 
-Server, client, worker and request-edge selectors are separate so Node-only dependencies and secrets cannot enter browser or edge bundles. Edition UI is a registry of optional components; absent self-hosted surfaces are not dummy feature implementations.
+Server, client, client-safe economics, worker and request-edge selectors are separate so Node-only dependencies and secrets cannot enter browser or edge bundles. Edition UI is a registry of optional components; absent self-hosted surfaces are not dummy feature implementations.
 
 ## Public ownership
 
@@ -75,7 +75,7 @@ The self-hosted baseline contains no billing, team, invitation, recovery-token, 
 
 1. A shared change is reviewed and merged in public.
 2. Public CI validates boundaries, schema, tests, production build and self-hosted Compose.
-3. A Cloud integration pull request pins the exact public commit.
+3. The private hourly watcher detects the new public `main`, verifies it, and opens a Cloud integration pull request pinned to the exact commit.
 4. Cloud CI composes private adapters, dependencies, schema and tests without modifying shared files.
 5. Cloud deployment and public self-hosted releases remain separate promotion decisions.
 
