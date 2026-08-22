@@ -64,6 +64,7 @@ test("every application role uses the same immutable image", () => {
     assert.ok(override.includes(`\n  ${service}:\n    <<: *selfhost-application\n    command: ${command}`));
   }
   assert.match(dockerfile, /COPY --chown=scenelith:scenelith collaboration \.\/collaboration/);
+  assert.match(dockerfile, /COPY --chown=scenelith:scenelith config \.\/config/);
   assert.doesNotMatch(dockerfile, /FROM base AS (?:worker|migration)/);
   assert.doesNotMatch(runtime, /SCENELITH_(?:WEB|WORKER|MIGRATION|COLLABORATION)_IMAGE/);
   assert.doesNotMatch(runtime, /Dockerfile\.collaboration|target: (?:runner|worker|migration)/);

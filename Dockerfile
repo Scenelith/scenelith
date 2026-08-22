@@ -36,6 +36,7 @@ COPY --from=builder --chown=scenelith:scenelith /app/.next/static ./.next/static
 COPY --from=builder --chown=scenelith:scenelith /app/public ./public
 COPY --chown=scenelith:scenelith package.json package-lock.json tsconfig.json ./
 COPY --chown=scenelith:scenelith src ./src
+COPY --chown=scenelith:scenelith config ./config
 COPY --chown=scenelith:scenelith database ./database
 COPY --chown=scenelith:scenelith collaboration ./collaboration
 RUN mkdir -p /app/data/storage && chown -R scenelith:scenelith /app/data
