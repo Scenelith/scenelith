@@ -77,6 +77,7 @@ for (const path of [
   ".scenelith-release.json",
   "deploy/selfhost/export-manifest.json",
   "deploy/selfhost/repository",
+  "src/app/(cloud)",
   "src/app/api/billing",
   "src/app/api/webhooks/whop",
   "src/app/pricing",

@@ -35,6 +35,7 @@ test("the public runtime is permanently self-hosted", () => {
 
 test("hosted product source and dependencies are absent", () => {
   for (const path of [
+    "src/app/(cloud)",
     "src/app/api/billing",
     "src/app/api/webhooks/whop",
     "src/app/pricing",

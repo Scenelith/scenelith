@@ -25,7 +25,7 @@ src/editions/
 └── current/         thin edition selectors
 ```
 
-The Cloud repository supplies private implementations under `src/cloud/` and overrides only the thin selectors in `src/editions/current/`. Shared modules never import `src/cloud/` or `src/editions/selfhost/` directly. CI enforces this dependency direction.
+The Cloud repository supplies private implementations under `src/cloud/`, keeps its framework-required URL entries under the URL-transparent `src/app/(cloud)/` route group, and overrides only the thin selectors in `src/editions/current/`. Shared modules never import `src/cloud/` or `src/editions/selfhost/` directly. The public distribution rejects both Cloud source roots, and Cloud CI enforces ownership and dependency direction for every source file.
 
 Server, client, client-safe economics, worker and request-edge selectors are separate so Node-only dependencies and secrets cannot enter browser or edge bundles. Edition UI is a registry of optional components; absent self-hosted surfaces are not dummy feature implementations.
 
