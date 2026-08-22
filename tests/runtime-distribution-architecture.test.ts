@@ -71,3 +71,10 @@ test("every application role uses the same immutable image", () => {
   assert.match(dockerfile, /\/usr\/local\/lib\/node_modules\/npm/);
   assert.match(dockerfile, /\/usr\/local\/lib\/node_modules\/corepack/);
 });
+
+test("self-hosted persistence verifies the public support contract", () => {
+  const selfhostE2e = source("scripts/selfhost-e2e.mjs");
+  assert.match(selfhostE2e, /ticket\?\.supportTier !== "community"/);
+  assert.match(selfhostE2e, /ticket\?\.supportTierName !== "Community"/);
+  assert.doesNotMatch(selfhostE2e, /ticket\?\.planSlug/);
+});

@@ -177,7 +177,9 @@ async function verify() {
   if (body.project?.sourceUrl !== `https://example.test/${state.graphMarker}`) fail("project data did not survive restart/restore");
   await assertRealtimeMarker(state.cookie, state.projectId, state.realtimeMarker, false);
   const support = await jsonRequest(`/api/support/${state.supportId}`, authenticated(state.cookie));
-  if (support.body.ticket?.planSlug !== "selfhost") fail("self-hosted support ticket did not survive restart/restore");
+  if (support.body.ticket?.supportTier !== "community" || support.body.ticket?.supportTierName !== "Community") {
+    fail("self-hosted support ticket did not survive restart/restore");
+  }
   console.log(`Verified persisted self-hosted state: ${state.projectId}`);
 }
 
