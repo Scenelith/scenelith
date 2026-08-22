@@ -6,6 +6,7 @@ const canvasPage = readFileSync(new URL("../src/app/canvas/page.tsx", import.met
 const canvasApp = readFileSync(new URL("../src/components/CanvasApp.tsx", import.meta.url), "utf8");
 const theme = readFileSync(new URL("../src/app/theme.css", import.meta.url), "utf8");
 const database = readFileSync(new URL("../src/lib/postgres-db.ts", import.meta.url), "utf8");
+const workspaceAccess = readFileSync(new URL("../src/distribution/workspace-access.ts", import.meta.url), "utf8");
 const frameNode = readFileSync(new URL("../src/components/FrameNode.tsx", import.meta.url), "utf8");
 const projectRoute = readFileSync(new URL("../src/app/api/projects/[id]/route.ts", import.meta.url), "utf8");
 
@@ -48,9 +49,9 @@ test("canvas list summaries never hydrate every full project", () => {
   assert.doesNotMatch(listItemBody, /rowToProject\(row\)/);
   assert.doesNotMatch(listItemBody, /graph_json/);
   assert.match(listItemBody, /parseProjectSummary\(row\.summary_json/);
-  assert.match(database, /LEFT JOIN project_snapshots ps ON ps\.project_id = p\.id/);
-  assert.match(database, /p\.id, p\.workspace_id, p\.name, p\.source_url, p\.status/);
-  assert.doesNotMatch(database, /accessibleProjectRows = db\.prepare\(`SELECT DISTINCT p\.\*/);
+  assert.match(workspaceAccess, /LEFT JOIN project_snapshots ps ON ps\.project_id = p\.id/);
+  assert.match(workspaceAccess, /p\.id, p\.workspace_id, p\.name, p\.source_url, p\.status/);
+  assert.doesNotMatch(workspaceAccess, /accessibleProjectRows = db\.prepare\(`SELECT DISTINCT p\.\*/);
 });
 
 test("canvas shell switches immediately and cold graphs hydrate through realtime", () => {

@@ -1,7 +1,29 @@
 import type { HookRecord, ProjectGraph, ProjectRecord, UserRecord, WorkspaceRecord } from "./types";
 import { normalizeProjectGraph } from "./canvas-graph";
 import { relationalDb } from "./relational-db";
-import { teamUsageEntitlement } from "@/modules/usage";
+import {
+  canUserCreateWorkspace,
+  listAccessibleProjectRows,
+  listAccessibleWorkspaceRows,
+  usageWorkspaceForUserProject,
+  usageWorkspaceForUserWorkspace,
+  userCanAccessProject,
+  userCanAccessWorkspace,
+  userCanManageWorkspace,
+  workspaceRoleForUser,
+} from "@/distribution/workspace-access";
+
+export {
+  canUserCreateWorkspace,
+  listAccessibleProjectRows,
+  listAccessibleWorkspaceRows,
+  usageWorkspaceForUserProject,
+  usageWorkspaceForUserWorkspace,
+  userCanAccessProject,
+  userCanAccessWorkspace,
+  userCanManageWorkspace,
+  workspaceRoleForUser,
+};
 
 export const db = relationalDb;
 
@@ -180,75 +202,12 @@ export function rowToHook(row: Record<string, unknown>): HookRecord {
   };
 }
 
-async function enabledTeamAnchorIds(userId: string) {
-  const anchors = await db.prepare(`SELECT DISTINCT tm.anchor_workspace_id
-    FROM team_memberships tm
-    JOIN workspace_members anchor_owner_membership
-      ON anchor_owner_membership.workspace_id = tm.anchor_workspace_id
-      AND anchor_owner_membership.user_id = tm.owner_user_id
-      AND anchor_owner_membership.role = 'owner'
-    WHERE tm.member_user_id = ?`).all(userId) as Array<{ anchor_workspace_id: string }>;
-  const decisions = await Promise.all(anchors.map(async ({ anchor_workspace_id }) => ({
-    anchorWorkspaceId: anchor_workspace_id,
-    enabled: (await teamUsageEntitlement(anchor_workspace_id)).enabled,
-  })));
-  return decisions.filter((decision) => decision.enabled).map((decision) => decision.anchorWorkspaceId);
-}
-
-export async function listAccessibleWorkspaceRows(userId: string) {
-  const enabledAnchors = JSON.stringify(await enabledTeamAnchorIds(userId));
-  return await db.prepare(`SELECT DISTINCT w.*, wm.role AS member_role,
-      CASE wm.role WHEN 'owner' THEN 0 ELSE 1 END AS role_sort
-    FROM workspaces w
-    JOIN workspace_members wm ON wm.workspace_id = w.id
-    JOIN users account ON account.id = wm.user_id
-    WHERE wm.user_id = ? AND (
-      (wm.role = 'owner' AND account.team_managed = false)
-      OR (wm.role = 'member' AND EXISTS (
-        SELECT 1 FROM team_canvas_grants grant_row
-        JOIN team_memberships tm ON tm.anchor_workspace_id = grant_row.anchor_workspace_id AND tm.member_user_id = grant_row.member_user_id
-        JOIN projects granted_project ON granted_project.id = grant_row.project_id AND granted_project.workspace_id = grant_row.workspace_id
-        JOIN workspace_members owner_membership ON owner_membership.workspace_id = grant_row.workspace_id AND owner_membership.user_id = tm.owner_user_id AND owner_membership.role = 'owner'
-        JOIN workspace_members anchor_owner_membership ON anchor_owner_membership.workspace_id = tm.anchor_workspace_id AND anchor_owner_membership.user_id = tm.owner_user_id AND anchor_owner_membership.role = 'owner'
-        WHERE grant_row.member_user_id = wm.user_id AND grant_row.workspace_id = w.id
-          AND tm.anchor_workspace_id IN (SELECT jsonb_array_elements_text(?::jsonb))
-      ))
-    )
-    ORDER BY role_sort, w.updated_at DESC`).all(userId, enabledAnchors) as Record<string, unknown>[];
-}
-
-export async function listAccessibleProjectRows(userId: string) {
-  const enabledAnchors = JSON.stringify(await enabledTeamAnchorIds(userId));
-  return await db.prepare(`SELECT DISTINCT
-      p.id, p.workspace_id, p.name, p.source_url, p.status, p.created_at, p.updated_at,
-      COALESCE(ps.revision, 1) AS graph_revision,
-      COALESCE(ps.summary_json, '{"scenes":0,"prompts":0,"outputs":0,"previews":[]}'::jsonb) AS summary_json
-    FROM projects p
-    LEFT JOIN project_snapshots ps ON ps.project_id = p.id
-    JOIN workspace_members wm ON wm.workspace_id = p.workspace_id
-    JOIN users account ON account.id = wm.user_id
-    WHERE wm.user_id = ? AND (
-      (wm.role = 'owner' AND account.team_managed = false)
-      OR (wm.role = 'member' AND EXISTS (
-        SELECT 1 FROM team_canvas_grants grant_row
-        JOIN team_memberships tm ON tm.anchor_workspace_id = grant_row.anchor_workspace_id AND tm.member_user_id = grant_row.member_user_id
-        JOIN projects granted_project ON granted_project.id = grant_row.project_id AND granted_project.workspace_id = grant_row.workspace_id
-        JOIN workspace_members owner_membership ON owner_membership.workspace_id = grant_row.workspace_id AND owner_membership.user_id = tm.owner_user_id AND owner_membership.role = 'owner'
-        JOIN workspace_members anchor_owner_membership ON anchor_owner_membership.workspace_id = tm.anchor_workspace_id AND anchor_owner_membership.user_id = tm.owner_user_id AND anchor_owner_membership.role = 'owner'
-        WHERE grant_row.member_user_id = wm.user_id AND grant_row.project_id = p.id
-          AND tm.anchor_workspace_id IN (SELECT jsonb_array_elements_text(?::jsonb))
-      ))
-    )
-    ORDER BY p.updated_at DESC`).all(userId, enabledAnchors) as Record<string, unknown>[];
-}
-
 export async function ensureDefaultWorkspace(userId: string): Promise<WorkspaceRecord | null> {
   return await db.transaction(async () => {
     await db.prepare("SELECT pg_advisory_xact_lock(hashtextextended(?, 0))").get(`default-workspace:${userId}`);
-    const account = await db.prepare("SELECT team_managed FROM users WHERE id = ?").get(userId) as { team_managed: number } | undefined;
     const existing = (await listAccessibleWorkspaceRows(userId))[0];
     if (existing) return rowToWorkspace(existing);
-    if (account?.team_managed) return null;
+    if (!await canUserCreateWorkspace(userId)) return null;
     const id = crypto.randomUUID();
     const now = new Date().toISOString();
     await db.prepare("INSERT INTO workspaces (id, name, role_prompt, created_at, updated_at) VALUES (?, 'My App', '', ?, ?)").run(id, now, now);
@@ -267,73 +226,9 @@ export async function claimUnownedWorkspaces(userId: string) {
   return result.changes;
 }
 
-export async function workspaceRoleForUser(userId: string, workspaceId: string) {
-  const row = await db.prepare(`SELECT wm.role, u.team_managed
-    FROM workspace_members wm JOIN users u ON u.id = wm.user_id
-    WHERE wm.user_id = ? AND wm.workspace_id = ?`).get(userId, workspaceId) as { role: string; team_managed: number } | undefined;
-  if (row?.role === "owner") return row.team_managed ? null : "owner" as const;
-  return row?.role === "member" ? "member" as const : null;
-}
-
-export async function userCanManageWorkspace(userId: string, workspaceId: string) {
-  return await workspaceRoleForUser(userId, workspaceId) === "owner";
-}
-
-const activeGrantForProjectSql = `SELECT grant_row.anchor_workspace_id
-  FROM team_canvas_grants grant_row
-  JOIN team_memberships tm ON tm.anchor_workspace_id = grant_row.anchor_workspace_id AND tm.member_user_id = grant_row.member_user_id
-  JOIN projects granted_project ON granted_project.id = grant_row.project_id AND granted_project.workspace_id = grant_row.workspace_id
-  JOIN workspace_members owner_membership ON owner_membership.workspace_id = grant_row.workspace_id AND owner_membership.user_id = tm.owner_user_id AND owner_membership.role = 'owner'
-  JOIN workspace_members anchor_owner_membership ON anchor_owner_membership.workspace_id = tm.anchor_workspace_id AND anchor_owner_membership.user_id = tm.owner_user_id AND anchor_owner_membership.role = 'owner'
-  WHERE grant_row.member_user_id = ? AND grant_row.project_id = ?
-  ORDER BY tm.created_at ASC LIMIT 1`;
-
-const activeGrantForWorkspaceSql = activeGrantForProjectSql
-  .replace("grant_row.project_id = ?", "grant_row.workspace_id = ?");
-
-async function entitledGrant(sql: string, userId: string, targetId: string) {
-  const grant = await db.prepare(sql).get(userId, targetId) as { anchor_workspace_id: string } | undefined;
-  if (!grant || !(await teamUsageEntitlement(grant.anchor_workspace_id)).enabled) return undefined;
-  return grant;
-}
-
-export async function userCanAccessWorkspace(userId: string, workspaceId: string) {
-  const role = await workspaceRoleForUser(userId, workspaceId);
-  if (role === "owner") return true;
-  if (role !== "member") return false;
-  return Boolean(await entitledGrant(activeGrantForWorkspaceSql, userId, workspaceId));
-}
-
-export async function userCanAccessProject(userId: string, projectId: string) {
-  const project = await db.prepare("SELECT workspace_id FROM projects WHERE id = ?").get(projectId) as { workspace_id: string } | undefined;
-  if (!project) return false;
-  const role = await workspaceRoleForUser(userId, project.workspace_id);
-  if (role === "owner") return true;
-  if (role !== "member") return false;
-  return Boolean(await entitledGrant(activeGrantForProjectSql, userId, projectId));
-}
-
 export async function workspaceIdForProject(projectId: string) {
   const row = await db.prepare("SELECT workspace_id FROM projects WHERE id = ?").get(projectId) as { workspace_id: string } | undefined;
   return row?.workspace_id || null;
-}
-
-export async function usageWorkspaceForUserProject(userId: string, projectId: string) {
-  const project = await db.prepare("SELECT workspace_id FROM projects WHERE id = ?").get(projectId) as { workspace_id: string } | undefined;
-  if (!project) return null;
-  const role = await workspaceRoleForUser(userId, project.workspace_id);
-  if (role === "owner") return project.workspace_id;
-  if (role !== "member") return null;
-  const grant = await entitledGrant(activeGrantForProjectSql, userId, projectId);
-  return grant?.anchor_workspace_id || null;
-}
-
-export async function usageWorkspaceForUserWorkspace(userId: string, workspaceId: string) {
-  const role = await workspaceRoleForUser(userId, workspaceId);
-  if (role === "owner") return workspaceId;
-  if (role !== "member") return null;
-  const grant = await entitledGrant(activeGrantForWorkspaceSql, userId, workspaceId);
-  return grant?.anchor_workspace_id || null;
 }
 
 export async function userCanAccessAsset(userId: string, assetId: string) {

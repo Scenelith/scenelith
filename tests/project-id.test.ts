@@ -45,9 +45,6 @@ test("canvas API schemas never require project ids to be UUIDs", () => {
     "../src/app/api/hooks/route.ts",
     "../src/app/api/import/tiktok/route.ts",
     "../src/app/api/import/tiktok/stats/route.ts",
-    "../src/app/api/team/invitations/route.ts",
-    "../src/app/api/team/invitations/[id]/route.ts",
-    "../src/app/api/team/members/[id]/route.ts",
   ];
   for (const file of files) {
     const source = readFileSync(new URL(file, import.meta.url), "utf8");

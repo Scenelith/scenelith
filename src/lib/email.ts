@@ -37,7 +37,7 @@ function escapeHtml(value: string) {
   return value.replace(/[&<>'"]/g, (character) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", "'": "&#39;", '"': "&quot;" })[character] || character);
 }
 
-function layout(input: {
+export function renderTransactionalEmail(input: {
   preheader: string;
   eyebrow: string;
   title: string;
@@ -104,7 +104,7 @@ export function sendVerificationEmail(email: string, name: string, token: string
   return sendEmail({
     to: email,
     subject: "Confirm your Scenelith email",
-    html: layout({ preheader: "Confirm your email to finish setting up Scenelith.", eyebrow: "ACCOUNT / EMAIL VERIFICATION", title: "Confirm your email", copy: `Hi ${firstName}. One quick confirmation keeps your workspace and future team invitations tied to the right account.`, action: { label: "Confirm email", url }, note: "This secure link expires in 24 hours. If you did not create this account, you can safely ignore this message." }),
+    html: renderTransactionalEmail({ preheader: "Confirm your email to finish setting up Scenelith.", eyebrow: "ACCOUNT / EMAIL VERIFICATION", title: "Confirm your email", copy: `Hi ${firstName}. One quick confirmation keeps your workspace tied to the right account.`, action: { label: "Confirm email", url }, note: "This secure link expires in 24 hours. If you did not create this account, you can safely ignore this message." }),
     text: `Hi ${firstName}. Confirm your Scenelith email: ${url}\n\nThis link expires in 24 hours.`,
   });
 }
@@ -115,7 +115,7 @@ export function sendPasswordResetEmail(email: string, name: string, token: strin
   return sendEmail({
     to: email,
     subject: "Reset your Scenelith password",
-    html: layout({ preheader: "Use this secure link to reset your Scenelith password.", eyebrow: "ACCOUNT / PASSWORD RESET", title: "Reset your password", copy: `Hi ${firstName}. Use the secure link below to choose a new password and return to your workspace.`, action: { label: "Reset password", url }, note: "This link expires in 30 minutes and works once. If you did not request a reset, no action is needed." }),
+    html: renderTransactionalEmail({ preheader: "Use this secure link to reset your Scenelith password.", eyebrow: "ACCOUNT / PASSWORD RESET", title: "Reset your password", copy: `Hi ${firstName}. Use the secure link below to choose a new password and return to your workspace.`, action: { label: "Reset password", url }, note: "This link expires in 30 minutes and works once. If you did not request a reset, no action is needed." }),
     text: `Hi ${firstName}. Reset your Scenelith password: ${url}\n\nThis link expires in 30 minutes and can only be used once.`,
   });
 }
@@ -125,28 +125,7 @@ export function sendPasswordChangedEmail(email: string, name: string) {
   return sendEmail({
     to: email,
     subject: "Your Scenelith password was changed",
-    html: layout({ preheader: "Your Scenelith password was changed.", eyebrow: "ACCOUNT / SECURITY", title: "Password changed", copy: `Hi ${firstName}. The password for your Scenelith account was changed successfully.`, details: [{ label: "Account", value: email }], note: "If this was not you, request another password reset immediately and secure your email account." }),
+    html: renderTransactionalEmail({ preheader: "Your Scenelith password was changed.", eyebrow: "ACCOUNT / SECURITY", title: "Password changed", copy: `Hi ${firstName}. The password for your Scenelith account was changed successfully.`, details: [{ label: "Account", value: email }], note: "If this was not you, request another password reset immediately and secure your email account." }),
     text: `Hi ${firstName}. Your Scenelith password was changed successfully. If this was not you, request another password reset immediately.`,
-  });
-}
-
-export function sendTeamInvitationEmail(input: { email: string; inviterEmail: string; workspaceName: string; token: string; invitationId: string; attempt: number }) {
-  const url = `${baseUrl()}/invite/${encodeURIComponent(input.token)}`;
-  const inviter = input.inviterEmail.split("@", 1)[0]?.trim() || "A teammate";
-  return sendEmail({
-    to: input.email,
-    subject: `${inviter} invited you to join ${input.workspaceName}`,
-    html: layout({
-      preheader: `${inviter} invited you to join the ${input.workspaceName} project on Scenelith.`,
-      eyebrow: "PROJECT / TEAM INVITATION",
-      title: `Join ${input.workspaceName}`,
-      copy: `${inviter} invited you to join the ${input.workspaceName} project on Scenelith. Accept with this email address to connect your account.`,
-      details: [{ label: "Project", value: input.workspaceName }, { label: "Invited by", value: inviter }, { label: "Access", value: "Team member" }],
-      points: ["Shared canvases, identities and hooks", "Shared generation credit pool", "Your own secure Scenelith login"],
-      action: { label: "Accept invitation", url },
-      note: `This invitation expires in 7 days. The secure link creates your team login and can be used once. If you lose it before joining, ask ${inviter} to resend the invitation.`,
-    }),
-    text: `${inviter} invited you to join the ${input.workspaceName} project on Scenelith.\n\nAccept the invitation: ${url}\n\nThis invitation expires in 7 days. The secure link creates your team login and can be used once. If you lose it before joining, ask ${inviter} to resend the invitation.`,
-    idempotencyKey: `team-invite-${input.invitationId}-${input.attempt}`,
   });
 }

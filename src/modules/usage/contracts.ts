@@ -11,13 +11,6 @@ export type UsageSummary = {
   updatedAt: string;
 };
 
-export type TeamEntitlement = {
-  enabled: boolean;
-  policyId: string;
-  policyName: string;
-  seatLimit: number;
-};
-
 export type GenerationUsageReservation = {
   generationId: string;
   workspaceId: string;
@@ -44,7 +37,6 @@ export type AutomationUsageSettlement = {
 
 export interface UsageAuthority {
   summary(workspaceId: string): Promise<UsageSummary>;
-  teamEntitlement(workspaceId: string): Promise<TeamEntitlement>;
   reserveGeneration(input: GenerationUsageReservation): Promise<boolean>;
   settleGeneration(generationId: string): Promise<void>;
   releaseGeneration(generationId: string, reason: string): Promise<boolean>;

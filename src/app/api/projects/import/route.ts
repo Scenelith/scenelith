@@ -24,7 +24,7 @@ export async function POST(request: Request) {
   const workspaceId = typeof wrapper.workspaceId === "string" && wrapper.workspaceId
     ? wrapper.workspaceId
     : (await ensureDefaultWorkspace(auth.user.id))?.id;
-  if (!workspaceId) return Response.json({ error: "Team members cannot create private canvases" }, { status: 403 });
+  if (!workspaceId) return Response.json({ error: "This account cannot create canvases" }, { status: 403 });
   if (await workspaceRoleForUser(auth.user.id, workspaceId) !== "owner") return Response.json({ error: "App not found" }, { status: 404 });
   try {
     const document = parseScenelithDocument(wrapper.document ?? body);

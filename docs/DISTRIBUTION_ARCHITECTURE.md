@@ -12,7 +12,7 @@ Scenelith/scenelith (public canonical core)
 Scenelith/scenelith-cloud (private hosted extension)
 ```
 
-The hosted repository may add deployment, account, support-tier, usage-policy, and payment integrations through declared extension paths. It must not become a second implementation of the canvas or media pipeline. A lock file records the exact public commit consumed by each hosted build, and CI rejects undeclared drift in public-owned paths.
+The hosted repository may add deployment, account, workspace-access, product-surface, usage-policy, and payment integrations through declared extension paths. It must not become a second implementation of the canvas or media pipeline. A lock file records the exact public commit consumed by each hosted build, and CI rejects undeclared drift in public-owned paths.
 
 Nothing flows automatically from the private repository into public source. This prevents private files, credentials, infrastructure addresses, commercial policy, or hosted-only dependencies from crossing the boundary.
 

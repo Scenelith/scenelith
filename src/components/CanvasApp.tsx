@@ -64,9 +64,9 @@ import { MediaViewer, type ImageEditOptions } from "./MediaViewer";
 import { VideoEditorViewer, type VideoEditorReference } from "./VideoEditorViewer";
 import type { ImageEditPersona, ImageEditReference } from "./ImageEditReferencePicker";
 import { ProfileMenu } from "./ProfileMenu";
-import { CommunityPanelRouter, NotificationBell, TaskCenter, communityRailItems, type CommunityPanelKind } from "./CommunityPanels";
+import { ProductNotificationCenter, ProductPanelRouter, PendingProductInvitations, productRailItems, type ProductPanelKind } from "@/distribution/product-extension";
 import { AccountOverlayExtension } from "@/distribution/account-extension";
-import { PendingTeamInvitations } from "./PendingTeamInvitations";
+import { TaskCenter } from "./TaskCenter";
 import BrandMark from "./BrandMark";
 import type { BackgroundTaskRecord, FrameEdge, FrameNode, GeneratorInputRole, HookRecord, LibraryMediaAsset, PersonaRecord, ProjectRecord, UserRecord, VideoMasterClip, VideoSceneSegment, WorkspaceRecord } from "@/lib/types";
 import { editReferenceMentionToken, referenceMentionToken } from "@/lib/reference-mentions";
@@ -504,7 +504,7 @@ function CanvasWorkspace({ initialProject, projects: initialProjects, initialWor
   const [workspaceLibraryOpen, setWorkspaceLibraryOpen] = useState(false);
   const [newWorkspaceFormOpen, setNewWorkspaceFormOpen] = useState(false);
   const [hookLibraryOpen, setHookLibraryOpen] = useState(false);
-  const [communityFocus, setCommunityFocus] = useState<{ kind: CommunityPanelKind; id?: string; nonce: number } | null>(null);
+  const [productPanelFocus, setProductPanelFocus] = useState<{ kind: ProductPanelKind; id?: string; nonce: number } | null>(null);
   const [tiktokAutomationOpen, setTikTokAutomationOpen] = useState(false);
   const [automationSourceId, setAutomationSourceId] = useState("");
   const [automationMode, setAutomationMode] = useState<TikTokAutomationMode>("concept");
@@ -681,9 +681,9 @@ function CanvasWorkspace({ initialProject, projects: initialProjects, initialWor
   }, []);
   useEffect(() => { writeProjectSessionCache(initialProject); }, [initialProject]);
   const activeGenerationNodeIds = useMemo(() => Array.from(new Set([...generatingNodeIds, ...backgroundGenerationNodeIds])), [backgroundGenerationNodeIds, generatingNodeIds]);
-  const openCommunityPanel = useCallback((kind: CommunityPanelKind, id?: string) => {
+  const openProductPanel = useCallback((kind: ProductPanelKind, id?: string) => {
     if (kind === "admin" && !user.isAdmin) return;
-    setCommunityFocus({ kind, id, nonce: Date.now() });
+    setProductPanelFocus({ kind, id, nonce: Date.now() });
     setTikTokAutomationOpen(false);
     setHookLibraryOpen(false);
     setIdentityLibraryOpen(false);
@@ -4602,8 +4602,8 @@ function CanvasWorkspace({ initialProject, projects: initialProjects, initialWor
             setSidebarOpen(!["prompt", "assistant", "note", "scene", "videoMaster"].includes(taskNode.data.kind) && !(taskNode.data.kind === "source" && Boolean(taskNode.data.videoSegments?.length)));
             void fitView({ nodes: [taskNode], padding: 0.32, minZoom: 0.2, maxZoom: 1.08, duration: 360 });
           }} />
-          <NotificationBell onNavigate={openCommunityPanel} />
-          <ProfileMenu user={user} workspaceId={workspace.id} workspaceName={workspace.name} workspaceRole={workspace.memberRole} usage={liveCreditUsage} onRequestAccountView={setAccountView} onOpenAdmin={() => openCommunityPanel("admin")} onOpenTeam={() => openCommunityPanel("team")} />
+          <ProductNotificationCenter onNavigate={openProductPanel} />
+          <ProfileMenu user={user} workspaceId={workspace.id} workspaceName={workspace.name} workspaceRole={workspace.memberRole} usage={liveCreditUsage} onRequestAccountView={setAccountView} onOpenProductPanel={openProductPanel} />
         </div>
       </header>
 
@@ -4616,7 +4616,7 @@ function CanvasWorkspace({ initialProject, projects: initialProjects, initialWor
         onClose={() => setAccountView(null)}
         onUsageUpdated={setLiveCreditUsage}
       />
-      <PendingTeamInvitations />
+      <PendingProductInvitations />
 
       {workspaceLibraryOpen && (
         <div className="workspace-library">
@@ -4656,15 +4656,15 @@ function CanvasWorkspace({ initialProject, projects: initialProjects, initialWor
         </div>
       )}
 
-      <aside className={`tool-rail ${tiktokAutomationOpen || hookLibraryOpen || identityLibraryOpen || communityFocus ? "has-open-panel" : ""}`}>
-        <button className={tiktokAutomationOpen ? "is-active" : ""} data-tooltip="TikTok automation" aria-label="Open TikTok automation" onClick={() => { const nextOpen = !tiktokAutomationOpen; setTikTokAutomationOpen(nextOpen); setHookLibraryOpen(false); setIdentityLibraryOpen(false); setCommunityFocus(null); if (nextOpen && selectedAutomationSourceId) focusAutomationSource(selectedAutomationSourceId); }}><Workflow size={18} /></button>
-        <button className={hookLibraryOpen ? "is-active" : ""} data-tooltip="Hooks" aria-label="Open hooks" onClick={() => { setHookLibraryOpen((value) => !value); setIdentityLibraryOpen(false); setTikTokAutomationOpen(false); setCommunityFocus(null); }}><Quote size={18} /></button>
-        <button className={identityLibraryOpen ? "is-active" : ""} data-tooltip="Library" aria-label="Open Library" onClick={() => { setIdentityLibraryOpen((value) => !value); setHookLibraryOpen(false); setTikTokAutomationOpen(false); setCommunityFocus(null); }}><Images size={18} /></button>
+      <aside className={`tool-rail ${tiktokAutomationOpen || hookLibraryOpen || identityLibraryOpen || productPanelFocus ? "has-open-panel" : ""}`}>
+        <button className={tiktokAutomationOpen ? "is-active" : ""} data-tooltip="TikTok automation" aria-label="Open TikTok automation" onClick={() => { const nextOpen = !tiktokAutomationOpen; setTikTokAutomationOpen(nextOpen); setHookLibraryOpen(false); setIdentityLibraryOpen(false); setProductPanelFocus(null); if (nextOpen && selectedAutomationSourceId) focusAutomationSource(selectedAutomationSourceId); }}><Workflow size={18} /></button>
+        <button className={hookLibraryOpen ? "is-active" : ""} data-tooltip="Hooks" aria-label="Open hooks" onClick={() => { setHookLibraryOpen((value) => !value); setIdentityLibraryOpen(false); setTikTokAutomationOpen(false); setProductPanelFocus(null); }}><Quote size={18} /></button>
+        <button className={identityLibraryOpen ? "is-active" : ""} data-tooltip="Library" aria-label="Open Library" onClick={() => { setIdentityLibraryOpen((value) => !value); setHookLibraryOpen(false); setTikTokAutomationOpen(false); setProductPanelFocus(null); }}><Images size={18} /></button>
         <span className="tool-rail-divider" />
-        {communityRailItems.map((item) => <button key={item.kind} className={communityFocus?.kind === item.kind ? "is-active" : ""} data-tooltip={item.label} aria-label={`Open ${item.label}`} onClick={() => communityFocus?.kind === item.kind ? setCommunityFocus(null) : openCommunityPanel(item.kind)}><item.icon size={18} /></button>)}
+        {productRailItems.map((item) => <button key={item.kind} className={productPanelFocus?.kind === item.kind ? "is-active" : ""} data-tooltip={item.label} aria-label={`Open ${item.label}`} onClick={() => productPanelFocus?.kind === item.kind ? setProductPanelFocus(null) : openProductPanel(item.kind)}><item.icon size={18} /></button>)}
       </aside>
 
-      <CommunityPanelRouter focus={communityFocus} user={user} workspace={workspace} onOpenPricing={() => { setCommunityFocus(null); setAccountView("access"); }} onClose={() => setCommunityFocus(null)} />
+      <ProductPanelRouter focus={productPanelFocus} user={user} workspace={workspace} onOpenPricing={() => { setProductPanelFocus(null); setAccountView("access"); }} onClose={() => setProductPanelFocus(null)} />
 
       {tiktokAutomationOpen && <TikTokAutomationPanel
         sources={tiktokAutomationSources}

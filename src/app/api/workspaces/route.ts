@@ -1,6 +1,6 @@
 import { z } from "zod";
 import { requireApiUser } from "@/lib/auth";
-import { db, ensureDefaultWorkspace, listAccessibleWorkspaceRows, rowToWorkspace } from "@/lib/postgres-db";
+import { canUserCreateWorkspace, db, ensureDefaultWorkspace, listAccessibleWorkspaceRows, rowToWorkspace } from "@/lib/postgres-db";
 
 export const runtime = "nodejs";
 
@@ -16,8 +16,7 @@ const schema = z.object({ name: z.string().trim().min(1).max(80), rolePrompt: z.
 export async function POST(request: Request) {
   const auth = await requireApiUser();
   if (auth.response) return auth.response;
-  const account = await db.prepare("SELECT team_managed FROM users WHERE id = ?").get(auth.user.id) as { team_managed: number } | undefined;
-  if (account?.team_managed) return Response.json({ error: "Team members cannot create private projects" }, { status: 403 });
+  if (!await canUserCreateWorkspace(auth.user.id)) return Response.json({ error: "This account cannot create projects" }, { status: 403 });
   const parsed = schema.safeParse(await request.json().catch(() => null));
   if (!parsed.success) return Response.json({ error: "App name is required" }, { status: 400 });
   const id = crypto.randomUUID();

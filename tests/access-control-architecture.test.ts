@@ -25,10 +25,12 @@ test("manual hooks cannot combine a workspace with a canvas from another workspa
   assert.match(route, /!projectMatchesWorkspace \|\| !await userCanAccessProject/);
 });
 
-test("team-managed accounts cannot receive an automatic private workspace", () => {
+test("workspace access is selected through a narrow distribution adapter", () => {
   const database = source("src/lib/postgres-db.ts");
-  assert.match(database, /SELECT team_managed FROM users WHERE id = \?/);
-  assert.match(database, /if \(account\?\.team_managed\) return null/);
+  const access = source("src/distribution/workspace-access.ts");
+  assert.match(database, /@\/distribution\/workspace-access/);
+  assert.match(access, /wm\.role = 'owner'/);
+  assert.doesNotMatch(access, /team_memberships|team_canvas_grants|team_managed/);
 });
 
 test("expensive authenticated mutations are origin checked and rate limited across web replicas", () => {
@@ -55,5 +57,5 @@ test("sensitive access and deletion actions append bounded audit evidence", () =
   assert.match(migration, /interval '400 days'/);
   assert.match(worker, /DELETE FROM audit_events WHERE expires_at/);
   assert.match(source("src/app/api/projects/[id]/route.ts"), /project\.deleted/);
-  assert.match(source("src/app/api/team/members/[id]/route.ts"), /team\.member_removed/);
+  assert.doesNotMatch(source("src/distribution/workspace-access.ts"), /member_removed/);
 });

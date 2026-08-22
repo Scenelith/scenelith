@@ -62,7 +62,7 @@ export async function POST(request: Request) {
     })();
   } catch (error) {
     if (error instanceof RegistrationClosedError) {
-      return Response.json({ error: "Account registration is closed. Ask the instance owner for an invitation." }, { status: 403 });
+      return Response.json({ error: "Account registration is disabled by the instance owner." }, { status: 403 });
     }
     if ((error as { code?: string }).code === "23505") {
       await recordAuthFailure(rateKey);

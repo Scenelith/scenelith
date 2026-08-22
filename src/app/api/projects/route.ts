@@ -15,7 +15,7 @@ export async function POST(request: Request) {
   if (auth.response) return auth.response;
   const body = (await request.json().catch(() => ({}))) as { name?: string; workspaceId?: string };
   const workspaceId = body.workspaceId || (await ensureDefaultWorkspace(auth.user.id))?.id;
-  if (!workspaceId) return Response.json({ error: "Team members cannot create private canvases" }, { status: 403 });
+  if (!workspaceId) return Response.json({ error: "This account cannot create canvases" }, { status: 403 });
   if (await workspaceRoleForUser(auth.user.id, workspaceId) !== "owner") return Response.json({ error: "App not found" }, { status: 404 });
   const id = crypto.randomUUID();
   const now = new Date().toISOString();

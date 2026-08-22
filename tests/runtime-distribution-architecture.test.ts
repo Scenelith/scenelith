@@ -18,7 +18,7 @@ test("the public runtime is permanently self-hosted", () => {
   assert.throws(() => readRuntimeConfig({ SCENELITH_USAGE_MODE: "managed_credits" }));
 });
 
-test("hosted commercial source and dependencies are absent", () => {
+test("hosted product source and dependencies are absent", () => {
   for (const path of [
     "src/app/api/billing",
     "src/app/api/webhooks/whop",
@@ -27,6 +27,20 @@ test("hosted commercial source and dependencies are absent", () => {
     "src/lib/billing.ts",
     "src/lib/whop.ts",
     "src/modules/usage/cloud-usage-authority.ts",
+    "src/app/api/admin/overview/route.ts",
+    "src/app/api/admin/notifications/route.ts",
+    "src/app/api/features/route.ts",
+    "src/app/api/notifications/route.ts",
+    "src/app/api/support/route.ts",
+    "src/app/api/team/route.ts",
+    "src/app/invite/[token]/page.tsx",
+    "src/components/CommunityPanels.tsx",
+    "src/components/InviteAcceptance.tsx",
+    "src/components/PendingTeamInvitations.tsx",
+    "src/components/TeamPanel.tsx",
+    "src/lib/community-policy.ts",
+    "src/lib/community.ts",
+    "src/lib/team.ts",
   ]) assert.equal(existsSync(join(root, path)), false, path);
 
   const packageJson = JSON.parse(source("package.json"));
@@ -72,9 +86,9 @@ test("every application role uses the same immutable image", () => {
   assert.match(dockerfile, /\/usr\/local\/lib\/node_modules\/corepack/);
 });
 
-test("self-hosted persistence verifies the public support contract", () => {
+test("self-hosted persistence verifies only portable canvas state", () => {
   const selfhostE2e = source("scripts/selfhost-e2e.mjs");
-  assert.match(selfhostE2e, /ticket\?\.supportTier !== "community"/);
-  assert.match(selfhostE2e, /ticket\?\.supportTierName !== "Community"/);
-  assert.doesNotMatch(selfhostE2e, /ticket\?\.planSlug/);
+  assert.match(selfhostE2e, /graphMarker/);
+  assert.match(selfhostE2e, /realtimeMarker/);
+  assert.doesNotMatch(selfhostE2e, /\/api\/(?:support|features|notifications|team)/);
 });

@@ -151,22 +151,7 @@ async function seed() {
   await assertRealtimeMarker(cookie, projectId, realtimeMarker, true);
   await assertRealtimeMarker(cookie, projectId, realtimeMarker, false);
 
-  const support = await jsonRequest("/api/support", authenticated(cookie, {
-    method: "POST",
-    headers: { origin: baseUrl },
-    body: JSON.stringify({
-      subject: `Self-hosted support ${suffix}`,
-      category: "account",
-      body: "Verify the public support queue on this self-hosted instance.",
-    }),
-  }), [201]);
-  if (support.body.ticket?.supportTier !== "community" || support.body.ticket?.supportTierName !== "Community") {
-    fail("support queue did not use the self-hosted support tier");
-  }
-  const supportId = support.body.ticket?.id;
-  if (!supportId) fail("support ticket creation returned no id");
-
-  writeFileSync(statePath, `${JSON.stringify({ cookie, projectId, projectName, graphMarker, realtimeMarker, supportId }, null, 2)}\n`, { mode: 0o600 });
+  writeFileSync(statePath, `${JSON.stringify({ cookie, projectId, projectName, graphMarker, realtimeMarker }, null, 2)}\n`, { mode: 0o600 });
   console.log(`Seeded and verified self-hosted state: ${projectId}`);
 }
 
@@ -176,10 +161,6 @@ async function verify() {
   if (body.project?.name !== state.projectName) fail("project identity did not survive restart/restore");
   if (body.project?.sourceUrl !== `https://example.test/${state.graphMarker}`) fail("project data did not survive restart/restore");
   await assertRealtimeMarker(state.cookie, state.projectId, state.realtimeMarker, false);
-  const support = await jsonRequest(`/api/support/${state.supportId}`, authenticated(state.cookie));
-  if (support.body.ticket?.supportTier !== "community" || support.body.ticket?.supportTierName !== "Community") {
-    fail("self-hosted support ticket did not survive restart/restore");
-  }
   console.log(`Verified persisted self-hosted state: ${state.projectId}`);
 }
 

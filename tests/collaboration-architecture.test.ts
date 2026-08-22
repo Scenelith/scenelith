@@ -61,7 +61,7 @@ test("realtime authorization is enforced after authentication", () => {
   assert.match(server, /context\?\.permission !== "write"/);
   assert.match(server, /beforeHandleAwareness/);
   assert.match(server, /Canvas access changed/);
-  assert.match(source("src/app/api/team/members/[id]/route.ts"), /revokeCollaborativeAccess/);
+  assert.match(tokenRoute, /userCanAccessProject/);
 });
 
 test("collaboration resource growth and shutdown are bounded", () => {
