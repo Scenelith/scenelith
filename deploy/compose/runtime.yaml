@@ -62,8 +62,8 @@ services:
     environment:
       COLLABORATION_DATABASE_URL: postgresql://${POSTGRES_USER}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB}
     depends_on:
-      postgres:
-        condition: service_healthy
+      application-migrate:
+        condition: service_completed_successfully
     command: ["node", "collaboration/migrate.mjs"]
 
   application-migrate:

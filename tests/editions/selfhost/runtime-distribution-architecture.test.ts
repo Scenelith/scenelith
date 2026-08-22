@@ -89,10 +89,12 @@ test("hosted product source and dependencies are absent", () => {
 
 test("self-hosted compose selects the BYOK profile and contains no hosted worker", () => {
   const compose = source("deploy/selfhost/compose.yaml");
+  const runtime = source("deploy/compose/runtime.yaml");
   const override = source("deploy/selfhost/runtime.override.yaml");
   assert.match(override, /SCENELITH_DEPLOYMENT_TYPE: selfhost/);
   assert.match(override, /SCENELITH_USAGE_MODE: bring_your_own/);
   assert.doesNotMatch(`${compose}\n${override}`, /billing-worker|WORKER_ROLE: billing/);
+  assert.match(runtime, /collaboration-migrate:[\s\S]*?depends_on:\s*\n\s*application-migrate:\s*\n\s*condition: service_completed_successfully/);
 });
 
 test("every application role uses the same immutable image", () => {
