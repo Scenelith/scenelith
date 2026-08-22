@@ -38,11 +38,6 @@ x-runtime-security: &runtime-security
 
 x-worker: &worker
   <<: *runtime-security
-  image: ${SCENELITH_WORKER_IMAGE:-ghcr.io/scenelith/scenelith-worker}:${SCENELITH_VERSION:-0.1.1}
-  build:
-    context: .
-    dockerfile: Dockerfile
-    target: worker
   restart: unless-stopped
   init: true
   stop_grace_period: 2m
@@ -63,10 +58,6 @@ x-worker: &worker
 services:
   collaboration-migrate:
     <<: *runtime-security
-    image: ${SCENELITH_COLLABORATION_IMAGE:-ghcr.io/scenelith/scenelith-collaboration}:${SCENELITH_VERSION:-0.1.1}
-    build:
-      context: .
-      dockerfile: Dockerfile.collaboration
     restart: "no"
     environment:
       COLLABORATION_DATABASE_URL: postgresql://${POSTGRES_USER}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB}
@@ -77,11 +68,6 @@ services:
 
   application-migrate:
     <<: *runtime-security
-    image: ${SCENELITH_MIGRATION_IMAGE:-ghcr.io/scenelith/scenelith-migration}:${SCENELITH_VERSION:-0.1.1}
-    build:
-      context: .
-      dockerfile: Dockerfile
-      target: migration
     restart: "no"
     environment:
       DATABASE_URL: postgresql://${POSTGRES_USER}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB}
@@ -92,11 +78,6 @@ services:
 
   frameflow:
     <<: *runtime-security
-    image: ${SCENELITH_WEB_IMAGE:-ghcr.io/scenelith/scenelith-web}:${SCENELITH_VERSION:-0.1.1}
-    build:
-      context: .
-      dockerfile: Dockerfile
-      target: runner
     restart: unless-stopped
     environment:
       <<: [*deployment-environment, *storage-environment, *collaboration-client-environment]
@@ -181,10 +162,6 @@ services:
 
   collaboration:
     <<: *runtime-security
-    image: ${SCENELITH_COLLABORATION_IMAGE:-ghcr.io/scenelith/scenelith-collaboration}:${SCENELITH_VERSION:-0.1.1}
-    build:
-      context: .
-      dockerfile: Dockerfile.collaboration
     restart: unless-stopped
     environment:
       COLLABORATION_DATABASE_URL: postgresql://${POSTGRES_USER}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB}

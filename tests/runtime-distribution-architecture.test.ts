@@ -48,6 +48,7 @@ test("self-hosted compose selects the BYOK profile and contains no hosted worker
 
 test("every application role uses the same immutable image", () => {
   const override = source("deploy/selfhost/runtime.override.yaml");
+  const runtime = source("deploy/compose/runtime.yaml");
   const dockerfile = source("Dockerfile");
   assert.match(override, /SCENELITH_APP_IMAGE:-ghcr\.io\/scenelith\/scenelith/);
   const roleCommands = {
@@ -64,6 +65,8 @@ test("every application role uses the same immutable image", () => {
   }
   assert.match(dockerfile, /COPY --chown=scenelith:scenelith collaboration \.\/collaboration/);
   assert.doesNotMatch(dockerfile, /FROM base AS (?:worker|migration)/);
+  assert.doesNotMatch(runtime, /SCENELITH_(?:WEB|WORKER|MIGRATION|COLLABORATION)_IMAGE/);
+  assert.doesNotMatch(runtime, /Dockerfile\.collaboration|target: (?:runner|worker|migration)/);
   assert.match(dockerfile, /\/usr\/local\/lib\/node_modules\/npm/);
   assert.match(dockerfile, /\/usr\/local\/lib\/node_modules\/corepack/);
 });
