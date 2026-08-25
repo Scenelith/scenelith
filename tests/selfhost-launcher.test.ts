@@ -7,6 +7,8 @@ import { tmpdir } from "node:os";
 import test from "node:test";
 
 const root = process.cwd();
+const currentVersion = JSON.parse(readFileSync(join(root, "package.json"), "utf8")).version as string;
+const nextVersion = currentVersion.replace(/(\d+)$/, (patch) => String(Number(patch) + 1));
 
 function sha256(path: string) {
   return createHash("sha256").update(readFileSync(path)).digest("hex");
@@ -168,7 +170,7 @@ test("bundle updates preserve secrets, back up data, and move to one exact image
 
   const incoming = join(temporary, "scenelith-selfhost");
   const incomingExample = join(incoming, "deploy/selfhost/.env.example");
-  writeFileSync(incomingExample, readFileSync(incomingExample, "utf8").replace(/^SCENELITH_VERSION=.*$/m, "SCENELITH_VERSION=0.3.4"));
+  writeFileSync(incomingExample, readFileSync(incomingExample, "utf8").replace(/^SCENELITH_VERSION=.*$/m, `SCENELITH_VERSION=${nextVersion}`));
   const manifestPath = join(incoming, "MANIFEST.sha256");
   const manifest = readFileSync(manifestPath, "utf8").split(/\r?\n/).filter(Boolean).map((line) => {
     const path = line.slice(line.indexOf("  ") + 2);
@@ -199,7 +201,7 @@ test("bundle updates preserve secrets, back up data, and move to one exact image
   });
   assert.equal(updated.status, 0, updated.stderr || updated.stdout);
   const updatedEnvironment = parseEnvironment(readFileSync(envPath, "utf8"));
-  assert.equal(updatedEnvironment.get("SCENELITH_VERSION"), "0.3.4");
+  assert.equal(updatedEnvironment.get("SCENELITH_VERSION"), nextVersion);
   assert.equal(updatedEnvironment.get("SESSION_SECRET"), originalSecret);
   assert.equal(readdirSync(join(installation, "backups")).length, 1);
   assert.match(readFileSync(dockerLog, "utf8"), /compose .* pull/);
