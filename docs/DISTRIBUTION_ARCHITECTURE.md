@@ -80,3 +80,5 @@ The self-hosted baseline contains no billing, team, invitation, recovery-token, 
 5. Cloud deployment and public self-hosted releases remain separate promotion decisions.
 
 Every application role in one distribution runs the same versioned image. PostgreSQL, Redis and the gateway remain independently pinned infrastructure images.
+
+The self-hosted release also publishes a small installation bundle containing only the launcher, documentation, environment template, and the same canonical Compose files used by source checkouts. It contains no application source, provider credentials, or separate runtime implementation. The installer verifies the release archive and its internal allowlisted-file manifest before copying anything; the launcher never owns application state and never removes persistent Docker volumes.

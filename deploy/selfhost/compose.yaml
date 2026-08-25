@@ -13,7 +13,7 @@ services:
     environment:
       POSTGRES_DB: ${POSTGRES_DB:-scenelith}
       POSTGRES_USER: ${POSTGRES_USER:-scenelith}
-      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?Run npm run selfhost:init}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?Run ./scenelith init}
     volumes:
       - scenelith-postgres:/var/lib/postgresql/data
     healthcheck:

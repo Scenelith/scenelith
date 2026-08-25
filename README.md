@@ -15,33 +15,55 @@ Scenelith combines a node canvas, image and video generation, editing, reusable 
 
 ## Quick start
 
-You need Docker Engine, Docker Compose 2.20.3 or newer, Node.js 24, 4 CPU cores, 8 GB RAM, and at least 10 GB of free disk space.
+You need Docker Engine, Docker Compose 2.20.3 or newer, 4 CPU cores, 8 GB RAM, and at least 10 GB of free disk space. Git, Node.js, npm, and a source checkout are not required.
 
 ```bash
-git clone https://github.com/Scenelith/scenelith.git
-cd scenelith
-npm run selfhost:init
+curl -fsSL https://github.com/Scenelith/scenelith/releases/latest/download/install.sh | sh
 ```
 
-Add the provider keys you intend to use to `deploy/selfhost/.env`:
+The installer downloads the latest release bundle, verifies its SHA-256 checksum and internal manifest, creates `./scenelith`, generates unique private secrets, validates Docker, and starts the complete stack from pinned images. It refuses to overwrite a non-empty installation directory.
+
+If you prefer to inspect the installer before running it:
+
+```bash
+curl -fsSLO https://github.com/Scenelith/scenelith/releases/latest/download/install.sh
+less install.sh
+sh install.sh
+```
+
+Add the provider keys you intend to use to `scenelith/deploy/selfhost/.env`:
 
 ```dotenv
 KIE_API_KEY=
 OPENROUTER_API_KEY=
 ```
 
-Then validate and start the complete instance:
+Then recreate the services so workers receive the new keys:
 
 ```bash
-npm run selfhost:doctor
-npm run selfhost:up
+cd scenelith
+./scenelith restart
 ```
 
 Open <http://localhost>. The first account becomes the instance owner, and public registration closes by default. Operators can choose open registration explicitly when several independent local accounts are required.
 
-The normal installation pulls one signed, versioned, multi-architecture application image. Web, workers, migrations, and realtime collaboration run that exact image with different commands. Contributors can build the checked-out source with `npm run selfhost:up:source`.
+The release bundle contains deployment files and a thin launcher, not the application source or a second product implementation. Web, workers, migrations, and realtime collaboration run one attested, versioned, multi-architecture image with different commands. Contributors can still clone this repository and build the checked-out source with `npm run selfhost:up:source`.
 
 For domains, automatic HTTPS, S3-compatible storage, backups, upgrades, rollback, and the complete service topology, read the [self-hosting guide](docs/SELF_HOSTING.md).
+
+### Build from source
+
+Contributors need Git and Node.js 24 in addition to Docker:
+
+```bash
+git clone https://github.com/Scenelith/scenelith.git
+cd scenelith
+npm ci
+./scenelith init
+npm run selfhost:up:source
+```
+
+The source path and release bundle resolve the same Compose model. The only difference is whether the application image is pulled from the release or built from the checked-out source.
 
 ## Providers and outbound connections
 
@@ -53,7 +75,6 @@ Provider keys stay in the server environment. They are sent only to the provider
 | **OpenRouter** | Assistant, automation planning, and visual text analysis | OpenRouter key and the prompt or media required by the selected model |
 | **Tikwm** | Resolving public TikTok posts during import | TikTok URL; Tikwm returns post metadata and direct media URLs |
 | **S3-compatible storage** | Optional operator-owned media storage | Media and object metadata configured by the operator |
-| **Google OAuth** | Optional sign-in | Standard OAuth identity data |
 
 TikTok import does not use a logged-in TikTok account or TikTok cookies. Video scene detection, thumbnails, and timeline sprites are processed locally with FFmpeg after download. The default interface makes no automatic request to a Scenelith media server.
 
@@ -80,16 +101,24 @@ The [`recipes/`](recipes) directory contains small, reviewable workflow examples
 Create a checksummed backup before every upgrade:
 
 ```bash
-npm run selfhost:backup
+./scenelith backup
 ```
 
 Restore only from a verified backup and only with explicit confirmation:
 
 ```bash
-npm run selfhost:restore -- --from /absolute/path/to/backup --confirm
+./scenelith restore --from /absolute/path/to/backup --confirm
 ```
 
-Select an exact release in `SCENELITH_VERSION`, check out the matching source tag, and run `npm run selfhost:up`. Ordered migrations complete before application services start. Never edit an applied migration or run `docker compose down -v` unless permanent data deletion is intentional.
+Update to the newest stable release with:
+
+```bash
+./scenelith update
+```
+
+The updater downloads and verifies the new release bundle, creates a checksummed backup, preserves the environment and Docker volumes, pulls the exact image, applies ordered expand-only migrations, and waits for every service to become healthy. If startup fails, it restores the previous deployment files and image. Pin a reviewed release with `./scenelith update 1.2.3`.
+
+Never edit an applied migration or run `docker compose down -v` unless permanent data deletion is intentional.
 
 ## Community and contributions
 

@@ -106,6 +106,25 @@ test("self-hosted compose selects the BYOK profile and contains no hosted worker
   assert.match(runtime, /collaboration-migrate:[\s\S]*?depends_on:\s*\n\s*application-migrate:\s*\n\s*condition: service_completed_successfully/);
 });
 
+test("release users receive a source-free bundle backed by the canonical Compose model", () => {
+  const launcher = source("scenelith");
+  const installer = source("install.sh");
+  const bundler = source("scripts/build-selfhost-bundle.mjs");
+  const release = source(".github/workflows/release.yml");
+  assert.match(launcher, /docker compose --env-file/);
+  assert.match(launcher, /compose up -d --no-build --wait/);
+  assert.match(launcher, /Release archive contains an unsafe path/);
+  assert.match(launcher, /Release bundle checksum mismatch/);
+  assert.doesNotMatch(launcher, /docker compose down -v|compose down -v/);
+  assert.match(installer, /MANIFEST\.sha256/);
+  assert.match(bundler, /deploy\/compose\/runtime\.yaml/);
+  assert.match(bundler, /deploy\/selfhost\/compose\.yaml/);
+  assert.match(bundler, /config\/runtime-providers\.json/);
+  assert.doesNotMatch(bundler, /package\.json|Dockerfile|src\//);
+  assert.match(release, /dist\/scenelith-selfhost\.tar\.gz/);
+  assert.match(release, /dist\/install\.sh/);
+});
+
 test("every application role uses the same immutable image", () => {
   const override = source("deploy/selfhost/runtime.override.yaml");
   const runtime = source("deploy/compose/runtime.yaml");

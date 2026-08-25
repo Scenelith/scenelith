@@ -1,6 +1,6 @@
 # Self-hosting Scenelith
 
-Scenelith self-hosted is the complete public product runtime. It uses bring-your-own-provider credentials and runs directly from the canonical public source.
+Scenelith self-hosted is the complete public product runtime. It uses bring-your-own-provider credentials and runs from a release bundle backed by the canonical public source.
 
 ## Quick start
 
@@ -8,23 +8,28 @@ Requirements:
 
 - Docker Engine with Docker Compose 2.20.3 or newer (the distribution uses Compose `include`)
 - 4 CPU cores and 8 GB RAM for a small instance
-- a Kie API key for the current image/video model catalogue
-- an OpenRouter API key for Assistant and TikTok automation planning
+- 10 GB of free disk space, with 20 GB or more recommended for images and media
+- optionally, a Kie API key for image/video generation and an OpenRouter API key for Assistant and automation planning
 
-From the repository root:
-
-```bash
-npm run selfhost:init
-```
-
-Open `deploy/selfhost/.env` and add the provider keys you intend to use, then start the instance:
+Install the latest stable release without Git, Node.js, npm, or a source checkout:
 
 ```bash
-npm run selfhost:doctor
-npm run selfhost:up
+curl -fsSL https://github.com/Scenelith/scenelith/releases/latest/download/install.sh | sh
 ```
 
-The doctor names every configured provider, validates secrets and storage without printing their values, checks the complete Compose model, and stops before a build when the host does not have enough free disk space. Add `-- --strict-providers` when both Kie and OpenRouter must be present.
+The installer downloads the release archive and checksum from GitHub Releases, verifies both the archive and its internal file manifest, creates `./scenelith`, generates unique secrets with mode `0600`, validates the complete Compose model, and starts the pinned images. Set `SCENELITH_INSTALL_DIR=/opt/scenelith` to choose another empty directory or `SCENELITH_VERSION=1.2.3` to install an exact release.
+
+For a review-before-run installation:
+
+```bash
+curl -fsSLO https://github.com/Scenelith/scenelith/releases/latest/download/install.sh
+less install.sh
+sh install.sh
+```
+
+Open `scenelith/deploy/selfhost/.env` and add the provider keys you intend to use, then run `./scenelith restart`. The stack can start without provider keys; only the corresponding generation or Assistant features stay unavailable.
+
+`./scenelith doctor` names every configured provider, validates secrets and storage without printing their values, checks the complete Compose model, and stops before pulling images when the host does not have enough free disk space. Add `--strict-providers` when both Kie and OpenRouter must be present. `./scenelith doctor --json` is available for automation.
 
 Open <http://localhost>. The first account becomes the instance owner and administrator. Normal public registration closes after that account. Self-hosted has no team invitations or email delivery; set `SCENELITH_REGISTRATION_MODE=open` only when independent local accounts are intentional. Each local account owns its own workspace.
 
@@ -36,7 +41,7 @@ Provider names and connection status are visible in **Profile → Providers**:
 
 Keys stay in the server environment and are never returned to the browser. Only the configured/not-configured status is shown. Restart the instance after changing a key.
 
-The initializer creates unique database, session, collaboration, and internal-service secrets with mode `0600`. It refuses to replace an existing environment file.
+`./scenelith init` creates unique database, session, collaboration, and internal-service secrets with mode `0600`. It refuses to replace an existing environment file.
 
 ## Included services
 
@@ -49,13 +54,13 @@ The default distribution starts:
 - Redis with append-only persistence;
 - Caddy for HTTP/WebSocket routing and automatic TLS on a public domain.
 
-Hosted payment and account-email services are not part of the self-hosted runtime. The instance owner signs in directly after local registration; email confirmation and email-based password recovery are intentionally absent. Google OAuth remains an optional operator-owned integration.
+Hosted payment and account-email services are not part of the self-hosted runtime. The instance owner signs in directly after local registration; Google OAuth, email confirmation, and email-based password recovery are intentionally absent.
 
 Uploaded and generated media uses the `scenelith-data` Docker volume by default. PostgreSQL and Redis use separate persistent volumes. Removing containers does not remove these volumes. Do not run `docker compose down -v` unless permanent deletion is intended.
 
 For distributed or off-host media storage, set `STORAGE_PROVIDER=s3` and configure the `S3_*` values in the environment file. Leave `S3_ENDPOINT` blank for AWS S3; set it for S3-compatible services such as MinIO, Backblaze, Cloudflare R2, or DigitalOcean Spaces.
 
-Create the private and public buckets named in the environment file, then run `npm run storage:configure-cors`. The command reads the self-host environment, preserves unrelated bucket rules, and installs Scenelith's browser upload rule for `PUBLIC_URL` or `STORAGE_CORS_ORIGINS`.
+Create the private and public buckets named in the environment file. Source-checkout operators can run `npm run storage:configure-cors`. Release-bundle operators should create one CORS rule on both buckets: allow the origins in `PUBLIC_URL` or `STORAGE_CORS_ORIGINS`, allow `GET`, `HEAD`, and `PUT`, allow the `content-type` and `range` headers, and expose `etag`, `content-length`, and `content-range`.
 
 ## Public server
 
@@ -71,7 +76,7 @@ Point the domain's DNS records at the server and allow inbound TCP ports 80 and 
 
 For a production instance, also establish:
 
-- encrypted off-host retention for the backups created by `npm run selfhost:backup`;
+- encrypted off-host retention for the backups created by `./scenelith backup`;
 - monitoring for `/api/health/ready` and container health;
 - host-level disk capacity alerts for local media;
 - image update and rollback procedures;
@@ -82,17 +87,17 @@ For a production instance, also establish:
 Create and verify a backup first:
 
 ```bash
-npm run selfhost:backup
+./scenelith backup
 ```
 
 The command briefly quiesces application writers, writes a PostgreSQL custom-format dump, archives local media, records checksums and release metadata, then starts the stack again. It never copies provider keys. S3-compatible media remains in operator-owned object storage and needs its own versioning or snapshot policy.
 
-Pull the desired tagged release, set `SCENELITH_VERSION` to that exact version, and run `npm run selfhost:up`. The command pulls the published application image instead of compiling on the server. The one-shot migration service applies the ordered runtime migration stream before web and workers start. Web, workers, collaboration, and migrations all run from the same immutable Scenelith image.
+Run `./scenelith update` for the latest stable release or `./scenelith update 1.2.3` for an exact release. The updater verifies the release archive and internal manifest, creates a backup, preserves the environment and Docker volumes, installs only the allowlisted deployment files, pulls the exact application image, applies ordered migrations, and waits for health checks. If the new services do not become healthy, it restores the previous deployment files and image. Core migrations are expand-only so the prior application image remains a valid operational rollback while the backup remains the data recovery boundary.
 
 To restore a backup, use its absolute directory and explicit confirmation:
 
 ```bash
-npm run selfhost:restore -- --from /absolute/path/to/scenelith-backup --confirm
+./scenelith restore --from /absolute/path/to/scenelith-backup --confirm
 ```
 
 Restore verifies every checksum, stops application writers, replaces the database and local media, then starts the complete stack. Test this procedure on a separate host before relying on it for production recovery.

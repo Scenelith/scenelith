@@ -8,7 +8,7 @@ export const envPath = resolve(root, "deploy/selfhost/.env");
 export const composePath = resolve(root, "deploy/selfhost/compose.yaml");
 
 export function requireEnvironment() {
-  if (!existsSync(envPath)) throw new Error("deploy/selfhost/.env is missing. Run npm run selfhost:init first.");
+  if (!existsSync(envPath)) throw new Error("deploy/selfhost/.env is missing. Run ./scenelith init first.");
   const values = new Map();
   for (const rawLine of readFileSync(envPath, "utf8").split(/\r?\n/)) {
     const line = rawLine.trim();
