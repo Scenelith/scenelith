@@ -15,9 +15,7 @@
   </p>
 </div>
 
-![Scenelith visual canvas turning a source post into reusable AI workflows](docs/assets/readme/scenelith-canvas-demo.webp)
-
-<p align="center"><a href="docs/assets/readme/scenelith-five-workflows.mp4">Watch the full-resolution 30 fps product tour →</a></p>
+https://github.com/user-attachments/assets/4ce9d173-ed5f-4e00-a9ae-1dc7f9bfb5d3
 
 Scenelith keeps the source, references, prompts, generations, edits, and reusable identities connected instead of scattering a creative workflow across separate tools. Import a proven format, rebuild it with your own character or brand, compare every output, and continue editing on the same canvas.
 
