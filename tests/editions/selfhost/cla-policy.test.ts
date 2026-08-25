@@ -7,9 +7,11 @@ const root = process.cwd();
 const publicRoot = existsSync(join(root, ".github/workflows/cla.yml")) ? root : join(root, "deploy/selfhost/repository");
 const source = (path: string) => readFileSync(join(publicRoot, path), "utf8");
 
-test("every human pull request is gated by the versioned CLA record", () => {
+test("external human pull requests are gated by the versioned CLA record", () => {
   const workflow = source(".github/workflows/cla.yml");
   assert.match(workflow, /pull_request_target:/);
+  assert.match(workflow, /pull_request\.author_association/);
+  assert.match(workflow, /OWNER\|MEMBER\) exit 0/);
   assert.match(workflow, /signature_path="\.github\/cla-signatures\/v1\/\$\{PR_AUTHOR\}\.json"/);
   assert.match(workflow, /\.github\/cla-signature-template\.json/);
   assert.match(workflow, /\.version == "1\.0"/);
@@ -29,10 +31,10 @@ test("the CLA preserves contributor ownership while covering Cloud and relicensi
   assert.match(agreement, /employer or another entity/i);
 });
 
-test("public contribution instructions make the CLA mandatory without a size exemption", () => {
+test("public contribution instructions make the CLA mandatory for external contributors without a size exemption", () => {
   const contributionGuide = readFileSync(join(root, "CONTRIBUTING.md"), "utf8");
   const pullRequestTemplate = source(".github/PULL_REQUEST_TEMPLATE.md");
-  assert.match(contributionGuide, /Every human contributor must have the current Scenelith Individual Contributor License Agreement/);
+  assert.match(contributionGuide, /Every external human contributor must have the current Scenelith Individual Contributor License Agreement/);
   assert.match(contributionGuide, /there is no size-based exemption/);
   assert.match(pullRequestTemplate, /\.github\/cla-signatures\/v1\/MY-GITHUB-LOGIN\.json/);
 });

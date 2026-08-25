@@ -1,6 +1,6 @@
 # CLA signature records
 
-Every human pull-request author must accept [`CLA.md`](../../../CLA.md) before a contribution can merge. The CLA check is mandatory for maintainers and external contributors alike.
+Every external human pull-request author must accept [`CLA.md`](../../../CLA.md) before a contribution can merge. Repository owners and members of the Scenelith GitHub organization are maintainers of the product and are exempt.
 
 ## Sign once
 

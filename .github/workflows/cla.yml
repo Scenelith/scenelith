@@ -16,6 +16,7 @@ jobs:
       GH_TOKEN: ${{ github.token }}
       PR_NUMBER: ${{ github.event.pull_request.number }}
       PR_AUTHOR: ${{ github.event.pull_request.user.login }}
+      PR_AUTHOR_ASSOCIATION: ${{ github.event.pull_request.author_association }}
       BASE_SHA: ${{ github.event.pull_request.base.sha }}
       HEAD_SHA: ${{ github.event.pull_request.head.sha }}
       HEAD_REPOSITORY: ${{ github.event.pull_request.head.repo.full_name }}
@@ -26,6 +27,9 @@ jobs:
           set -euo pipefail
           case "${PR_AUTHOR}" in
             dependabot\[bot\]|renovate\[bot\]) exit 0 ;;
+          esac
+          case "${PR_AUTHOR_ASSOCIATION}" in
+            OWNER|MEMBER) exit 0 ;;
           esac
           [[ "${PR_AUTHOR}" =~ ^[A-Za-z0-9-]+$ ]]
           signature_path=".github/cla-signatures/v1/${PR_AUTHOR}.json"

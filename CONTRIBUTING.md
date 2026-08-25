@@ -13,7 +13,7 @@ Thank you for improving Scenelith. This public repository is the canonical sourc
 
 Before opening a pull request:
 
-1. read `CLA.md` and add the versioned signature record described in `.github/cla-signatures/README.md`;
+1. if You are contributing from outside the Scenelith GitHub organization, read `CLA.md` and add the versioned signature record described in `.github/cla-signatures/README.md`;
 2. explain the user or operator problem and keep the change focused;
 3. add or update tests for behavior changes;
 4. run `npm ci`, `npm run selfhost:audit`, `npm test`, and `npm run build`;
@@ -23,7 +23,7 @@ Before opening a pull request:
 
 Product, runtime, provider, documentation, recipe, and deployment improvements are all welcome. Changes to security boundaries, workflows, licensing, migrations, or portable document compatibility receive additional maintainer review.
 
-Every human contributor must have the current Scenelith Individual Contributor License Agreement on file before a pull request can merge. The required status check validates the signed GitHub record for every pull request; there is no size-based exemption. Contributors acting for an employer or another rights holder must arrange the appropriate entity authorization with the maintainers first.
+Every external human contributor must have the current Scenelith Individual Contributor License Agreement on file before a pull request can merge. Repository owners and members of the Scenelith GitHub organization are maintainers of the product and are exempt. For external contributions, the required status check validates the signed GitHub record for every pull request and there is no size-based exemption. Contributors acting for an employer or another rights holder must arrange the appropriate entity authorization with the maintainers first.
 
 ## Architecture rules
 
