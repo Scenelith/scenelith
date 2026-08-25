@@ -1,7 +1,7 @@
 <div align="center">
   <img src="public/scenelith-mark-email.png" width="72" alt="Scenelith logo" />
   <h1>Scenelith</h1>
-  <p><strong>Create, edit, and automate AI image and video on one visual canvas.</strong></p>
+  <p><strong>Create AI images and video, edit images and video timelines, and automate TikTok slideshows on one visual canvas.</strong></p>
   <p>Source-available · Self-hosted · Your infrastructure · Your provider keys</p>
   <p>
     <a href="https://github.com/Scenelith/scenelith/actions/workflows/runtime.yml"><img src="https://github.com/Scenelith/scenelith/actions/workflows/runtime.yml/badge.svg" alt="Runtime checks" /></a>
@@ -21,16 +21,16 @@ Scenelith keeps the source, references, prompts, generations, edits, and reusabl
 
 ## What you can do
 
-- Generate and edit images and video with visual reference connections.
+- Generate and edit images with visual references, and create video from text, image, video, or audio inputs supported by the selected model.
 - Import TikTok slideshows and video, detect scenes, and keep the source context visible.
 - Save people and characters as reusable single or Before/After identities.
 - Build longer video sequences in Video Master without losing per-scene versions.
-- Automate repeatable content workflows while keeping every intermediate result editable.
-- Run the complete product on your own server with your own storage and provider accounts.
+- Automate repeatable TikTok slideshow workflows and keep the generated nodes connected on the canvas.
+- Run the complete self-hosted product on your own server with your own storage and provider accounts.
 
 ## Run it yourself
 
-You need Docker Engine, Docker Compose 2.20.3 or newer, 4 CPU cores, 8 GB RAM, and at least 10 GB of free disk space. Git, Node.js, npm, and a source checkout are not required.
+You need Docker Engine, Docker Compose 2.20.3 or newer, and at least 10 GB of free disk space. For a small instance, plan for 4 CPU cores and 8 GB RAM. Git, Node.js, npm, and a source checkout are not required.
 
 ```bash
 curl -fsSL https://github.com/Scenelith/scenelith/releases/latest/download/install.sh | sh
@@ -88,8 +88,8 @@ Provider keys stay in the server environment. They are sent only to the provider
 
 | Provider | Used for | Data sent |
 | --- | --- | --- |
-| **Kie** | Image and video generation and editing | Kie key, prompts, settings, and request reference media |
-| **OpenRouter** | Assistant, automation planning, and visual text analysis | OpenRouter key and the prompt or media required by the selected model |
+| **Kie** | Image generation and editing, plus video generation | Kie key, prompts, settings, and request reference media |
+| **OpenRouter** | Assistant and multimodal TikTok automation planning | OpenRouter key and the prompt or media required by the selected model |
 | **Tikwm** | Resolving public TikTok posts during import | TikTok URL; Tikwm returns post metadata and direct media URLs |
 | **S3-compatible storage** | Optional operator-owned media storage | Media and object metadata configured by the operator |
 
@@ -147,6 +147,6 @@ Community changes merge directly into this canonical repository after review, CL
 
 ## License
 
-Scenelith is **source-available**, not OSI open source. The [Sustainable Use License](LICENSE.md) allows internal business, non-commercial, and personal use and modification. It does not allow selling Scenelith or offering it as a competing hosted service. Brand use is covered by [TRADEMARKS.md](TRADEMARKS.md).
+Scenelith is **source-available**, not OSI open source. The [Sustainable Use License](LICENSE.md) allows internal business, non-commercial, and personal use and modification. It does not allow selling Scenelith, commercial redistribution, or operating it as a commercial hosted service. Brand use is covered by [TRADEMARKS.md](TRADEMARKS.md).
 
 The repository boundary and hosted-extension model are documented in [Distribution architecture](docs/DISTRIBUTION_ARCHITECTURE.md).
