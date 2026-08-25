@@ -23,7 +23,7 @@ Before opening a pull request:
 
 Product, runtime, provider, documentation, recipe, and deployment improvements are all welcome. Changes to security boundaries, workflows, licensing, migrations, or portable document compatibility receive additional maintainer review.
 
-Every external human contributor must have the current Scenelith Individual Contributor License Agreement on file before a pull request can merge. Repository owners and members of the Scenelith GitHub organization are maintainers of the product and are exempt. For external contributions, the required status check validates the signed GitHub record for every pull request and there is no size-based exemption. Contributors acting for an employer or another rights holder must arrange the appropriate entity authorization with the maintainers first.
+Every external human contributor must have the current Scenelith Individual Contributor License Agreement on file before a pull request can merge. Repository owners, members of the Scenelith GitHub organization, and explicitly appointed repository collaborators are maintainers of the product and are exempt. For external contributions, the required status check validates the signed GitHub record for every pull request and there is no size-based exemption. Contributors acting for an employer or another rights holder must arrange the appropriate entity authorization with the maintainers first.
 
 ## Architecture rules
 

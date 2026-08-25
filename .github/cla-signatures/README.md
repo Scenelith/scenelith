@@ -1,6 +1,6 @@
 # CLA signature records
 
-Every external human pull-request author must accept [`CLA.md`](../../../CLA.md) before a contribution can merge. Repository owners and members of the Scenelith GitHub organization are maintainers of the product and are exempt.
+Every external human pull-request author must accept [`CLA.md`](../../../CLA.md) before a contribution can merge. Repository owners, members of the Scenelith GitHub organization, and explicitly appointed repository collaborators are maintainers of the product and are exempt.
 
 ## Sign once
 

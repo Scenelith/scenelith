@@ -29,7 +29,7 @@ jobs:
             dependabot\[bot\]|renovate\[bot\]) exit 0 ;;
           esac
           case "${PR_AUTHOR_ASSOCIATION}" in
-            OWNER|MEMBER) exit 0 ;;
+            OWNER|MEMBER|COLLABORATOR) exit 0 ;;
           esac
           [[ "${PR_AUTHOR}" =~ ^[A-Za-z0-9-]+$ ]]
           signature_path=".github/cla-signatures/v1/${PR_AUTHOR}.json"
