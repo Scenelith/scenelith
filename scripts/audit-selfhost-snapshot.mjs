@@ -30,6 +30,7 @@ function visit(directory) {
       if (resolved !== root && !resolved.startsWith(`${root}${sep}`)) failures.push(`symlink escapes repository: ${path}`);
       continue;
     }
+    if (path === ".git") continue;
     if (entry.isFile()) files.push(path);
   }
 }
@@ -49,10 +50,13 @@ const requiredPaths = [
   "Dockerfile",
   "LICENSE.md",
   "README.md",
+  "install.sh",
+  "scenelith",
   ".github/workflows/cla.yml",
   "deploy/selfhost/compose.yaml",
   "deploy/selfhost/.env.example",
   "docs/DISTRIBUTION_ARCHITECTURE.md",
+  "docs/SELF_HOSTING.md",
   "recipes/README.md",
   "src/editions/contracts/runtime.ts",
   "src/editions/contracts/server.ts",
@@ -68,6 +72,7 @@ const requiredPaths = [
   "database/edition.mjs",
   "src/lib/scenelith-document.ts",
   "src/platform/providers/registry.ts",
+  "scripts/build-selfhost-bundle.mjs",
 ];
 for (const path of requiredPaths) {
   if (!existsSync(join(root, path))) failures.push(`required public path is missing: ${path}`);

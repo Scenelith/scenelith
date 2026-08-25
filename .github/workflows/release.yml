@@ -53,8 +53,19 @@ jobs:
           sudo apt-get install -y ffmpeg
           npm ci
           npm run selfhost:audit
+          npm run selfhost:bundle
           npm test
           npm run build
+      - name: Preserve the exact validated installation assets
+        uses: actions/upload-artifact@65c4c4a1ddee5b72f698fdd19549f0f0fb45cf08 # v4.6.2
+        with:
+          name: selfhost-release-assets
+          path: |
+            dist/scenelith-selfhost.tar.gz
+            dist/scenelith-selfhost.tar.gz.sha256
+            dist/install.sh
+          if-no-files-found: error
+          retention-days: 7
 
   image:
     needs: validate
@@ -121,13 +132,71 @@ jobs:
           subject-digest: ${{ steps.build.outputs.digest }}
           push-to-registry: true
 
-  release:
-    needs: image
+  bundle-smoke:
+    needs: [validate, image]
     runs-on: ubuntu-latest
     steps:
+      - uses: actions/download-artifact@018cc2cf5baa6db3ef3c5f8a56943fffe632ef53 # v6.0.0
+        with:
+          name: selfhost-release-assets
+          path: dist
+      - name: Start the exact source-free bundle users will download
+        run: |
+          mkdir -p /tmp/scenelith-release-smoke
+          tar -xzf dist/scenelith-selfhost.tar.gz -C /tmp/scenelith-release-smoke
+          cd /tmp/scenelith-release-smoke/scenelith-selfhost
+          ./scenelith init
+          ./scenelith start
+      - name: Verify the published image exposes only the self-hosted runtime
+        run: |
+          curl --fail --silent --show-error --retry 30 --retry-delay 5 --retry-all-errors http://localhost/api/health/ready
+          curl --fail --silent http://localhost/api/runtime/settings > /tmp/scenelith-release-runtime.json
+          jq -e '.deployment.type == "selfhost"' /tmp/scenelith-release-runtime.json
+          jq -e '.capabilities.usageMode == "bring_your_own"' /tmp/scenelith-release-runtime.json
+          jq -e '.capabilities.billing == false' /tmp/scenelith-release-runtime.json
+      - name: Show bundle logs on failure
+        if: failure()
+        run: |
+          if [ -d /tmp/scenelith-release-smoke/scenelith-selfhost ]; then
+            cd /tmp/scenelith-release-smoke/scenelith-selfhost
+            docker compose --env-file deploy/selfhost/.env -f deploy/selfhost/compose.yaml logs --no-color --tail 200
+          fi
+      - name: Stop the release smoke stack
+        if: always()
+        run: |
+          if [ -f /tmp/scenelith-release-smoke/scenelith-selfhost/deploy/selfhost/.env ]; then
+            cd /tmp/scenelith-release-smoke/scenelith-selfhost
+            ./scenelith stop
+          fi
+
+  release:
+    needs: bundle-smoke
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/download-artifact@018cc2cf5baa6db3ef3c5f8a56943fffe632ef53 # v6.0.0
+        with:
+          name: selfhost-release-assets
+          path: dist
+      - uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4.1.0
+        with:
+          subject-path: dist/scenelith-selfhost.tar.gz
       - name: Publish the release only after the image is available
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          gh release view "${GITHUB_REF_NAME}" --repo "${GITHUB_REPOSITORY}" >/dev/null 2>&1 || \
-            gh release create "${GITHUB_REF_NAME}" --repo "${GITHUB_REPOSITORY}" --verify-tag --generate-notes
+          if gh release view "${GITHUB_REF_NAME}" --repo "${GITHUB_REPOSITORY}" >/dev/null 2>&1; then
+            gh release upload "${GITHUB_REF_NAME}" \
+              dist/scenelith-selfhost.tar.gz \
+              dist/scenelith-selfhost.tar.gz.sha256 \
+              dist/install.sh \
+              --repo "${GITHUB_REPOSITORY}" \
+              --clobber
+          else
+            gh release create "${GITHUB_REF_NAME}" \
+              dist/scenelith-selfhost.tar.gz \
+              dist/scenelith-selfhost.tar.gz.sha256 \
+              dist/install.sh \
+              --repo "${GITHUB_REPOSITORY}" \
+              --verify-tag \
+              --generate-notes
+          fi

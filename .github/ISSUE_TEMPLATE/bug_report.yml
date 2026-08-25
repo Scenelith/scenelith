@@ -52,7 +52,7 @@ body:
     id: diagnostics
     attributes:
       label: Redacted diagnostics
-      description: Paste relevant output from `npm run selfhost:doctor` and redacted logs.
+      description: Paste relevant output from `./scenelith doctor` and redacted logs.
       render: shell
   - type: checkboxes
     id: checks

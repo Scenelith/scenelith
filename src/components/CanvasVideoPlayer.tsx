@@ -397,7 +397,6 @@ export function CanvasVideoPlayer({ src, variant, controlsPlacement = "overlay",
     clearTransportRetry();
     transportAttemptRef.current += 1;
     controllerRef.current?.release();
-    setPlaying(false);
   }, [transportAttached]);
 
   useEffect(() => {

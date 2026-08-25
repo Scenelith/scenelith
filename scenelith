@@ -1,0 +1,760 @@
+#!/bin/sh
+
+set -eu
+
+ROOT=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
+ENV_FILE="$ROOT/deploy/selfhost/.env"
+ENV_EXAMPLE="$ROOT/deploy/selfhost/.env.example"
+COMPOSE_FILE="$ROOT/deploy/selfhost/compose.yaml"
+PROVIDER_MANIFEST="$ROOT/config/runtime-providers.json"
+REPOSITORY="Scenelith/scenelith"
+ASSET_NAME="scenelith-selfhost.tar.gz"
+MINIMUM_COMPOSE_VERSION="2.20.3"
+
+say() {
+  printf '%s\n' "$*"
+}
+
+warn() {
+  printf '! %s\n' "$*" >&2
+}
+
+die() {
+  printf 'Error: %s\n' "$*" >&2
+  exit 1
+}
+
+usage() {
+  cat <<'EOF'
+Scenelith self-hosted
+
+Usage: ./scenelith <command> [options]
+
+Commands:
+  install                Create private instance secrets and start Scenelith
+  init                   Create deploy/selfhost/.env without starting services
+  doctor [--json]        Validate the host and configuration
+  start                  Pull the pinned images and start every service
+  stop                   Stop services without deleting persistent data
+  restart                Recreate services from the pinned images
+  status                 Show service health and state
+  logs [service]         Follow all logs or one service log
+  backup [--output DIR]  Create a checksummed database and local-media backup
+  restore --from DIR --confirm
+                         Replace current data with a verified backup
+  update [VERSION]       Back up and install the latest or selected release
+  config                 Print the resolved Docker Compose configuration
+  help                   Show this help
+
+Provider keys remain in deploy/selfhost/.env. Persistent Docker volumes are
+never removed by this launcher.
+EOF
+}
+
+environment_value_from() {
+  file=$1
+  key=$2
+  awk -F= -v wanted="$key" '
+    /^[[:space:]]*#/ { next }
+    $1 == wanted {
+      sub(/^[^=]*=/, "")
+      print
+      exit
+    }
+  ' "$file"
+}
+
+environment_value() {
+  environment_value_from "$ENV_FILE" "$1"
+}
+
+distribution_version() {
+  environment_value_from "$ENV_EXAMPLE" SCENELITH_VERSION
+}
+
+replace_environment_value() {
+  key=$1
+  value=$2
+  temporary="$ENV_FILE.tmp.$$"
+  trap 'rm -f "$temporary"' 0 HUP INT TERM
+  awk -v wanted="$key" -v replacement="$value" '
+    BEGIN { replaced = 0 }
+    index($0, wanted "=") == 1 {
+      print wanted "=" replacement
+      replaced = 1
+      next
+    }
+    { print }
+    END {
+      if (!replaced) print wanted "=" replacement
+    }
+  ' "$ENV_FILE" > "$temporary"
+  chmod 600 "$temporary"
+  mv "$temporary" "$ENV_FILE"
+  trap - 0 HUP INT TERM
+}
+
+random_secret() {
+  od -An -N32 -tx1 /dev/urandom | tr -d ' \n'
+}
+
+initialize() {
+  [ -f "$ENV_EXAMPLE" ] || die "Missing release configuration: $ENV_EXAMPLE"
+  [ ! -e "$ENV_FILE" ] || die "deploy/selfhost/.env already exists; refusing to overwrite its secrets"
+
+  umask 077
+  temporary="$ENV_FILE.tmp.$$"
+  trap 'rm -f "$temporary"' 0 HUP INT TERM
+  cp "$ENV_EXAMPLE" "$temporary"
+  chmod 600 "$temporary"
+  mv "$temporary" "$ENV_FILE"
+  trap - 0 HUP INT TERM
+
+  for key in POSTGRES_PASSWORD SESSION_SECRET COLLABORATION_JWT_SECRET COLLABORATION_INTERNAL_SECRET SCENELITH_INTERNAL_METRICS_SECRET; do
+    replace_environment_value "$key" "$(random_secret)"
+  done
+
+  say "Created deploy/selfhost/.env with unique private secrets."
+  say "Add KIE_API_KEY and OPENROUTER_API_KEY when you are ready to enable those providers."
+}
+
+require_environment() {
+  [ -f "$ENV_FILE" ] || die "deploy/selfhost/.env is missing. Run ./scenelith init first."
+}
+
+compose() {
+  require_environment
+  docker compose --env-file "$ENV_FILE" -f "$COMPOSE_FILE" "$@"
+}
+
+version_at_least() {
+  actual=$1
+  expected=$2
+  awk -v actual="$actual" -v expected="$expected" 'BEGIN {
+    sub(/^v/, "", actual)
+    sub(/^v/, "", expected)
+    split(actual, left, ".")
+    split(expected, right, ".")
+    for (part = 1; part <= 3; part += 1) {
+      left[part] += 0
+      right[part] += 0
+      if (left[part] > right[part]) exit 0
+      if (left[part] < right[part]) exit 1
+    }
+    exit 0
+  }'
+}
+
+file_mode() {
+  if stat -f '%Lp' "$1" >/dev/null 2>&1; then
+    stat -f '%Lp' "$1"
+  else
+    stat -c '%a' "$1"
+  fi
+}
+
+host_from_url() {
+  printf '%s\n' "$1" | sed -E 's#^[a-zA-Z]+://##; s#/.*$##'
+}
+
+provider_rows() {
+  awk '
+    function string_value(line, key, value) {
+      value = line
+      sub("^.*\\\"" key "\\\"[[:space:]]*:[[:space:]]*\\\"", "", value)
+      sub("\\\".*$", "", value)
+      return value
+    }
+    /^[[:space:]]*{/ { id = ""; name = ""; description = ""; variable = ""; active = 1 }
+    active && /"id"[[:space:]]*:/ { id = string_value($0, "id") }
+    active && /"name"[[:space:]]*:/ { name = string_value($0, "name") }
+    active && /"description"[[:space:]]*:/ { description = string_value($0, "description") }
+    active && /"environmentVariable"[[:space:]]*:[[:space:]]*"/ { variable = string_value($0, "environmentVariable") }
+    active && /^[[:space:]]*}/ {
+      if (id != "" && name != "" && description != "") print id "\t" name "\t" description "\t" variable
+      active = 0
+    }
+  ' "$PROVIDER_MANIFEST"
+}
+
+doctor_add() {
+  printf '%s\t%s\t%s\n' "$1" "$2" "$3" >> "$DOCTOR_CHECKS"
+}
+
+doctor_json_string() {
+  awk 'BEGIN { ORS="" }
+    {
+      if (NR > 1) printf "\\n"
+      gsub(/\\/, "\\\\")
+      gsub(/\"/, "\\\"")
+      gsub(/\t/, "\\t")
+      printf "%s", $0
+    }
+  '
+}
+
+doctor_report() {
+  json=$1
+  errors=$(awk -F '\t' '$1 == "error" { count += 1 } END { print count + 0 }' "$DOCTOR_CHECKS")
+  warnings=$(awk -F '\t' '$1 == "warning" { count += 1 } END { print count + 0 }' "$DOCTOR_CHECKS")
+
+  if [ "$json" -eq 1 ]; then
+    printf '{\n  "ok": %s,\n  "errors": %s,\n  "warnings": %s,\n  "checks": [\n' "$([ "$errors" -eq 0 ] && printf true || printf false)" "$errors" "$warnings"
+    first=1
+    while IFS="$(printf '\t')" read -r level id message; do
+      [ "$first" -eq 1 ] || printf ',\n'
+      first=0
+      printf '    {"level":"%s","id":"%s","message":"' "$level" "$id"
+      printf '%s' "$message" | doctor_json_string
+      printf '"}'
+    done < "$DOCTOR_CHECKS"
+    printf '\n  ]\n}\n'
+  else
+    say "Scenelith self-hosted doctor"
+    say ""
+    while IFS="$(printf '\t')" read -r level _id message; do
+      case "$level" in
+        ok) symbol='✓' ;;
+        warning) symbol='!' ;;
+        error) symbol='✗' ;;
+      esac
+      say "$symbol $message"
+    done < "$DOCTOR_CHECKS"
+    say ""
+    if [ "$errors" -eq 0 ]; then
+      summary="Ready"
+    else
+      summary="$errors error"
+      [ "$errors" -eq 1 ] || summary="${summary}s"
+    fi
+    if [ "$warnings" -gt 0 ]; then
+      warning_summary="$warnings warning"
+      [ "$warnings" -eq 1 ] || warning_summary="${warning_summary}s"
+      summary="$summary · $warning_summary"
+    fi
+    say "$summary"
+  fi
+
+  [ "$errors" -eq 0 ]
+}
+
+doctor() {
+  json=0
+  strict_providers=0
+  while [ "$#" -gt 0 ]; do
+    case "$1" in
+      --json) json=1 ;;
+      --strict-providers) strict_providers=1 ;;
+      *) die "Unknown doctor option: $1" ;;
+    esac
+    shift
+  done
+
+  DOCTOR_CHECKS=$(mktemp "${TMPDIR:-/tmp}/scenelith-doctor.XXXXXX")
+  trap 'rm -f "$DOCTOR_CHECKS"' 0 HUP INT TERM
+
+  compose_available=0
+  if ! command -v docker >/dev/null 2>&1; then
+    doctor_add error compose "Docker is unavailable. Install Docker Engine with Compose $MINIMUM_COMPOSE_VERSION or newer."
+  elif ! compose_version=$(docker compose version --short 2>/dev/null); then
+    doctor_add error compose "Docker Compose is unavailable. Install Compose $MINIMUM_COMPOSE_VERSION or newer."
+  elif ! version_at_least "$compose_version" "$MINIMUM_COMPOSE_VERSION"; then
+    doctor_add error compose "Docker Compose $compose_version is too old; $MINIMUM_COMPOSE_VERSION or newer is required."
+  else
+    compose_available=1
+    doctor_add ok compose "Docker Compose $compose_version supports the Scenelith runtime stack."
+  fi
+
+  if [ ! -f "$ENV_FILE" ]; then
+    doctor_add error environment "deploy/selfhost/.env is missing. Run ./scenelith init."
+  else
+    mode=$(file_mode "$ENV_FILE" 2>/dev/null || printf unknown)
+    case "$mode" in
+      600|400) doctor_add ok permissions "Instance secrets file is private ($mode)." ;;
+      *) doctor_add error permissions "deploy/selfhost/.env must not be readable by group or other users (use mode 0600)." ;;
+    esac
+
+    for key in POSTGRES_PASSWORD SESSION_SECRET COLLABORATION_JWT_SECRET COLLABORATION_INTERNAL_SECRET SCENELITH_INTERNAL_METRICS_SECRET; do
+      value=$(environment_value "$key")
+      case "$value" in
+        *change*|*CHANGE*|*replace*|*REPLACE*|*example*|*EXAMPLE*|'')
+          doctor_add error "secret:$key" "$key is missing or still uses a placeholder. Recreate the environment on a clean installation."
+          ;;
+        *)
+          if [ "${#value}" -lt 32 ]; then
+            doctor_add error "secret:$key" "$key is shorter than the required 32 characters."
+          else
+            doctor_add ok "secret:$key" "$key is configured."
+          fi
+          ;;
+      esac
+    done
+
+    configured_version=$(environment_value SCENELITH_VERSION)
+    release_version=$(distribution_version)
+    if ! printf '%s\n' "$configured_version" | grep -Eq '^[0-9]+\.[0-9]+\.[0-9]+$'; then
+      doctor_add error version "SCENELITH_VERSION must be an exact release version such as 1.2.3."
+    else
+        if [ "$configured_version" != "$release_version" ]; then
+          doctor_add error version "SCENELITH_VERSION $configured_version does not match this release $release_version."
+        else
+          doctor_add ok version "The distribution and application image use Scenelith $release_version."
+        fi
+    fi
+
+    if [ "$(environment_value SCENELITH_DEPLOYMENT_TYPE)" = selfhost ] && [ "$(environment_value SCENELITH_USAGE_MODE)" = bring_your_own ]; then
+      doctor_add ok runtime "The self-hosted BYOK runtime profile is locked."
+    else
+      doctor_add error runtime "The public distribution requires SCENELITH_DEPLOYMENT_TYPE=selfhost and SCENELITH_USAGE_MODE=bring_your_own."
+    fi
+
+    if [ ! -f "$PROVIDER_MANIFEST" ]; then
+      doctor_add error providers "The canonical provider manifest is missing."
+    else
+      provider_count=0
+      provider_records=$(provider_rows)
+      while IFS="$(printf '\t')" read -r id name description key; do
+        [ -n "$id" ] || continue
+        provider_count=$((provider_count + 1))
+        if [ -z "$key" ]; then
+          doctor_add ok "provider:$id" "$name is available without a provider key. Capability: $description."
+        elif [ -n "$(environment_value "$key")" ]; then
+          doctor_add ok "provider:$id" "$name is connected. Capability: $description."
+        elif [ "$strict_providers" -eq 1 ]; then
+          doctor_add error "provider:$id" "$name key is missing. Unavailable capability: $description."
+        else
+          doctor_add warning "provider:$id" "$name key is missing. Unavailable capability: $description."
+        fi
+      done <<EOF
+$provider_records
+EOF
+      [ "$provider_count" -gt 0 ] || doctor_add error providers "The canonical provider manifest contains no providers."
+    fi
+
+    storage=$(environment_value STORAGE_PROVIDER)
+    [ -n "$storage" ] || storage=local
+    case "$storage" in
+      local) doctor_add ok storage "Local persistent media storage is enabled." ;;
+      s3)
+        missing=""
+        for key in S3_ACCESS_KEY_ID S3_SECRET_ACCESS_KEY S3_PRIVATE_BUCKET S3_PUBLIC_BUCKET; do
+          [ -n "$(environment_value "$key")" ] || missing="$missing $key"
+        done
+        if [ -n "$missing" ]; then
+          doctor_add error storage "S3 storage is selected but these values are missing:$missing."
+        else
+          doctor_add ok storage "S3-compatible media storage is configured."
+        fi
+        ;;
+      *) doctor_add error storage "Unsupported storage provider: $storage. Use local or s3." ;;
+    esac
+
+    public_url=$(environment_value PUBLIC_URL)
+    public_host=$(environment_value SCENELITH_HOST)
+    secure_cookies=$(environment_value COOKIE_SECURE)
+    case "$public_url" in
+      http://localhost|http://localhost:*) doctor_add ok https "Localhost HTTP mode is configured." ;;
+      https://*)
+        if [ "$secure_cookies" = true ]; then
+          doctor_add ok https "Public HTTPS and secure cookies are configured."
+        else
+          doctor_add error https "COOKIE_SECURE must be true when PUBLIC_URL uses HTTPS."
+        fi
+        ;;
+      *) doctor_add error https "A public instance must use an HTTPS PUBLIC_URL." ;;
+    esac
+    if [ -n "$public_url" ] && [ -n "$public_host" ] && [ "$(host_from_url "$public_url")" = "$(host_from_url "$public_host")" ]; then
+      doctor_add ok origin "Gateway and application use the same public host."
+    else
+      doctor_add error origin "SCENELITH_HOST and PUBLIC_URL must point to the same host."
+    fi
+  fi
+
+  available_kib=$(df -Pk "$ROOT" 2>/dev/null | awk 'NR == 2 { print $4 }')
+  if [ -z "$available_kib" ]; then
+    doctor_add warning disk "Available disk space could not be measured."
+  elif [ "$available_kib" -lt 10485760 ]; then
+    available_gib=$(awk -v value="$available_kib" 'BEGIN { printf "%.1f", value / 1048576 }')
+    doctor_add error disk "Only $available_gib GiB is free; at least 10 GiB is required."
+  elif [ "$available_kib" -lt 20971520 ]; then
+    available_gib=$(awk -v value="$available_kib" 'BEGIN { printf "%.1f", value / 1048576 }')
+    doctor_add warning disk "$available_gib GiB is free; 20 GiB or more is recommended for images and media."
+  else
+    available_gib=$(awk -v value="$available_kib" 'BEGIN { printf "%.1f", value / 1048576 }')
+    doctor_add ok disk "$available_gib GiB is free."
+  fi
+
+  if [ -f "$ENV_FILE" ] && [ "$compose_available" -eq 1 ]; then
+    if docker compose --env-file "$ENV_FILE" -f "$COMPOSE_FILE" config --quiet >/dev/null 2>&1; then
+      doctor_add ok configuration "The complete self-hosted Compose model is valid."
+    else
+      doctor_add error configuration "The self-hosted Compose model is invalid. Review deploy/selfhost/.env; secret values were hidden."
+    fi
+  fi
+
+  status=0
+  doctor_report "$json" || status=$?
+  rm -f "$DOCTOR_CHECKS"
+  trap - 0 HUP INT TERM
+  return "$status"
+}
+
+start_services() {
+  doctor || return 1
+  say "Pulling the pinned Scenelith and infrastructure images..."
+  compose pull || return 1
+  say "Starting Scenelith..."
+  compose up -d --no-build --wait --wait-timeout 300 || return 1
+  say "Scenelith is ready at $(environment_value PUBLIC_URL)."
+}
+
+restart_services() {
+  doctor || return 1
+  say "Recreating Scenelith from the installed images..."
+  compose up -d --no-build --wait --wait-timeout 300 || return 1
+  say "Scenelith is ready at $(environment_value PUBLIC_URL)."
+}
+
+sha256_file() {
+  if command -v sha256sum >/dev/null 2>&1; then
+    sha256sum "$1" | awk '{ print $1 }'
+  else
+    shasum -a 256 "$1" | awk '{ print $1 }'
+  fi
+}
+
+safe_database_identifier() {
+  case "$1" in
+    ''|*[!A-Za-z0-9_-]*) return 1 ;;
+    *) return 0 ;;
+  esac
+}
+
+backup() {
+  require_environment
+  output=backups
+  while [ "$#" -gt 0 ]; do
+    case "$1" in
+      --output)
+        [ "$#" -ge 2 ] || die "--output requires a directory"
+        output=$2
+        shift
+        ;;
+      *) die "Unknown backup option: $1" ;;
+    esac
+    shift
+  done
+
+  case "$output" in
+    /*) backup_root=$output ;;
+    *) backup_root="$ROOT/$output" ;;
+  esac
+  mkdir -p "$backup_root"
+  backup_root=$(CDPATH= cd -- "$backup_root" && pwd)
+  chmod 700 "$backup_root"
+  timestamp=$(date -u '+%Y-%m-%dT%H-%M-%SZ')
+  destination="$backup_root/scenelith-$timestamp"
+  [ ! -e "$destination" ] || die "Backup already exists: $destination"
+  mkdir "$destination"
+  chmod 700 "$destination"
+
+  database=$(environment_value POSTGRES_DB)
+  user=$(environment_value POSTGRES_USER)
+  [ -n "$database" ] || database=scenelith
+  [ -n "$user" ] || user=scenelith
+  safe_database_identifier "$database" || die "POSTGRES_DB contains unsupported characters"
+  safe_database_identifier "$user" || die "POSTGRES_USER contains unsupported characters"
+
+  backup_recover() {
+    set +e
+    compose up -d >/dev/null 2>&1
+  }
+  trap backup_recover 0 HUP INT TERM
+
+  say "Pausing application writers for a consistent backup..."
+  compose stop gateway frameflow generation-worker automation-worker storage-worker collaboration
+  compose up -d --wait postgres
+  compose exec -T postgres pg_dump -U "$user" -d "$database" --format=custom --compress=6 --no-owner --no-acl > "$destination/postgres.dump"
+  chmod 600 "$destination/postgres.dump"
+  database_sha=$(sha256_file "$destination/postgres.dump")
+
+  storage=$(environment_value STORAGE_PROVIDER)
+  [ -n "$storage" ] || storage=local
+  if [ "$storage" = local ]; then
+    compose run --rm --no-deps -T storage-worker tar -czf - -C /app/data . > "$destination/media.tar.gz"
+    chmod 600 "$destination/media.tar.gz"
+    media_sha=$(sha256_file "$destination/media.tar.gz")
+    media_json=$(printf ',\n      "media": {"file": "media.tar.gz", "sha256": "%s"}' "$media_sha")
+  else
+    media_json=""
+  fi
+
+  cat > "$destination/manifest.json" <<EOF
+{
+  "schemaVersion": 1,
+  "distribution": "scenelith-selfhost-backup",
+  "createdAt": "$(date -u '+%Y-%m-%dT%H:%M:%SZ')",
+  "release": {"version": "$(environment_value SCENELITH_VERSION)"},
+  "database": {"file": "postgres.dump", "sha256": "$database_sha", "name": "$database"},
+  "storage": {
+    "provider": "$storage"$media_json
+  }
+}
+EOF
+  chmod 600 "$destination/manifest.json"
+
+  compose up -d
+  trap - 0 HUP INT TERM
+  say "Backup complete: $destination"
+  if [ "$storage" != local ]; then
+    warn "Media is stored externally. Retain an object-storage version or snapshot for the same timestamp."
+  fi
+}
+
+manifest_value() {
+  section=$1
+  key=$2
+  file=$3
+  awk -v wanted_section="$section" -v wanted_key="$key" '
+    $0 ~ "\\\"" wanted_section "\\\"[[:space:]]*:" { active = 1 }
+    active && $0 ~ "\\\"" wanted_key "\\\"[[:space:]]*:" {
+      line = $0
+      sub("^.*\\\"" wanted_key "\\\"[[:space:]]*:[[:space:]]*\\\"", "", line)
+      sub("\\\".*$", "", line)
+      print line
+      exit
+    }
+    active && $0 ~ "^[[:space:]]*}[,]?[[:space:]]*$" { active = 0 }
+  ' "$file"
+}
+
+manifest_media_value() {
+  key=$1
+  file=$2
+  awk -v wanted_key="$key" '
+    /"media"[[:space:]]*:/ { active = 1 }
+    active && $0 ~ "\\\"" wanted_key "\\\"[[:space:]]*:" {
+      line = $0
+      sub("^.*\\\"" wanted_key "\\\"[[:space:]]*:[[:space:]]*\\\"", "", line)
+      sub("\\\".*$", "", line)
+      print line
+      exit
+    }
+  ' "$file"
+}
+
+safe_manifest_filename() {
+  value=$1
+  case "$value" in
+    ''|*/*|*..*|*[!A-Za-z0-9._-]*) return 1 ;;
+    *) return 0 ;;
+  esac
+}
+
+restore() {
+  source_directory=""
+  confirmed=0
+  while [ "$#" -gt 0 ]; do
+    case "$1" in
+      --from)
+        [ "$#" -ge 2 ] || die "--from requires a backup directory"
+        source_directory=$2
+        shift
+        ;;
+      --confirm) confirmed=1 ;;
+      *) die "Unknown restore option: $1" ;;
+    esac
+    shift
+  done
+  [ -n "$source_directory" ] || die "Usage: ./scenelith restore --from /absolute/backup/path --confirm"
+  [ "$confirmed" -eq 1 ] || die "Restore replaces the current database and local media. Re-run with --confirm."
+  require_environment
+  source_directory=$(CDPATH= cd -- "$source_directory" 2>/dev/null && pwd) || die "Backup directory does not exist: $source_directory"
+  manifest="$source_directory/manifest.json"
+  [ -f "$manifest" ] || die "Backup manifest is missing: $manifest"
+  grep -q '"distribution"[[:space:]]*:[[:space:]]*"scenelith-selfhost-backup"' "$manifest" || die "Unsupported backup manifest"
+  grep -q '"schemaVersion"[[:space:]]*:[[:space:]]*1' "$manifest" || die "Unsupported backup schema"
+
+  database_file=$(manifest_value database file "$manifest")
+  database_sha=$(manifest_value database sha256 "$manifest")
+  backup_storage=$(manifest_value storage provider "$manifest")
+  media_file=$(manifest_media_value file "$manifest")
+  media_sha=$(manifest_media_value sha256 "$manifest")
+  safe_manifest_filename "$database_file" || die "Unsafe database filename in backup manifest"
+  case "$database_sha" in *[!a-fA-F0-9]*|'') die "Invalid database checksum in backup manifest" ;; esac
+  [ -f "$source_directory/$database_file" ] || die "Database backup is missing"
+  [ "$(sha256_file "$source_directory/$database_file")" = "$database_sha" ] || die "Database backup checksum mismatch"
+
+  current_storage=$(environment_value STORAGE_PROVIDER)
+  [ -n "$current_storage" ] || current_storage=local
+  [ "$backup_storage" = "$current_storage" ] || die "Backup storage provider $backup_storage does not match current provider $current_storage"
+  if [ -n "$media_file" ]; then
+    safe_manifest_filename "$media_file" || die "Unsafe media filename in backup manifest"
+    case "$media_sha" in *[!a-fA-F0-9]*|'') die "Invalid media checksum in backup manifest" ;; esac
+    [ -f "$source_directory/$media_file" ] || die "Media backup is missing"
+    [ "$(sha256_file "$source_directory/$media_file")" = "$media_sha" ] || die "Media backup checksum mismatch"
+  fi
+
+  database=$(environment_value POSTGRES_DB)
+  user=$(environment_value POSTGRES_USER)
+  [ -n "$database" ] || database=scenelith
+  [ -n "$user" ] || user=scenelith
+  safe_database_identifier "$database" || die "POSTGRES_DB contains unsupported characters"
+  safe_database_identifier "$user" || die "POSTGRES_USER contains unsupported characters"
+
+  restore_recover() {
+    set +e
+    compose up -d >/dev/null 2>&1
+  }
+  trap restore_recover 0 HUP INT TERM
+  compose stop gateway frameflow generation-worker automation-worker storage-worker collaboration
+  compose up -d --wait postgres
+  compose exec -T postgres psql -U "$user" -d "$database" -v ON_ERROR_STOP=1 -c 'DROP SCHEMA public CASCADE; CREATE SCHEMA public;'
+  compose exec -T postgres pg_restore -U "$user" -d "$database" --no-owner --no-acl --exit-on-error < "$source_directory/$database_file"
+  if [ -n "$media_file" ]; then
+    compose run --rm --no-deps -T storage-worker sh -c 'find /app/data -mindepth 1 -delete && tar -xzf - -C /app/data' < "$source_directory/$media_file"
+  fi
+  compose up -d
+  trap - 0 HUP INT TERM
+  say "Restore complete from $source_directory"
+}
+
+download() {
+  url=$1
+  destination=$2
+  if command -v curl >/dev/null 2>&1; then
+    curl --fail --silent --show-error --location "$url" --output "$destination"
+  elif command -v wget >/dev/null 2>&1; then
+    wget -q "$url" -O "$destination"
+  else
+    die "Updating requires curl or wget."
+  fi
+}
+
+verify_bundle_manifest() {
+  bundle=$1
+  [ -f "$bundle/MANIFEST.sha256" ] || die "Downloaded bundle has no integrity manifest"
+  if command -v sha256sum >/dev/null 2>&1; then
+    (cd "$bundle" && sha256sum -c MANIFEST.sha256 >/dev/null)
+  else
+    (cd "$bundle" && shasum -a 256 -c MANIFEST.sha256 >/dev/null)
+  fi
+}
+
+copy_bundle_files() {
+  source_root=$1
+  destination_root=$2
+  for path in \
+    scenelith \
+    README.md \
+    LICENSE.md \
+    docs/SELF_HOSTING.md \
+    config/runtime-providers.json \
+    deploy/compose/runtime.yaml \
+    deploy/selfhost/.env.example \
+    deploy/selfhost/Caddyfile \
+    deploy/selfhost/compose.yaml \
+    deploy/selfhost/runtime.override.yaml; do
+    [ -f "$source_root/$path" ] || die "Bundle is missing $path"
+    mkdir -p "$destination_root/$(dirname "$path")"
+    cp "$source_root/$path" "$destination_root/$path"
+  done
+  chmod 755 "$destination_root/scenelith"
+}
+
+update_installation() {
+  [ ! -e "$ROOT/.git" ] || die "Source checkouts update through Git and tagged releases; ./scenelith update is for release-bundle installations."
+  require_environment
+  requested_version=${1:-latest}
+  if [ "$requested_version" = latest ]; then
+    release_path=latest/download
+  else
+    requested_version=${requested_version#v}
+    printf '%s\n' "$requested_version" | grep -Eq '^[0-9]+\.[0-9]+\.[0-9]+$' || die "VERSION must look like 1.2.3"
+    release_path="download/v$requested_version"
+  fi
+
+  temporary=$(mktemp -d "${TMPDIR:-/tmp}/scenelith-update.XXXXXX")
+  trap 'rm -rf "$temporary"' 0 HUP INT TERM
+  base_url="https://github.com/$REPOSITORY/releases/$release_path"
+  say "Downloading the verified Scenelith release bundle..."
+  download "$base_url/$ASSET_NAME" "$temporary/$ASSET_NAME"
+  download "$base_url/$ASSET_NAME.sha256" "$temporary/$ASSET_NAME.sha256"
+  expected=$(awk 'NR == 1 { print $1 }' "$temporary/$ASSET_NAME.sha256")
+  case "$expected" in *[!a-fA-F0-9]*|'') die "Release checksum is invalid" ;; esac
+  [ "$(sha256_file "$temporary/$ASSET_NAME")" = "$expected" ] || die "Release bundle checksum mismatch"
+  unsafe=$(tar -tzf "$temporary/$ASSET_NAME" | awk '/^\// || /(^|\/)\.\.($|\/)/ { print; exit }')
+  [ -z "$unsafe" ] || die "Release archive contains an unsafe path: $unsafe"
+  tar -xzf "$temporary/$ASSET_NAME" -C "$temporary"
+  incoming="$temporary/scenelith-selfhost"
+  verify_bundle_manifest "$incoming"
+  incoming_version=$(environment_value_from "$incoming/deploy/selfhost/.env.example" SCENELITH_VERSION)
+  printf '%s\n' "$incoming_version" | grep -Eq '^[0-9]+\.[0-9]+\.[0-9]+$' || die "Downloaded bundle has an invalid version"
+  if [ "$requested_version" != latest ] && [ "$incoming_version" != "$requested_version" ]; then
+    die "Requested $requested_version but downloaded bundle contains $incoming_version"
+  fi
+  current_version=$(environment_value SCENELITH_VERSION)
+  if [ "$current_version" = "$incoming_version" ]; then
+    say "Scenelith $current_version is already installed."
+    rm -rf "$temporary"
+    trap - 0 HUP INT TERM
+    return
+  fi
+  if [ "$requested_version" = latest ] && version_at_least "$current_version" "$incoming_version"; then
+    die "The latest published release $incoming_version is older than installed version $current_version. Refusing an implicit downgrade."
+  fi
+
+  say "Creating a verified backup before updating $current_version → $incoming_version..."
+  backup
+  previous="$temporary/previous"
+  copy_bundle_files "$ROOT" "$previous"
+  cp "$ENV_FILE" "$temporary/previous.env"
+
+  copy_bundle_files "$incoming" "$ROOT"
+  replace_environment_value SCENELITH_VERSION "$incoming_version"
+  if "$ROOT/scenelith" start; then
+    say "Updated Scenelith $current_version → $incoming_version."
+    rm -rf "$temporary"
+    trap - 0 HUP INT TERM
+    return
+  fi
+
+  warn "The new release did not become healthy. Restoring the previous operational files and image."
+  copy_bundle_files "$previous" "$ROOT"
+  cp "$temporary/previous.env" "$ENV_FILE"
+  chmod 600 "$ENV_FILE"
+  if "$ROOT/scenelith" start; then
+    die "Update failed and Scenelith $current_version was restarted. The pre-update data backup remains in backups/."
+  fi
+  die "Update and automatic image rollback both failed. Use ./scenelith restore with the pre-update backup."
+}
+
+command=${1:-help}
+[ "$#" -eq 0 ] || shift
+
+case "$command" in
+  install)
+    [ -f "$ENV_FILE" ] || initialize
+    start_services
+    ;;
+  init) initialize "$@" ;;
+  doctor) doctor "$@" ;;
+  start) start_services ;;
+  restart) restart_services ;;
+  stop) compose down ;;
+  status) compose ps ;;
+  logs)
+    if [ "$#" -gt 0 ]; then compose logs --follow --tail 200 "$1"
+    else compose logs --follow --tail 200
+    fi
+    ;;
+  backup) backup "$@" ;;
+  restore) restore "$@" ;;
+  update)
+    [ "$#" -le 1 ] || die "Usage: ./scenelith update [VERSION]"
+    update_installation "${1:-latest}"
+    ;;
+  config) compose config ;;
+  help|-h|--help) usage ;;
+  *) usage >&2; die "Unknown command: $command" ;;
+esac

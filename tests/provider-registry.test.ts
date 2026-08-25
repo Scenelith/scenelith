@@ -18,8 +18,8 @@ test("provider transports are isolated behind the runtime registry", () => {
   const providerImplementations = new Set(["src/lib/kie.ts", "src/lib/openrouter.ts", "src/lib/tiktok.ts"]);
   for (const path of sourceFiles) {
     if (allowedAdapters.has(path) || providerImplementations.has(path)) continue;
-    for (const module of ["kie", "openrouter", "tiktok"]) {
-      assert.doesNotMatch(source(path), new RegExp(`(?:from|import\\()[^\\n]*["'](?:@/|\\.{1,2}/)+lib/${module}["']`), `${path} bypasses the provider registry`);
+    for (const providerModule of ["kie", "openrouter", "tiktok"]) {
+      assert.doesNotMatch(source(path), new RegExp(`(?:from|import\\()[^\\n]*["'](?:@/|\\.{1,2}/)+lib/${providerModule}["']`), `${path} bypasses the provider registry`);
     }
   }
   const registry = source("src/platform/providers/registry.ts");
