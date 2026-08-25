@@ -1,34 +1,39 @@
 <div align="center">
   <img src="public/scenelith-mark-email.png" width="72" alt="Scenelith logo" />
   <h1>Scenelith</h1>
-  <p>An open visual canvas for creating, editing, and automating AI image and video work.</p>
+  <p><strong>Create, edit, and automate AI image and video on one visual canvas.</strong></p>
+  <p>Source-available · Self-hosted · Your infrastructure · Your provider keys</p>
   <p>
     <a href="https://github.com/Scenelith/scenelith/actions/workflows/runtime.yml"><img src="https://github.com/Scenelith/scenelith/actions/workflows/runtime.yml/badge.svg" alt="Runtime checks" /></a>
     <a href="https://github.com/Scenelith/scenelith/releases"><img src="https://img.shields.io/github/v/release/Scenelith/scenelith" alt="Latest release" /></a>
     <a href="LICENSE.md"><img src="https://img.shields.io/badge/license-Sustainable%20Use-6ad7b0" alt="Sustainable Use License" /></a>
   </p>
+  <p>
+    <a href="https://scenelith.com">Website</a> ·
+    <a href="https://github.com/Scenelith/scenelith/discussions">Discussions</a> ·
+    <a href="docs/SELF_HOSTING.md">Self-hosting guide</a>
+  </p>
 </div>
 
-Scenelith combines a node canvas, image and video generation, editing, reusable identities, TikTok imports and automation, background workers, and realtime collaboration. This repository is the canonical product source: fixes and features land here first, public pull requests are normal product contributions, and every release can run entirely on infrastructure and provider accounts you control.
+![Scenelith visual canvas turning a source post into a reusable AI workflow](docs/assets/readme/scenelith-canvas-demo.gif)
 
-![Scenelith architecture](docs/assets/architecture.svg)
+Scenelith keeps the source, references, prompts, generations, edits, and reusable identities connected instead of scattering a creative workflow across separate tools. Import a proven format, rebuild it with your own character or brand, compare every output, and continue editing on the same canvas.
 
-## Quick start
+## What you can do
+
+- Generate and edit images and video with visual reference connections.
+- Import TikTok slideshows and video, detect scenes, and keep the source context visible.
+- Save people and characters as reusable single or Before/After identities.
+- Build longer video sequences in Video Master without losing per-scene versions.
+- Automate repeatable content workflows while keeping every intermediate result editable.
+- Run the complete product on your own server with your own storage and provider accounts.
+
+## Run it yourself
 
 You need Docker Engine, Docker Compose 2.20.3 or newer, 4 CPU cores, 8 GB RAM, and at least 10 GB of free disk space. Git, Node.js, npm, and a source checkout are not required.
 
 ```bash
 curl -fsSL https://github.com/Scenelith/scenelith/releases/latest/download/install.sh | sh
-```
-
-The installer downloads the latest release bundle, verifies its SHA-256 checksum and internal manifest, creates `./scenelith`, generates unique private secrets, validates Docker, and starts the complete stack from pinned images. It refuses to overwrite a non-empty installation directory.
-
-If you prefer to inspect the installer before running it:
-
-```bash
-curl -fsSLO https://github.com/Scenelith/scenelith/releases/latest/download/install.sh
-less install.sh
-sh install.sh
 ```
 
 Add the provider keys you intend to use to `scenelith/deploy/selfhost/.env`:
@@ -38,20 +43,30 @@ KIE_API_KEY=
 OPENROUTER_API_KEY=
 ```
 
-Then recreate the services so workers receive the new keys:
+Then start the configured services and open <http://localhost>:
 
 ```bash
 cd scenelith
 ./scenelith restart
 ```
 
-Open <http://localhost>. The first account becomes the instance owner, and public registration closes by default. Operators can choose open registration explicitly when several independent local accounts are required.
+The first account becomes the instance owner, and public registration closes by default. For domains, automatic HTTPS, S3-compatible storage, backups, upgrades, rollback, and the complete service topology, read the [self-hosting guide](docs/SELF_HOSTING.md).
 
-The release bundle contains deployment files and a thin launcher, not the application source or a second product implementation. Web, workers, migrations, and realtime collaboration run one attested, versioned, multi-architecture image with different commands. Contributors can still clone this repository and build the checked-out source with `npm run selfhost:up:source`.
+<details>
+<summary><strong>Inspect the installer before running it</strong></summary>
 
-For domains, automatic HTTPS, S3-compatible storage, backups, upgrades, rollback, and the complete service topology, read the [self-hosting guide](docs/SELF_HOSTING.md).
+```bash
+curl -fsSLO https://github.com/Scenelith/scenelith/releases/latest/download/install.sh
+less install.sh
+sh install.sh
+```
 
-### Build from source
+The installer downloads the latest release bundle, verifies its SHA-256 checksum and internal manifest, creates `./scenelith`, generates unique private secrets, validates Docker, and starts the stack from pinned images. It refuses to overwrite a non-empty installation directory.
+
+</details>
+
+<details>
+<summary><strong>Build the checked-out source</strong></summary>
 
 Contributors need Git and Node.js 24 in addition to Docker:
 
@@ -63,9 +78,11 @@ npm ci
 npm run selfhost:up:source
 ```
 
-The source path and release bundle resolve the same Compose model. The only difference is whether the application image is pulled from the release or built from the checked-out source.
+The source checkout and release bundle resolve the same Compose model. The only difference is whether the application image is pulled from the release or built locally.
 
-## Providers and outbound connections
+</details>
+
+## Providers and privacy
 
 Provider keys stay in the server environment. They are sent only to the provider they authenticate against and are never returned to the browser or sent to Scenelith.
 
@@ -76,19 +93,7 @@ Provider keys stay in the server environment. They are sent only to the provider
 | **Tikwm** | Resolving public TikTok posts during import | TikTok URL; Tikwm returns post metadata and direct media URLs |
 | **S3-compatible storage** | Optional operator-owned media storage | Media and object metadata configured by the operator |
 
-TikTok import does not use a logged-in TikTok account or TikTok cookies. Video scene detection, thumbnails, and timeline sprites are processed locally with FFmpeg after download. The default interface makes no automatic request to a Scenelith media server.
-
-## What runs on your server
-
-- Scenelith web application and API;
-- generation, automation, and storage workers;
-- realtime collaboration service;
-- PostgreSQL and Redis;
-- local persistent media storage, with optional S3-compatible storage;
-- Caddy gateway with automatic HTTPS for public domains;
-- database migrations, backup/restore tools, and an installation doctor.
-
-The public runtime uses your own provider credentials and has no payment service, hosted-account dependency, account-email service, or license server. Its instance owner signs in directly after local registration; email confirmation and email-based password recovery are Cloud-only services.
+TikTok import does not use a logged-in TikTok account or TikTok cookies. Video scene detection, thumbnails, and timeline sprites are processed locally with FFmpeg after download. The self-hosted interface makes no automatic request to a Scenelith media server.
 
 ## Portable projects and recipes
 
@@ -96,27 +101,38 @@ Canvas projects can be exported as a versioned `.scenelith.json` document and im
 
 The [`recipes/`](recipes) directory contains small, reviewable workflow examples. A recipe is an ordinary portable Scenelith document: fork it, improve it, or contribute a new one with the media and provider requirements documented in its pull request.
 
-## Updates and data safety
+## Architecture and operations
 
-Create a checksummed backup before every upgrade:
+![Scenelith self-hosted architecture](docs/assets/architecture.svg)
+
+The release bundle contains deployment files and a thin launcher, not a second product implementation. Web, workers, migrations, and realtime collaboration use one attested, versioned, multi-architecture image with different commands.
+
+Your server runs:
+
+- the Scenelith web application and API;
+- generation, automation, and storage workers;
+- realtime collaboration;
+- PostgreSQL and Redis;
+- local persistent media storage, with optional S3-compatible storage;
+- Caddy with automatic HTTPS for public domains;
+- database migrations, backup/restore tools, and an installation doctor.
+
+The public runtime has no payment service, hosted-account dependency, account-email service, or license server. Its instance owner signs in directly after local registration; email confirmation and email-based password recovery are Cloud-only services.
+
+### Updates and data safety
 
 ```bash
 ./scenelith backup
+./scenelith update
 ```
+
+The updater verifies the new release bundle, creates a checksummed backup, preserves the environment and Docker volumes, applies ordered migrations, and waits for every service to become healthy. If startup fails, it restores the previous deployment files and image. Pin a reviewed release with `./scenelith update 1.2.3`.
 
 Restore only from a verified backup and only with explicit confirmation:
 
 ```bash
 ./scenelith restore --from /absolute/path/to/backup --confirm
 ```
-
-Update to the newest stable release with:
-
-```bash
-./scenelith update
-```
-
-The updater downloads and verifies the new release bundle, creates a checksummed backup, preserves the environment and Docker volumes, pulls the exact image, applies ordered expand-only migrations, and waits for every service to become healthy. If startup fails, it restores the previous deployment files and image. Pin a reviewed release with `./scenelith update 1.2.3`.
 
 Never edit an applied migration or run `docker compose down -v` unless permanent data deletion is intentional.
 
