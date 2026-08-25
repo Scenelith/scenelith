@@ -2,6 +2,8 @@
 
 `Scenelith/scenelith` is the canonical source for every feature shared by the self-hosted and Cloud products. It is not generated from the private repository.
 
+For the day-to-day ownership decision, implementation flow and release checklist, read [`DEVELOPMENT_MODEL.md`](DEVELOPMENT_MODEL.md).
+
 ## Repository direction
 
 ```text

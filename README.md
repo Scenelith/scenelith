@@ -41,7 +41,7 @@ Open <http://localhost>. The first account becomes the instance owner, and publi
 
 The normal installation pulls one signed, versioned, multi-architecture application image. Web, workers, migrations, and realtime collaboration run that exact image with different commands. Contributors can build the checked-out source with `npm run selfhost:up:source`.
 
-For domains, automatic HTTPS, S3-compatible storage, backups, upgrades, rollback, and the complete service topology, read the [self-hosting guide](docs/SELF_HOSTING.md).
+For domains, automatic HTTPS, S3-compatible storage, backups, upgrades, rollback, and the complete service topology, read the [self-hosting guide](docs/SELF_HOSTING.md). Contributors and maintainers should read the [development model](docs/DEVELOPMENT_MODEL.md) before deciding whether a change belongs to the shared core, self-hosted edition or private Cloud edition.
 
 ## Providers and outbound connections
 

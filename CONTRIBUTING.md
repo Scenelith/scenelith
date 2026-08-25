@@ -1,6 +1,6 @@
 # Contributing to Scenelith
 
-Thank you for improving Scenelith. This public repository is the canonical source for the canvas, media pipeline, providers, collaboration, storage, workers, authentication, teams, and portable recipe format. Accepted changes merge here directly; there is no generated public mirror or private import bridge.
+Thank you for improving Scenelith. This public repository is the canonical source for the canvas, media pipeline, providers, collaboration, storage, workers, local self-hosted authentication, and portable recipe format. Accepted changes merge here directly; there is no generated public mirror or private import bridge. Teams, invitations, transactional email, billing, support and other hosted account services belong only to the private Cloud edition.
 
 ## Start with the right channel
 
@@ -13,13 +13,14 @@ Thank you for improving Scenelith. This public repository is the canonical sourc
 
 Before opening a pull request:
 
-1. read `CLA.md` and add the versioned signature record described in `.github/cla-signatures/README.md`;
-2. explain the user or operator problem and keep the change focused;
-3. add or update tests for behavior changes;
-4. run `npm ci`, `npm run selfhost:audit`, `npm test`, and `npm run build`;
-5. do not include provider keys, environment files, user media, database dumps, private URLs, or instance data;
-6. do not rewrite an applied database migration;
-7. document new provider connections and every outbound network destination.
+1. read `docs/DEVELOPMENT_MODEL.md` and decide whether the change is shared, self-host-only or Cloud-only;
+2. read `CLA.md` and add the versioned signature record described in `.github/cla-signatures/README.md`;
+3. explain the user or operator problem and keep the change focused;
+4. add or update tests for behavior changes;
+5. run `npm ci`, `npm run selfhost:audit`, `npm test`, and `npm run build`;
+6. do not include provider keys, environment files, user media, database dumps, private URLs, or instance data;
+7. do not rewrite an applied database migration;
+8. document new provider connections and every outbound network destination.
 
 Product, runtime, provider, documentation, recipe, and deployment improvements are all welcome. Changes to security boundaries, workflows, licensing, migrations, or portable document compatibility receive additional maintainer review.
 
@@ -29,7 +30,7 @@ Every human contributor must have the current Scenelith Individual Contributor L
 
 - Keep provider transports behind `src/platform/providers/registry.ts`.
 - Keep payment, hosted-account, and private infrastructure code outside this repository.
-- Add optional distribution behavior through narrow files in `src/distribution/`; shared components must not import a private implementation.
+- Define optional edition behavior through `src/editions/contracts/`, implement the public policy in `src/editions/selfhost/`, and keep `src/editions/current/` as thin selectors. Shared components must not import a concrete self-hosted or private implementation.
 - Keep `.scenelith.json` backward compatible. Add a new format version and migration path before changing an existing document contract.
 - Keep recipes credential-free, media-free, portable, and valid against the current document schema.
 - Never add an automatic connection to a Scenelith-operated service to the self-hosted runtime.
