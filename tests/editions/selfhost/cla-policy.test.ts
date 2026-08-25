@@ -11,7 +11,7 @@ test("external human pull requests are gated by the versioned CLA record", () =>
   const workflow = source(".github/workflows/cla.yml");
   assert.match(workflow, /pull_request_target:/);
   assert.match(workflow, /pull_request\.author_association/);
-  assert.match(workflow, /OWNER\|MEMBER\) exit 0/);
+  assert.match(workflow, /OWNER\|MEMBER\|COLLABORATOR\) exit 0/);
   assert.match(workflow, /signature_path="\.github\/cla-signatures\/v1\/\$\{PR_AUTHOR\}\.json"/);
   assert.match(workflow, /\.github\/cla-signature-template\.json/);
   assert.match(workflow, /\.version == "1\.0"/);
