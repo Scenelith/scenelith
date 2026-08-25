@@ -1,17 +1,10 @@
 import { redirect } from "next/navigation";
 import { cookies } from "next/headers";
-import AuthSectionTwo from "@/components/ui/auth-section-2";
+import { AuthPage } from "@/editions/current/client";
 import { isAuthenticated, LAST_AUTH_METHOD_COOKIE, safeReturnTo } from "@/lib/auth";
 import { db } from "@/lib/postgres-db";
 import { readRuntimeConfig } from "@/platform/runtime-config";
 import { editionServer } from "@/editions/current/server";
-
-const oauthErrors: Record<string, string> = {
-  google_unavailable: "Google sign-in is not configured yet",
-  google_state: "Google sign-in expired. Please try again.",
-  google_exchange: "Google could not complete sign-in",
-  google_profile: "Google did not return a verified email",
-};
 
 export default async function LoginPage({ searchParams }: { searchParams: Promise<Record<string, string | string[] | undefined>> }) {
   const params = await searchParams;
@@ -24,6 +17,5 @@ export default async function LoginPage({ searchParams }: { searchParams: Promis
     : Number((await db.prepare("SELECT COUNT(*) AS count FROM users").get() as { count: number }).count);
   const distributionAuth = editionServer.authPageContext(params);
   const registrationEnabled = distributionAuth.registrationOverride || runtimeConfig.registrationMode === "open" || accountCount === 0;
-  const errorCode = typeof params.error === "string" ? params.error : "";
-  return <AuthSectionTwo registrationEnabled={registrationEnabled} googleEnabled={Boolean(process.env.GOOGLE_CLIENT_ID && process.env.GOOGLE_CLIENT_SECRET)} initialMode={registrationEnabled && params.mode === "register" ? "register" : "login"} initialEmail={distributionAuth.initialEmail} registrationVariant={distributionAuth.registrationVariant} lockRegistrationEmail={distributionAuth.lockEmail} lastAuthMethod={lastAuthMethod === "google" ? "google" : lastAuthMethod === "email" ? "email" : null} initialError={distributionAuth.error || (errorCode ? oauthErrors[errorCode] || "Could not sign in" : "")} initialNotice={distributionAuth.notice} returnTo={returnTo} />;
+  return <AuthPage registrationEnabled={registrationEnabled} initialMode={registrationEnabled && params.mode === "register" ? "register" : "login"} initialEmail={distributionAuth.initialEmail} registrationVariant={distributionAuth.registrationVariant} lockRegistrationEmail={distributionAuth.lockEmail} lastAuthMethod={lastAuthMethod || null} initialError={distributionAuth.error} initialNotice={distributionAuth.notice} returnTo={returnTo} providerSettings={editionServer.authProviderSettings()} />;
 }

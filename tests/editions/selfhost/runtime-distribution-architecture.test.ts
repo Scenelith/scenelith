@@ -62,6 +62,7 @@ test("hosted product source and dependencies are absent", () => {
     "src/app/api/auth/password/forgot/route.ts",
     "src/app/api/auth/password/reset/route.ts",
     "src/app/api/auth/verify-email/route.ts",
+    "src/app/api/auth/google",
     "src/components/ui/auth-recovery-form.tsx",
     "src/lib/auth-tokens.ts",
     "src/lib/email.ts",
@@ -81,8 +82,13 @@ test("hosted product source and dependencies are absent", () => {
   assert.doesNotMatch(source("src/worker.ts"), /auth_tokens/);
   assert.doesNotMatch(source("src/proxy.ts"), /@\/lib\/affiliate/);
   assert.doesNotMatch(source("src/components/ui/auth-section-2.tsx"), /forgot-password|Create your team|teamInvite|href="\/(?:terms|privacy)"/);
+  assert.doesNotMatch(source("src/editions/selfhost/auth-page.tsx"), /Google|auth-section-2|AuthCanvasPreview|setInterval|oauth/i);
+  assert.match(source("src/app/login/page.tsx"), /AuthPage/);
+  assert.doesNotMatch(source("src/app/login/page.tsx"), /GOOGLE_CLIENT|google_|AuthSectionTwo/);
+  assert.doesNotMatch(source("src/app/api/runtime/settings/route.ts"), /GOOGLE_CLIENT|googleLoginConfigured/);
   assert.doesNotMatch(source("src/app/globals.css"), /\.(?:(?:invite|landing|marketing|policy|auth-recovery)(?:[-_][a-zA-Z0-9_-]+)?|identity-place-button)\b/);
   assert.doesNotMatch(source("deploy/compose/runtime.yaml"), /EMAIL_TRANSPORT|RESEND_API_KEY|SMTP_/);
+  assert.doesNotMatch(source("deploy/compose/runtime.yaml"), /GOOGLE_CLIENT_(?:ID|SECRET)/);
   assert.doesNotMatch(source("deploy/selfhost/.env.example"), /EMAIL_TRANSPORT|RESEND_API_KEY|SMTP_/);
   const baseline = source("database/baselines/core-v1.sql");
   for (const cloudTable of ["workspace_invitations", "team_memberships", "team_canvas_grants", "workspace_invitation_grants", "auth_tokens", "support_tickets", "support_messages", "feature_requests", "feature_votes", "notifications", "notification_reads"]) {

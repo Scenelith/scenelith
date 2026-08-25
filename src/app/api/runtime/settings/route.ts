@@ -18,7 +18,6 @@ export async function GET() {
       connections: runtimeProviderStatuses(),
       generationConfigured: hasInstanceSecret("KIE_API_KEY"),
       assistantConfigured: hasInstanceSecret("OPENROUTER_API_KEY"),
-      googleLoginConfigured: Boolean(process.env.GOOGLE_CLIENT_ID && process.env.GOOGLE_CLIENT_SECRET),
       ...editionServer.authProviderSettings(),
     },
   }, { headers: { "cache-control": "private, no-store, max-age=0" } });

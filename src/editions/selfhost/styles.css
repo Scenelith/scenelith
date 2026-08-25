@@ -1,1 +1,129 @@
-/* Self-hosted intentionally has no edition-only UI surfaces. */
+/* Self-hosted authentication is deliberately local, quiet and dependency-free. */
+.selfhost-auth-page {
+  height: 100svh;
+  min-height: 100svh;
+  padding: clamp(24px, 6vh, 72px) 22px;
+  display: grid;
+  place-items: center;
+  overflow-x: hidden;
+  overflow-y: auto;
+  position: relative;
+  isolation: isolate;
+  background:
+    radial-gradient(circle at 50% 38%, rgba(114, 221, 183, .075), transparent 30rem),
+    radial-gradient(var(--ff-grid-dot) 1px, transparent 1px),
+    var(--color-ink-0);
+  background-size: auto, 28px 28px, auto;
+  color: var(--color-text);
+}
+
+.selfhost-auth-page::before {
+  content: "";
+  position: fixed;
+  inset: 0;
+  z-index: -1;
+  pointer-events: none;
+  background: radial-gradient(circle at 50% 45%, transparent 0, rgba(8, 8, 9, .72) 64%, var(--color-ink-0) 100%);
+}
+
+.selfhost-auth-shell {
+  width: min(520px, 100%);
+  display: flex;
+  flex-direction: column;
+  gap: 18px;
+}
+
+.selfhost-auth-brand {
+  min-height: 44px;
+  padding: 0 4px;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.selfhost-auth-mark {
+  width: 40px;
+  height: 40px;
+  display: grid;
+  place-items: center;
+  border: 1px solid var(--color-mint-line);
+  border-radius: 12px;
+  background: var(--color-mint-soft);
+  color: var(--color-mint);
+}
+
+.selfhost-auth-mark .scenelith-brand-mark { width: 25px; height: 25px; }
+.selfhost-auth-brand > span:last-child { display: flex; flex-direction: column; gap: 6px; }
+.selfhost-auth-brand b { color: var(--color-text); font: 780 12px/1 ui-monospace, monospace; letter-spacing: .15em; }
+.selfhost-auth-brand small { color: var(--color-text-dim); font: 720 9px/1 ui-monospace, monospace; letter-spacing: .12em; }
+
+.selfhost-auth-card {
+  padding: clamp(28px, 5vw, 46px);
+  position: relative;
+  overflow: hidden;
+  border: 1px solid var(--color-border-strong);
+  border-radius: 22px;
+  background: rgba(20, 21, 21, .94);
+  box-shadow: 0 30px 90px rgba(0, 0, 0, .4), inset 0 1px rgba(255, 255, 255, .035);
+}
+
+.selfhost-auth-card::before {
+  content: "";
+  height: 1px;
+  position: absolute;
+  inset: 0 34px auto;
+  background: linear-gradient(90deg, transparent, var(--color-mint-line), transparent);
+}
+
+.selfhost-auth-kicker {
+  display: block;
+  color: var(--color-mint);
+  font: 760 10px/1 ui-monospace, monospace;
+  letter-spacing: .12em;
+}
+
+.selfhost-auth-title {
+  margin-top: 10px;
+  color: var(--color-text-dim);
+  font: 560 13px/1.4 ui-monospace, monospace;
+}
+
+.selfhost-auth-card .auth-v2-form-wrap { width: 100%; padding: 0; }
+.selfhost-auth-card .auth-v2-mode { margin-top: 28px; }
+.selfhost-auth-card .auth-v2-form-wrap h1 { margin-top: 25px; font-size: clamp(34px, 8vw, 44px); }
+.selfhost-auth-card .auth-v2-form { margin-top: 28px; }
+.selfhost-auth-card .auth-v2-security { margin: 22px auto 0; max-width: 390px; }
+
+.selfhost-auth-foot {
+  padding: 0 5px;
+  display: grid;
+  grid-template-columns: 7px 1fr;
+  align-items: start;
+  gap: 10px;
+}
+
+.selfhost-auth-foot > span {
+  width: 7px;
+  height: 7px;
+  margin-top: 5px;
+  border-radius: 50%;
+  background: var(--color-mint);
+  box-shadow: 0 0 0 4px var(--color-mint-soft);
+}
+
+.selfhost-auth-foot p { margin: 0; color: var(--color-text-dim); font-size: 11px; line-height: 1.55; }
+
+@media (max-width: 560px) {
+  .selfhost-auth-page { padding: 20px 14px; place-items: start center; }
+  .selfhost-auth-shell { gap: 14px; }
+  .selfhost-auth-card { padding: 26px 20px 28px; border-radius: 18px; }
+  .selfhost-auth-brand { padding-inline: 3px; }
+  .selfhost-auth-card .auth-v2-mode { width: 100%; }
+  .selfhost-auth-card .auth-v2-mode button { flex: 1; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .selfhost-auth-page *,
+  .selfhost-auth-page *::before,
+  .selfhost-auth-page *::after { scroll-behavior: auto !important; transition: none !important; animation: none !important; }
+}

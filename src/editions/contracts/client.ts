@@ -13,6 +13,19 @@ export type AccountMenuPresentation = {
 export type ProductPanelKind = string;
 export type EditionView = string;
 export type ProductPanelFocus = { kind: ProductPanelKind; id?: string; nonce: number } | null;
+export type AuthMode = "login" | "register";
+export type AuthPageProps = {
+  registrationEnabled: boolean;
+  initialMode: AuthMode;
+  initialEmail: string;
+  registrationVariant: string;
+  lockRegistrationEmail: boolean;
+  lastAuthMethod: string | null;
+  initialError: string;
+  initialNotice: string;
+  returnTo: string;
+  providerSettings: Readonly<Record<string, unknown>>;
+};
 export type ProductRailItem = {
   kind: ProductPanelKind;
   label: string;
@@ -52,25 +65,10 @@ export type ProductAccountMenuExtensionProps = {
   onOpen: (kind: ProductPanelKind) => void;
 };
 
-export type RegistrationConsentProps = {
-  accepted: boolean;
-  onAcceptedChange: (accepted: boolean) => void;
-};
-
 export type EditionClient = Readonly<{
-  authPreviewMedia(asset: string): string;
   accountMenuPresentation(usage: UsageSummary): AccountMenuPresentation;
   AccountMenuExtension?: ComponentType<AccountMenuExtensionProps>;
   AccountOverlayExtension?: ComponentType<AccountOverlayExtensionProps>;
-  registrationCopy(variant: string): {
-    title: string;
-    lead: string;
-    emailLabel: string;
-    submitLabel: string;
-    hideSocialRegistration: boolean;
-  };
-  AuthRecoveryLink?: ComponentType;
-  RegistrationConsent?: ComponentType<RegistrationConsentProps>;
   railItems: readonly ProductRailItem[];
   NotificationCenter?: ComponentType<{ onNavigate: (kind: ProductPanelKind, id?: string) => void }>;
   PanelRouter?: ComponentType<ProductPanelRouterProps>;
