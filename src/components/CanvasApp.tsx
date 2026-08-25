@@ -443,7 +443,7 @@ function applyModelCatalogue(graphNodes: FrameNode[], graphEdges: FrameEdge[], m
 function CanvasWorkspace({ initialProject, projects: initialProjects, initialWorkspace, workspaces: initialWorkspaces, user, creditUsage, initialModels }: { initialProject: ProjectRecord; projects: ProjectRecord[]; initialWorkspace: WorkspaceRecord; workspaces: WorkspaceRecord[]; user: UserRecord; creditUsage: UsageSummary; initialModels: ModelOption[] }) {
   const ProductNotificationCenter = editionClient.NotificationCenter;
   const ProductPanelRouter = editionClient.PanelRouter;
-  const PendingProductInvitations = editionClient.PendingInvitations;
+  const EditionWorkspaceNotice = editionClient.WorkspaceNotice;
   const AccountOverlayExtension = editionClient.AccountOverlayExtension;
   const { fitView, setViewport, screenToFlowPosition } = useReactFlow<FrameNode, FrameEdge>();
   const initialCanvasGraph = useMemo(() => {
@@ -554,7 +554,7 @@ function CanvasWorkspace({ initialProject, projects: initialProjects, initialWor
   const [canvasMode, setCanvasMode] = useState<"select" | "pan">("select");
   const [canvasAddMenuOpen, setCanvasAddMenuOpen] = useState(false);
   const [canvasMediaDragActive, setCanvasMediaDragActive] = useState(false);
-  const [accountView, setAccountView] = useState<"access" | "credits" | null>(null);
+  const [accountView, setAccountView] = useState<string | null>(null);
   const [historyControls, setHistoryControls] = useState({ canUndo: false, canRedo: false });
   const initialHydration = useRef(true);
   const lastSavedRole = useRef(initialWorkspace.rolePrompt);
@@ -625,7 +625,7 @@ function CanvasWorkspace({ initialProject, projects: initialProjects, initialWor
       setProjectSwitchingId(null);
     }
   }, [models, project]);
-  const { status: collaborationStatus, ready: collaborationReady, collaborators, mutate: mutateCollaborativeGraph, flush: flushCollaborativeGraph } = useCanvasCollaboration({ projectId: project.id, user, onRemoteGraph: applyCollaborativeGraph });
+  const { status: collaborationStatus, ready: collaborationReady, collaborators, peerCount, mutate: mutateCollaborativeGraph, flush: flushCollaborativeGraph } = useCanvasCollaboration({ projectId: project.id, user, onRemoteGraph: applyCollaborativeGraph });
   const mutateCollaborativeGraphRef = useRef(mutateCollaborativeGraph);
   mutateCollaborativeGraphRef.current = mutateCollaborativeGraph;
   const setNodes = useCallback<Dispatch<SetStateAction<FrameNode[]>>>((action) => {
@@ -4570,19 +4570,19 @@ function CanvasWorkspace({ initialProject, projects: initialProjects, initialWor
         <div className="brand"><BrandMark /><span>SCENELITH</span><small>studio</small></div>
         <button className={`workspace-switcher ${workspaceLibraryOpen ? "is-open" : ""}`} onClick={() => { setWorkspaceLibraryOpen((value) => !value); setProjectLibraryOpen(false); }}><Boxes size={14} /><span>{workspace.name}</span><ChevronDown size={13} /></button>
         <div className={`project-switcher ${projectLibraryOpen ? "is-open" : ""}`}>
-          <button className="project-switcher-main" onClick={() => { setProjectLibraryOpen((value) => !value); setWorkspaceLibraryOpen(false); setIdentityLibraryOpen(false); }}><LayoutGrid size={14} /><span>{project.name}</span><ChevronDown size={14} /></button>
+          <button data-testid="project-switcher" className="project-switcher-main" onClick={() => { setProjectLibraryOpen((value) => !value); setWorkspaceLibraryOpen(false); setIdentityLibraryOpen(false); }}><LayoutGrid size={14} /><span>{project.name}</span><ChevronDown size={14} /></button>
           {workspace.memberRole === "owner" && <button className="icon-button" onClick={() => setNewProjectFormOpen(true)} title="New canvas"><Plus size={16} /></button>}
         </div>
         <form className="source-bar" onSubmit={importSource}>
           <Clapperboard size={16} />
-          <input value={sourceUrl} onChange={(event) => setSourceUrl(event.target.value)} placeholder="Paste a direct TikTok video or slideshow link…" />
+          <input data-testid="source-url" value={sourceUrl} onChange={(event) => setSourceUrl(event.target.value)} placeholder="Paste a direct TikTok video or slideshow link…" />
           <button type="submit" disabled={importing || !sourceUrl.trim()}>
             {importing ? <LoaderCircle className="spin" size={15} /> : <Upload size={15} />}
             {importing ? "Extracting" : "Import"}
           </button>
         </form>
         <div className="top-actions">
-          <div className={`canvas-collaboration-presence is-${collaborationStatus}`} title={collaborationStatus === "synced" ? "Canvas is live and saved continuously" : collaborationStatus === "offline" ? "Reconnecting — local changes are kept" : "Connecting to the live canvas"}>
+          <div data-testid="collaboration-status" data-status={collaborationStatus} data-peer-count={peerCount} className={`canvas-collaboration-presence is-${collaborationStatus}`} title={collaborationStatus === "synced" ? "Canvas is live and saved continuously" : collaborationStatus === "offline" ? "Reconnecting — local changes are kept" : "Connecting to the live canvas"}>
             <span className="canvas-collaboration-dot" />
             {collaborators.slice(0, 3).map((collaborator) => <i key={collaborator.clientId} style={{ "--collaborator-color": collaborator.color } as React.CSSProperties} title={collaborator.name}>{collaborator.name.slice(0, 1).toUpperCase()}</i>)}
             {collaborators.length > 3 && <small>+{collaborators.length - 3}</small>}
@@ -4619,7 +4619,7 @@ function CanvasWorkspace({ initialProject, projects: initialProjects, initialWor
         onClose={() => setAccountView(null)}
         onUsageUpdated={setLiveCreditUsage}
       />}
-      {PendingProductInvitations && <PendingProductInvitations />}
+      {EditionWorkspaceNotice && <EditionWorkspaceNotice />}
 
       {workspaceLibraryOpen && (
         <div className="workspace-library">
@@ -4648,7 +4648,7 @@ function CanvasWorkspace({ initialProject, projects: initialProjects, initialWor
             {projects.filter((item) => item.workspaceId === workspace.id && item.name.toLowerCase().includes(projectSearch.toLowerCase())).map((item) => {
               const stats = projectStats(item);
               const current = item.id === project.id;
-              return <div key={item.id} className={`project-card ${current ? "is-current" : ""}`} role="button" tabIndex={0} onClick={() => void switchProject(item)} onKeyDown={(event) => { if (event.key === "Enter" || event.key === " ") void switchProject(item); }}>
+              return <div key={item.id} data-testid="project-card" data-project-id={item.id} className={`project-card ${current ? "is-current" : ""}`} role="button" tabIndex={0} onClick={() => void switchProject(item)} onKeyDown={(event) => { if (event.key === "Enter" || event.key === " ") void switchProject(item); }}>
                 <span className="project-card-copy"><strong>{item.name}</strong><small>{stats.scenes} screens · {stats.prompts} prompts · {stats.outputs} outputs</small><em>{new Date(item.updatedAt).toLocaleDateString(undefined, { month: "short", day: "numeric" })}</em></span>
                 <span className="project-card-state">{projectSwitchingId === item.id ? <><LoaderCircle className="spin" size={13} />Opening</> : current ? <><Check size={13} />Current</> : "Open"}</span>
               </div>;
@@ -4667,7 +4667,7 @@ function CanvasWorkspace({ initialProject, projects: initialProjects, initialWor
         {editionClient.railItems.map((item) => <button key={item.kind} className={productPanelFocus?.kind === item.kind ? "is-active" : ""} data-tooltip={item.label} aria-label={`Open ${item.label}`} onClick={() => productPanelFocus?.kind === item.kind ? setProductPanelFocus(null) : openProductPanel(item.kind)}><item.icon size={18} /></button>)}
       </aside>
 
-      {ProductPanelRouter && <ProductPanelRouter focus={productPanelFocus} user={user} workspace={workspace} onOpenPricing={() => { setProductPanelFocus(null); setAccountView("access"); }} onClose={() => setProductPanelFocus(null)} />}
+      {ProductPanelRouter && <ProductPanelRouter focus={productPanelFocus} user={user} workspace={workspace} onRequestAccountView={(view) => { setProductPanelFocus(null); setAccountView(view); }} onClose={() => setProductPanelFocus(null)} />}
 
       {tiktokAutomationOpen && <TikTokAutomationPanel
         sources={tiktokAutomationSources}

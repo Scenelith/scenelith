@@ -26,7 +26,7 @@ npm run selfhost:up
 
 The doctor names every configured provider, validates secrets and storage without printing their values, checks the complete Compose model, and stops before a build when the host does not have enough free disk space. Add `-- --strict-providers` when both Kie and OpenRouter must be present.
 
-Open <http://localhost>. The first account becomes the instance owner and administrator. Normal public registration closes after that account; additional users join through workspace invitations. Set `SCENELITH_REGISTRATION_MODE=open` only when open registration is intentional.
+Open <http://localhost>. The first account becomes the instance owner and administrator. Normal public registration closes after that account. Self-hosted has no team invitations or email delivery; set `SCENELITH_REGISTRATION_MODE=open` only when independent local accounts are intentional. Each local account owns its own workspace.
 
 Provider names and connection status are visible in **Profile → Providers**:
 

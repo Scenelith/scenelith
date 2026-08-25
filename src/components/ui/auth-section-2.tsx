@@ -15,7 +15,7 @@ const workflowMoments = [
 
 type AuthMode = "login" | "register";
 
-export default function AuthSectionTwo({ googleEnabled, registrationEnabled = true, initialMode = "login", initialEmail = "", invitationRegistration = false, lastAuthMethod = null, initialError = "", initialNotice = "", returnTo = "/canvas" }: { googleEnabled: boolean; registrationEnabled?: boolean; initialMode?: AuthMode; initialEmail?: string; invitationRegistration?: boolean; lastAuthMethod?: "email" | "google" | null; initialError?: string; initialNotice?: string; returnTo?: string }) {
+export default function AuthSectionTwo({ googleEnabled, registrationEnabled = true, initialMode = "login", initialEmail = "", registrationVariant = "default", lockRegistrationEmail = false, lastAuthMethod = null, initialError = "", initialNotice = "", returnTo = "/canvas" }: { googleEnabled: boolean; registrationEnabled?: boolean; initialMode?: AuthMode; initialEmail?: string; registrationVariant?: string; lockRegistrationEmail?: boolean; lastAuthMethod?: "email" | "google" | null; initialError?: string; initialNotice?: string; returnTo?: string }) {
   const [activeIndex, setActiveIndex] = useState(0);
   const [cycleRevision, setCycleRevision] = useState(0);
   const [mode, setMode] = useState<AuthMode>(initialMode);
@@ -26,8 +26,9 @@ export default function AuthSectionTwo({ googleEnabled, registrationEnabled = tr
   const [terms, setTerms] = useState(false);
   const [error, setError] = useState(initialError);
   const [loading, setLoading] = useState(false);
-  const registrationCopy = editionClient.registrationCopy(invitationRegistration);
+  const registrationCopy = editionClient.registrationCopy(registrationVariant);
   const AuthRecoveryLink = editionClient.AuthRecoveryLink;
+  const RegistrationConsent = editionClient.RegistrationConsent;
 
   useEffect(() => {
     const interval = window.setInterval(() => setActiveIndex((current) => (current + 1) % workflowMoments.length), 3200);
@@ -41,7 +42,7 @@ export default function AuthSectionTwo({ googleEnabled, registrationEnabled = tr
 
   async function submit(event: React.FormEvent) {
     event.preventDefault();
-    if (mode === "register" && !terms) { setError("Accept the Terms and Privacy Policy to continue"); return; }
+    if (mode === "register" && RegistrationConsent && !terms) { setError("Accept the Terms and Privacy Policy to continue"); return; }
     if (mode === "register" && password !== confirmPassword) { setError("Passwords do not match"); return; }
     setLoading(true);
     setError("");
@@ -61,7 +62,7 @@ export default function AuthSectionTwo({ googleEnabled, registrationEnabled = tr
       <section className="auth-v2-showcase">
         <div className="auth-v2-showcase-inner">
           <div className="auth-v2-wordmark"><BrandMark />SCENELITH</div>
-          <AuthCanvasPreview activeStep={activeIndex} />
+          <AuthCanvasPreview activeStep={activeIndex} mediaUrl={editionClient.authPreviewMedia} />
           <div className="auth-v2-prompt">
             <div className="auth-v2-flow-copy">
               <div className="auth-v2-flow-label"><span>0{activeIndex + 1}</span><b>{workflowMoments[activeIndex].stage}</b></div>
@@ -90,14 +91,14 @@ export default function AuthSectionTwo({ googleEnabled, registrationEnabled = tr
 
           <form onSubmit={submit} className="auth-v2-form">
             {mode === "register" && <AuthField label="Name" type="text" value={name} onChange={setName} autoComplete="name" placeholder="Your name" />}
-            <AuthField label={mode === "register" ? registrationCopy.emailLabel : "Email"} type="email" value={email} onChange={setEmail} autoComplete="email" placeholder="you@company.com" readOnly={invitationRegistration && mode === "register"} />
+            <AuthField label={mode === "register" ? registrationCopy.emailLabel : "Email"} type="email" value={email} onChange={setEmail} autoComplete="email" placeholder="you@company.com" readOnly={lockRegistrationEmail && mode === "register"} />
             <AuthField label="Password" type="password" value={password} onChange={setPassword} autoComplete={mode === "register" ? "new-password" : "current-password"} placeholder="At least 8 characters" />
             {mode === "register" && <AuthField label="Confirm password" type="password" value={confirmPassword} onChange={setConfirmPassword} autoComplete="new-password" placeholder="Enter the same password again" />}
             {mode === "login" && AuthRecoveryLink && <AuthRecoveryLink />}
-            {mode === "register" && <label className="auth-v2-terms"><input type="checkbox" checked={terms} onChange={(event) => setTerms(event.target.checked)} /><span>By creating an account, you agree to the <a href="/terms">Terms</a> and <a href="/privacy">Privacy Policy</a>.</span></label>}
+            {mode === "register" && RegistrationConsent && <RegistrationConsent accepted={terms} onAcceptedChange={setTerms} />}
             {initialNotice && !error && <p className="auth-v2-notice" role="status">{initialNotice}</p>}
             {error && <p className="auth-v2-error" role="alert">{error}</p>}
-            <button className="auth-v2-submit" type="submit" disabled={loading || !email || !password || (mode === "register" && (!name || !confirmPassword || password !== confirmPassword))}>{loading ? <LoaderCircle className="spin" size={17} /> : <>{mode === "register" ? registrationCopy.submitLabel : "Sign in"}<ArrowRight size={16} /></>}</button>
+            <button className="auth-v2-submit" type="submit" disabled={loading || !email || !password || (mode === "register" && (!name || !confirmPassword || password !== confirmPassword || (Boolean(RegistrationConsent) && !terms)))}>{loading ? <LoaderCircle className="spin" size={17} /> : <>{mode === "register" ? registrationCopy.submitLabel : "Sign in"}<ArrowRight size={16} /></>}</button>
           </form>
           <p className="auth-v2-security">Protected with isolated workspaces, hashed passwords and secure server sessions.</p>
         </div>

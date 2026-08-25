@@ -16,12 +16,14 @@
     "collaboration:compact": "node scripts/compact-collaboration-document.mjs",
     "package:compose": "node scripts/compose-edition-package.mjs",
     "package:verify": "node scripts/compose-edition-package.mjs --check",
+    "test:browser": "playwright test",
     "test": "SCENELITH_DEPLOYMENT_TYPE=selfhost SCENELITH_USAGE_MODE=bring_your_own node scripts/run-tests.mjs --edition selfhost",
     "selfhost:init": "node scripts/initialize-selfhost.mjs",
     "selfhost:doctor": "node scripts/selfhost-doctor.mjs",
     "selfhost:backup": "node scripts/selfhost-backup.mjs",
     "selfhost:restore": "node scripts/selfhost-restore.mjs",
     "selfhost:e2e": "node scripts/selfhost-e2e.mjs",
+    "selfhost:load-proof": "node scripts/selfhost-load-proof.mjs",
     "selfhost:audit": "node scripts/audit-selfhost-snapshot.mjs",
     "selfhost:config": "docker compose --env-file deploy/selfhost/.env -f deploy/selfhost/compose.yaml config",
     "selfhost:up": "npm run selfhost:doctor && docker compose --env-file deploy/selfhost/.env -f deploy/selfhost/compose.yaml pull && docker compose --env-file deploy/selfhost/.env -f deploy/selfhost/compose.yaml up -d --no-build",
@@ -53,6 +55,7 @@
     "zod": "^4.4.3"
   },
   "devDependencies": {
+    "@playwright/test": "1.62.0",
     "@tailwindcss/postcss": "^4",
     "@types/node": "^20",
     "@types/pg": "^8.21.0",

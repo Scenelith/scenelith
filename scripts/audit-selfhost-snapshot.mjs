@@ -127,7 +127,7 @@ for (const path of files) {
 
 const runtimeFiles = files.filter((path) => (
   (path.startsWith("src/") || path.startsWith("collaboration/") || path.startsWith("config/"))
-  && /\.(?:ts|tsx|js|mjs|json)$/.test(path)
+  && /\.(?:ts|tsx|js|mjs|json|css)$/.test(path)
 ));
 const hostedRuntimePatterns = [
   [/@whop\//i, "hosted payment dependency"],
@@ -139,12 +139,21 @@ const hostedRuntimePatterns = [
   [/\b(?:commerce|subscription|affiliate)\b/i, "hosted commercial policy"],
   [/\b(?:support_tickets|support_messages|feature_requests|feature_votes|notification_reads|team_memberships|team_canvas_grants|workspace_invitations|auth_tokens)\b/i, "hosted account or community schema"],
   [/(?:media|api|cloud)\.scenelith\.com/i, "automatic Scenelith-operated runtime endpoint"],
+  [/landing\/auth-demo/i, "Cloud marketing media path"],
 ];
 for (const path of runtimeFiles) {
   if (path.startsWith("src/editions/contracts/")) continue;
   const content = readFileSync(join(root, path), "utf8");
   for (const [pattern, label] of hostedRuntimePatterns) {
     if (pattern.test(content)) failures.push(`${label} in public runtime: ${path}`);
+  }
+}
+
+const publicStyles = files.filter((path) => path.startsWith("src/") && path.endsWith(".css"));
+for (const path of publicStyles) {
+  const content = readFileSync(join(root, path), "utf8");
+  if (/\.(?:(?:invite|landing|marketing|policy|auth-recovery)(?:[-_][a-zA-Z0-9_-]+)?|identity-place-button)\b/.test(content)) {
+    failures.push(`Cloud account or marketing selector in public stylesheet: ${path}`);
   }
 }
 

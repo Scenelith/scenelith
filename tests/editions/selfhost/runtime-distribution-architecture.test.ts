@@ -65,6 +65,7 @@ test("hosted product source and dependencies are absent", () => {
     "src/components/ui/auth-recovery-form.tsx",
     "src/lib/auth-tokens.ts",
     "src/lib/email.ts",
+    "src/lib/public-media.ts",
     "src/cloud",
     "src/distribution",
   ]) assert.equal(existsSync(join(root, path)), false, path);
@@ -79,7 +80,8 @@ test("hosted product source and dependencies are absent", () => {
   assert.doesNotMatch(source("src/worker.ts"), /webhooks\/whop|billing_webhook_events/);
   assert.doesNotMatch(source("src/worker.ts"), /auth_tokens/);
   assert.doesNotMatch(source("src/proxy.ts"), /@\/lib\/affiliate/);
-  assert.doesNotMatch(source("src/components/ui/auth-section-2.tsx"), /forgot-password|Create your team|teamInvite/);
+  assert.doesNotMatch(source("src/components/ui/auth-section-2.tsx"), /forgot-password|Create your team|teamInvite|href="\/(?:terms|privacy)"/);
+  assert.doesNotMatch(source("src/app/globals.css"), /\.(?:(?:invite|landing|marketing|policy|auth-recovery)(?:[-_][a-zA-Z0-9_-]+)?|identity-place-button)\b/);
   assert.doesNotMatch(source("deploy/compose/runtime.yaml"), /EMAIL_TRANSPORT|RESEND_API_KEY|SMTP_/);
   assert.doesNotMatch(source("deploy/selfhost/.env.example"), /EMAIL_TRANSPORT|RESEND_API_KEY|SMTP_/);
   const baseline = source("database/baselines/core-v1.sql");

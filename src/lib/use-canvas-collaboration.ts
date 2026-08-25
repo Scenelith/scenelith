@@ -46,6 +46,7 @@ export function useCanvasCollaboration(input: {
   const [syncedProjectId, setSyncedProjectId] = useState<string | null>(null);
   const [collaborators, setCollaborators] = useState<CanvasCollaborator[]>([]);
   const [collaboratorsProjectId, setCollaboratorsProjectId] = useState<string | null>(null);
+  const [peerConnection, setPeerConnection] = useState({ projectId: input.projectId, count: 0 });
   const [session, setSession] = useState<CollaborationSession | null>(null);
   const providerRef = useRef<HocuspocusProvider | null>(null);
   const documentRef = useRef<Y.Doc | null>(null);
@@ -116,6 +117,7 @@ export function useCanvasCollaboration(input: {
       onAwarenessChange: ({ states }) => {
         if (destroyed) return;
         setCollaboratorsProjectId(input.projectId);
+        setPeerConnection({ projectId: input.projectId, count: states.filter((state) => Number(state.clientId) !== document.clientID).length });
         setCollaborators(states
           .map((state): { clientId: number; userId?: unknown; name?: unknown; color?: unknown } => ({ clientId: Number(state.clientId), ...(state.user as Record<string, unknown>) }))
           .filter((state) => state.userId && state.userId !== input.user.id)
@@ -177,6 +179,7 @@ export function useCanvasCollaboration(input: {
     status,
     ready,
     collaborators: ready && collaboratorsProjectId === input.projectId ? collaborators : [],
+    peerCount: ready && peerConnection.projectId === input.projectId ? peerConnection.count : 0,
     mutate,
     flush,
   };

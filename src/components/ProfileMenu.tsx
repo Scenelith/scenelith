@@ -2,7 +2,7 @@
 
 import { useEffect, useRef, useState } from "react";
 import { CircleAlert, CircleCheck, PlugZap, UserRound } from "lucide-react";
-import { editionClient, type ProductPanelKind } from "@/editions/current/client";
+import { editionClient, type EditionView, type ProductPanelKind } from "@/editions/current/client";
 import type { UsageSummary } from "@/modules/usage/contracts";
 import type { UserRecord, WorkspaceRole } from "@/lib/types";
 
@@ -22,7 +22,7 @@ export function ProfileMenu({ user, workspaceId, workspaceName, workspaceRole, u
   workspaceName: string;
   workspaceRole: WorkspaceRole;
   usage: UsageSummary;
-  onRequestAccountView: (view: "access" | "credits") => void;
+  onRequestAccountView: (view: EditionView) => void;
   onOpenProductPanel: (kind: ProductPanelKind) => void;
 }) {
   const [open, setOpen] = useState(false);

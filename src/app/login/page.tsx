@@ -13,9 +13,9 @@ const oauthErrors: Record<string, string> = {
   google_profile: "Google did not return a verified email",
 };
 
-export default async function LoginPage({ searchParams }: { searchParams: Promise<{ error?: string; reset?: string; mode?: string; next?: string; email?: string; invite?: string }> }) {
+export default async function LoginPage({ searchParams }: { searchParams: Promise<Record<string, string | string[] | undefined>> }) {
   const params = await searchParams;
-  const returnTo = safeReturnTo(params.next);
+  const returnTo = safeReturnTo(typeof params.next === "string" ? params.next : undefined);
   if (await isAuthenticated()) redirect(returnTo);
   const lastAuthMethod = (await cookies()).get(LAST_AUTH_METHOD_COOKIE)?.value;
   const runtimeConfig = readRuntimeConfig();
@@ -23,6 +23,7 @@ export default async function LoginPage({ searchParams }: { searchParams: Promis
     ? 0
     : Number((await db.prepare("SELECT COUNT(*) AS count FROM users").get() as { count: number }).count);
   const distributionAuth = editionServer.authPageContext(params);
-  const registrationEnabled = distributionAuth.invitationRegistration || runtimeConfig.registrationMode === "open" || accountCount === 0;
-  return <AuthSectionTwo registrationEnabled={registrationEnabled} googleEnabled={Boolean(process.env.GOOGLE_CLIENT_ID && process.env.GOOGLE_CLIENT_SECRET)} initialMode={registrationEnabled && params.mode === "register" ? "register" : "login"} initialEmail={distributionAuth.initialEmail} invitationRegistration={distributionAuth.invitationRegistration} lastAuthMethod={lastAuthMethod === "google" ? "google" : lastAuthMethod === "email" ? "email" : null} initialError={distributionAuth.error || (params.error ? oauthErrors[params.error] || "Could not sign in" : "")} initialNotice={distributionAuth.notice} returnTo={returnTo} />;
+  const registrationEnabled = distributionAuth.registrationOverride || runtimeConfig.registrationMode === "open" || accountCount === 0;
+  const errorCode = typeof params.error === "string" ? params.error : "";
+  return <AuthSectionTwo registrationEnabled={registrationEnabled} googleEnabled={Boolean(process.env.GOOGLE_CLIENT_ID && process.env.GOOGLE_CLIENT_SECRET)} initialMode={registrationEnabled && params.mode === "register" ? "register" : "login"} initialEmail={distributionAuth.initialEmail} registrationVariant={distributionAuth.registrationVariant} lockRegistrationEmail={distributionAuth.lockEmail} lastAuthMethod={lastAuthMethod === "google" ? "google" : lastAuthMethod === "email" ? "email" : null} initialError={distributionAuth.error || (errorCode ? oauthErrors[errorCode] || "Could not sign in" : "")} initialNotice={distributionAuth.notice} returnTo={returnTo} />;
 }

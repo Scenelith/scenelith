@@ -2,7 +2,7 @@ import type { EditionServer } from "@/editions/contracts/server";
 
 export const editionServer: EditionServer = Object.freeze({
   authPageContext() {
-    return { invitationRegistration: false, initialEmail: "", error: "", notice: "" };
+    return { registrationOverride: false, registrationVariant: "default", initialEmail: "", lockEmail: false, error: "", notice: "" };
   },
   async completeRegistration() {
     return {};

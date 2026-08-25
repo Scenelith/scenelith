@@ -19,7 +19,9 @@ export function readRuntimeConfig(environment: RuntimeEnvironment = process.env)
 }
 
 export function requiredEnvironmentForService(service: RuntimeService) {
-  return [...editionRuntimeProfile.requiredEnvironment[service]];
+  const required = (editionRuntimeProfile.requiredEnvironment as Readonly<Record<string, readonly string[]>>)[service];
+  if (!required) throw new Error(`Unknown runtime service for this edition: ${service}`);
+  return [...required];
 }
 
 export function validateRuntimeEnvironment(service: RuntimeService, environment: RuntimeEnvironment = process.env) {

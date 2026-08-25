@@ -75,7 +75,7 @@ The self-hosted baseline contains no billing, team, invitation, recovery-token, 
 
 1. A shared change is reviewed and merged in public.
 2. Public CI validates boundaries, schema, tests, production build and self-hosted Compose.
-3. The private hourly watcher detects the new public `main`, verifies it, and opens a Cloud integration pull request pinned to the exact commit.
+3. A maintainer explicitly starts the private core-update workflow for a reviewed public commit; it verifies the commit and opens a Cloud integration pull request pinned to the exact SHA.
 4. Cloud CI composes private adapters, dependencies, schema and tests without modifying shared files.
 5. Cloud deployment and public self-hosted releases remain separate promotion decisions.
 

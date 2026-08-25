@@ -414,10 +414,8 @@ body,
 .identity-state-panel.is-drop-target { border-color: var(--color-champagne-line); background: var(--color-champagne-soft); }
 .identity-state-panel > header small,
 .identity-state-empty { color: var(--color-text-dim); }
-.identity-state-panel > header label,
-.identity-place-button { border-color: var(--color-border); background: var(--color-ink-4); color: var(--color-text-soft); }
-.identity-state-panel > header label:hover,
-.identity-place-button:hover { border-color: var(--color-border-strong); color: var(--color-text); }
+.identity-state-panel > header label { border-color: var(--color-border); background: var(--color-ink-4); color: var(--color-text-soft); }
+.identity-state-panel > header label:hover { border-color: var(--color-border-strong); color: var(--color-text); }
 
 /* Hooks */
 .hook-search,
@@ -808,10 +806,8 @@ body,
 .upload-zone:hover,
 .upload-zone.is-dragging { border-color: var(--color-mint-line); background: var(--color-mint-soft); }
 .identity-monogram { border-color: var(--color-border); background: var(--color-ink-5); color: var(--color-text-soft); }
-.identity-state-panel > header label,
-.identity-place-button { border-color: var(--color-border); background: var(--color-ink-5); }
-.identity-state-panel > header label:hover,
-.identity-place-button:hover { border-color: var(--color-mint-line); background: var(--color-mint-soft); color: var(--color-mint); }
+.identity-state-panel > header label { border-color: var(--color-border); background: var(--color-ink-5); }
+.identity-state-panel > header label:hover { border-color: var(--color-mint-line); background: var(--color-mint-soft); color: var(--color-mint); }
 .identity-state-panel:first-child > header strong { color: var(--color-source); }
 .identity-state-panel:last-child > header strong { color: var(--color-mint); }
 .identity-state-panel.is-drop-target { border-color: var(--color-mint-line); background: var(--color-mint-soft); }
@@ -1940,17 +1936,6 @@ body,
   border-radius: 999px;
   background: rgba(8, 8, 9, .72);
 }
-.identity-place-button {
-  height: 27px;
-  border: 0;
-  border-radius: 7px;
-  background: var(--color-ink-4);
-}
-.identity-place-button:hover {
-  border: 0;
-  background: var(--color-ink-5);
-  color: var(--color-mint);
-}
 .identity-library-empty {
   width: min(560px, 100%);
   border-color: var(--color-border);
@@ -2077,8 +2062,6 @@ body,
   background: var(--color-mint);
   color: #07110e;
 }
-.identity-place-button { align-self: end; }
-.identity-place-button:disabled { opacity: .48; }
 
 .generator-output-preload {
   width: 1px;

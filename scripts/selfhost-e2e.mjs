@@ -67,20 +67,24 @@ async function connectDocument(cookie, projectId) {
 }
 
 async function waitForFlush(provider) {
-  provider.flushPendingUpdates();
-  if (!provider.hasUnsyncedChanges) return;
   await new Promise((resolveFlush, reject) => {
-    const timeout = setTimeout(() => {
-      provider.off("unsyncedChanges", onUnsynced);
-      reject(new Error("collaboration update acknowledgement timed out"));
-    }, 15_000);
-    function onUnsynced({ number }) {
-      if (number !== 0) return;
+    let settled = false;
+    const timeout = setTimeout(() => finish(new Error("collaboration update acknowledgement timed out")), 15_000);
+    function finish(error) {
+      if (settled) return;
+      settled = true;
       clearTimeout(timeout);
       provider.off("unsyncedChanges", onUnsynced);
-      resolveFlush();
+      if (error) reject(error);
+      else resolveFlush();
+    }
+    function onUnsynced({ number }) {
+      if (number !== 0) return;
+      finish();
     }
     provider.on("unsyncedChanges", onUnsynced);
+    provider.flushPendingUpdates();
+    queueMicrotask(() => { if (!provider.hasUnsyncedChanges) finish(); });
   });
 }
 

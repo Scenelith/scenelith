@@ -6,10 +6,10 @@ export type RuntimeService =
   | "web"
   | "generation-worker"
   | "automation-worker"
-  | "billing-worker"
   | "storage-worker"
   | "collaboration"
-  | "migration";
+  | "migration"
+  | (string & {});
 
 export type RuntimeConfig = Readonly<{
   deploymentType: DeploymentType;

@@ -20,7 +20,6 @@ export const editionRuntimeProfile = Object.freeze({
     web: ["DATABASE_URL", "SESSION_SECRET", "SCENELITH_INTERNAL_METRICS_SECRET"],
     "generation-worker": ["DATABASE_URL", "SCENELITH_INTERNAL_METRICS_SECRET"],
     "automation-worker": ["DATABASE_URL", "SCENELITH_INTERNAL_METRICS_SECRET"],
-    "billing-worker": [],
     "storage-worker": ["DATABASE_URL", "SCENELITH_INTERNAL_METRICS_SECRET"],
     collaboration: ["COLLABORATION_DATABASE_URL", "COLLABORATION_JWT_SECRET", "COLLABORATION_INTERNAL_SECRET", "SCENELITH_INTERNAL_METRICS_SECRET"],
     migration: ["DATABASE_URL"],

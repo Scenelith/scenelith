@@ -17,6 +17,7 @@
     "selfhost:backup": "node scripts/selfhost-backup.mjs",
     "selfhost:restore": "node scripts/selfhost-restore.mjs",
     "selfhost:e2e": "node scripts/selfhost-e2e.mjs",
+    "selfhost:load-proof": "node scripts/selfhost-load-proof.mjs",
     "selfhost:audit": "node scripts/audit-selfhost-snapshot.mjs",
     "selfhost:config": "docker compose --env-file deploy/selfhost/.env -f deploy/selfhost/compose.yaml config",
     "selfhost:up": "npm run selfhost:doctor && docker compose --env-file deploy/selfhost/.env -f deploy/selfhost/compose.yaml pull && docker compose --env-file deploy/selfhost/.env -f deploy/selfhost/compose.yaml up -d --no-build",

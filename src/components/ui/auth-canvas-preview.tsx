@@ -6,7 +6,8 @@ import { BarChart3, Bookmark, CalendarDays, Check, Clapperboard, Copy, ExternalL
 import "@xyflow/react/dist/style.css";
 import { AssistantGlyph, FrameNodeCard, GeneratorNodeContext, type GeneratorModelOption } from "@/components/FrameNode";
 import type { FrameEdge, FrameNode } from "@/lib/types";
-import { landingMedia } from "@/lib/public-media";
+
+type AuthPreviewMedia = (asset: string) => string;
 
 const nodeTypes: NodeTypes = { frameNode: FrameNodeCard };
 const models: GeneratorModelOption[] = [{
@@ -67,7 +68,7 @@ const slideNode = (id: string, position: { x: number; y: number }, imageUrl: str
   data: { kind: "scene", title, subtitle: "Original slideshow screen", role, imageUrl, status: "ready", nodeWidth: 250 },
 });
 
-function generatorNode(position: { x: number; y: number }, phase: number): FrameNode {
+function generatorNode(position: { x: number; y: number }, phase: number, mediaUrl: AuthPreviewMedia): FrameNode {
   const referenceAttached = phase >= 5;
   const promptReady = phase >= 10;
   const generated = phase >= 12;
@@ -79,7 +80,7 @@ function generatorNode(position: { x: number; y: number }, phase: number): Frame
       mediaType: "image", modelId: "nano-banana-2", aspectRatio: "9:16", resolution: "1K", generationCount: 1,
       nodeWidth: 430, status: "ready",
       attachedReferences: referenceAttached
-        ? [{ assetId: "tour-emma", url: landingMedia("emma-reference.webp"), title: "Emma", variant: "after" }]
+        ? [{ assetId: "tour-emma", url: mediaUrl("emma-reference.webp"), title: "Emma", variant: "after" }]
         : [],
       demoAssistantOpen: phase >= 6 && phase <= 9,
       demoAssistantTypingText: phase === 6
@@ -93,7 +94,7 @@ function generatorNode(position: { x: number; y: number }, phase: number): Frame
       demoAssistantReferenceDelayMs: phase === 6 ? 600 : phase === 7 ? 980 : undefined,
       demoAssistantBuild: phase === 8,
       demoAssistantBusy: phase === 9,
-      ...(generated ? { outputUrl: landingMedia("identity-result.webp"), generatedOutputs: [{ url: landingMedia("identity-result.webp"), mediaType: "image" as const, modelId: "nano-banana-2" }], activeGeneratedOutputIndex: 0 } : {}),
+      ...(generated ? { outputUrl: mediaUrl("identity-result.webp"), generatedOutputs: [{ url: mediaUrl("identity-result.webp"), mediaType: "image" as const, modelId: "nano-banana-2" }], activeGeneratedOutputIndex: 0 } : {}),
     },
   };
 }
@@ -102,27 +103,27 @@ function imageEdge(id: string, source: string, target: string, sourceHandle: str
   return { id, source, target, sourceHandle, targetHandle, animated: true, data: { portType: "image" } };
 }
 
-function importedGraph(): { nodes: FrameNode[]; edges: FrameEdge[] } {
+function importedGraph(mediaUrl: AuthPreviewMedia): { nodes: FrameNode[]; edges: FrameEdge[] } {
   return {
     nodes: [
       sourceNode({ x: 210, y: 300 }),
-      slideNode("tour-slide-1", { x: 570, y: 20 }, landingMedia("tiktok-hook.webp"), "Screen 01", "HOOK"),
-      slideNode("tour-slide-2", { x: 870, y: 20 }, landingMedia("tiktok-result.webp"), "Screen 02", "CTA"),
+      slideNode("tour-slide-1", { x: 570, y: 20 }, mediaUrl("tiktok-hook.webp"), "Screen 01", "HOOK"),
+      slideNode("tour-slide-2", { x: 870, y: 20 }, mediaUrl("tiktok-result.webp"), "Screen 02", "CTA"),
     ],
     edges: [imageEdge("source-slide-1", "tour-source", "tour-slide-1", "output", "input"), imageEdge("source-slide-2", "tour-source", "tour-slide-2", "output", "input")],
   };
 }
 
-function tourGraph(step: number, phase: number, importPhase = 0): { nodes: FrameNode[]; edges: FrameEdge[] } {
-  if (step === 0) return importPhase >= 4 ? importedGraph() : { nodes: [], edges: [] };
+function tourGraph(step: number, phase: number, importPhase: number, mediaUrl: AuthPreviewMedia): { nodes: FrameNode[]; edges: FrameEdge[] } {
+  if (step === 0) return importPhase >= 4 ? importedGraph(mediaUrl) : { nodes: [], edges: [] };
   if (step === 1) return {
-    ...importedGraph(),
+    ...importedGraph(mediaUrl),
   };
   const generatorVisible = phase >= 3;
   const nodes = [
-    slideNode("tour-slide-1", { x: 0, y: 55 }, landingMedia("tiktok-hook.webp"), "Screen 01", "COMPOSITION"),
+    slideNode("tour-slide-1", { x: 0, y: 55 }, mediaUrl("tiktok-hook.webp"), "Screen 01", "COMPOSITION"),
   ];
-  if (generatorVisible) nodes.push(generatorNode({ x: 420, y: 0 }, phase));
+  if (generatorVisible) nodes.push(generatorNode({ x: 420, y: 0 }, phase, mediaUrl));
 
   const edges: FrameEdge[] = [];
   if (generatorVisible) edges.push(imageEdge("slide-generator", "tour-slide-1", "tour-generator", "output", "image-input"));
@@ -259,7 +260,7 @@ function SourceInspectorTour({ containerRef }: { containerRef: RefObject<HTMLDiv
   </div>;
 }
 
-function BuildFlowOverlay({ phase, containerRef }: { phase: number; containerRef: RefObject<HTMLDivElement | null> }) {
+function BuildFlowOverlay({ phase, containerRef, mediaUrl }: { phase: number; containerRef: RefObject<HTMLDivElement | null>; mediaUrl: AuthPreviewMedia }) {
   const anchors = useTourAnchors(containerRef, phase);
 
   if (phase === 0) {
@@ -298,7 +299,7 @@ function BuildFlowOverlay({ phase, containerRef }: { phase: number; containerRef
         <div className="auth-tour-reference-head"><span>Add reference</span><b>0 / 14</b></div>
         <div className="auth-tour-reference-label">SAVED IDENTITIES</div>
         <div className="auth-tour-reference-option is-selecting">
-          <img src={landingMedia("emma-reference.webp")} alt="" />
+          <img src={mediaUrl("emma-reference.webp")} alt="" />
           <span><strong>Emma · identity</strong><small>Saved identity reference</small></span>
           <UserRound size={15} />
           <div className="auth-tour-pointer auth-tour-pointer--inside-reference"><MousePointer2 size={18} /></div>
@@ -322,11 +323,11 @@ function BuildFlowOverlay({ phase, containerRef }: { phase: number; containerRef
   return <div className="auth-tour-ready" aria-hidden="true"><Check size={14} /><span>New scene generated</span></div>;
 }
 
-export default function AuthCanvasPreview({ activeStep, buildPhase = 0, pace = "default" }: { activeStep: number; buildPhase?: number; pace?: "default" | "fast" }) {
+export default function AuthCanvasPreview({ activeStep, buildPhase = 0, pace = "default", mediaUrl }: { activeStep: number; buildPhase?: number; pace?: "default" | "fast"; mediaUrl: AuthPreviewMedia }) {
   const containerRef = useRef<HTMLDivElement>(null);
   const [importPhase, setImportPhase] = useState(0);
   const [typedImportUrl, setTypedImportUrl] = useState("");
-  const graph = useMemo(() => tourGraph(activeStep, buildPhase, importPhase), [activeStep, buildPhase, importPhase]);
+  const graph = useMemo(() => tourGraph(activeStep, buildPhase, importPhase, mediaUrl), [activeStep, buildPhase, importPhase, mediaUrl]);
 
   useEffect(() => {
     if (activeStep !== 0) return;
@@ -355,7 +356,7 @@ export default function AuthCanvasPreview({ activeStep, buildPhase = 0, pace = "
         id: "tour-slide-1",
         assetId: "tour-slide-1",
         sourceNodeId: "tour-slide-1",
-        url: landingMedia("tiktok-hook.webp"),
+        url: mediaUrl("tiktok-hook.webp"),
         title: "Screen 01",
         removable: false,
       }] : [];
@@ -376,14 +377,14 @@ export default function AuthCanvasPreview({ activeStep, buildPhase = 0, pace = "
     queueLabel: "instance",
     runningAssistantNodeId: null,
     activePreviewNodeId: null,
-  }), [activeStep, buildPhase, graph.nodes]);
+  }), [activeStep, buildPhase, graph.nodes, mediaUrl]);
 
   const assistantFocused = activeStep === 2 && buildPhase >= 6 && buildPhase <= 7;
 
   return <div ref={containerRef} className={`auth-canvas-preview is-step-${activeStep} is-pace-${pace}${assistantFocused ? " is-assistant-focus" : ""}`} aria-label="Animated Frameflow TikTok workflow">
     {activeStep === 0 && <ImportFlowTour phase={importPhase} typedUrl={typedImportUrl} />}
     {activeStep === 1 && <><div className="auth-import-complete"><Check size={14} /><span>2 slides imported to canvas</span></div><SourceInspectorTour containerRef={containerRef} /></>}
-    {activeStep === 2 && <BuildFlowOverlay phase={buildPhase} containerRef={containerRef} />}
+    {activeStep === 2 && <BuildFlowOverlay phase={buildPhase} containerRef={containerRef} mediaUrl={mediaUrl} />}
     <GeneratorNodeContext.Provider value={actions}>
       <ReactFlowProvider>
         <ReactFlow nodes={graph.nodes} edges={graph.edges} nodeTypes={nodeTypes} viewport={viewportFor(activeStep, pace, buildPhase)} onViewportChange={() => undefined}

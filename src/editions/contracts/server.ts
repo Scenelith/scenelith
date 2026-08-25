@@ -1,15 +1,14 @@
 import type { UserRecord } from "@/lib/types";
 
 export type AuthSearchParams = {
-  email?: string;
-  error?: string;
-  invite?: string;
-  reset?: string;
+  [key: string]: string | string[] | undefined;
 };
 
 export type AuthPageContext = {
-  invitationRegistration: boolean;
+  registrationOverride: boolean;
+  registrationVariant: string;
   initialEmail: string;
+  lockEmail: boolean;
   error: string;
   notice: string;
 };
@@ -17,7 +16,7 @@ export type AuthPageContext = {
 export type FeatureAccessKind = "assistant" | "prompt" | "automation";
 export type FeatureAccessDenial = {
   status: number;
-  body: { error: string; code: string; accountView?: "access" };
+  body: { error: string; code: string; accountView?: string };
 };
 
 export type RecoveryDrillStatus = Readonly<{

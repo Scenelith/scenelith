@@ -3,6 +3,9 @@
 import type { EditionClient } from "@/editions/contracts/client";
 
 export const editionClient: EditionClient = Object.freeze({
+  authPreviewMedia() {
+    return "/scenelith-mark-email.png";
+  },
   accountMenuPresentation(usage) {
     return {
       subtitle: `${usage.profileName} · Your provider keys`,

@@ -11,6 +11,7 @@ export type AccountMenuPresentation = {
 };
 
 export type ProductPanelKind = string;
+export type EditionView = string;
 export type ProductPanelFocus = { kind: ProductPanelKind; id?: string; nonce: number } | null;
 export type ProductRailItem = {
   kind: ProductPanelKind;
@@ -23,11 +24,11 @@ export type AccountMenuExtensionProps = {
   workspaceId: string;
   workspaceOwner: boolean;
   onDismiss: () => void;
-  onRequestView: (view: "access" | "credits") => void;
+  onRequestView: (view: EditionView) => void;
 };
 
 export type AccountOverlayExtensionProps = {
-  view: "access" | "credits" | null;
+  view: EditionView | null;
   usage: UsageSummary;
   workspaceId: string;
   userEmail: string;
@@ -40,7 +41,7 @@ export type ProductPanelRouterProps = {
   focus: ProductPanelFocus;
   user: UserRecord;
   workspace: WorkspaceRecord;
-  onOpenPricing: () => void;
+  onRequestAccountView: (view: EditionView) => void;
   onClose: () => void;
 };
 
@@ -51,11 +52,17 @@ export type ProductAccountMenuExtensionProps = {
   onOpen: (kind: ProductPanelKind) => void;
 };
 
+export type RegistrationConsentProps = {
+  accepted: boolean;
+  onAcceptedChange: (accepted: boolean) => void;
+};
+
 export type EditionClient = Readonly<{
+  authPreviewMedia(asset: string): string;
   accountMenuPresentation(usage: UsageSummary): AccountMenuPresentation;
   AccountMenuExtension?: ComponentType<AccountMenuExtensionProps>;
   AccountOverlayExtension?: ComponentType<AccountOverlayExtensionProps>;
-  registrationCopy(invitationRegistration: boolean): {
+  registrationCopy(variant: string): {
     title: string;
     lead: string;
     emailLabel: string;
@@ -63,9 +70,10 @@ export type EditionClient = Readonly<{
     hideSocialRegistration: boolean;
   };
   AuthRecoveryLink?: ComponentType;
+  RegistrationConsent?: ComponentType<RegistrationConsentProps>;
   railItems: readonly ProductRailItem[];
   NotificationCenter?: ComponentType<{ onNavigate: (kind: ProductPanelKind, id?: string) => void }>;
   PanelRouter?: ComponentType<ProductPanelRouterProps>;
-  PendingInvitations?: ComponentType;
+  WorkspaceNotice?: ComponentType;
   ProductAccountMenuExtension?: ComponentType<ProductAccountMenuExtensionProps>;
 }>;
