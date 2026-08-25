@@ -15,7 +15,7 @@
   </p>
 </div>
 
-![Scenelith visual canvas turning a source post into a reusable AI workflow](docs/assets/readme/scenelith-canvas-demo.gif)
+![Scenelith visual canvas turning a source post into reusable AI workflows](docs/assets/readme/scenelith-canvas-demo.webp)
 
 <p align="center"><a href="docs/assets/readme/scenelith-five-workflows.mp4">Watch the full-resolution 30 fps product tour →</a></p>
 
