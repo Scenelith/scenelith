@@ -1,5 +1,5 @@
 x-selfhost-application: &selfhost-application
-  image: ${SCENELITH_APP_IMAGE:-ghcr.io/scenelith/scenelith}:${SCENELITH_VERSION:-0.3.3}
+  image: ${SCENELITH_APP_IMAGE:-ghcr.io/scenelith/scenelith}:${SCENELITH_VERSION:-0.3.4}
   build:
     context: .
     dockerfile: Dockerfile
@@ -24,7 +24,11 @@ services:
       PUBLIC_URL: ${PUBLIC_URL:-http://localhost}
       COOKIE_SECURE: ${COOKIE_SECURE:-false}
     volumes:
-      - scenelith-data:/app/data
+      - type: volume
+        source: scenelith-data
+        target: /app/data
+        volume:
+          nocopy: true
   generation-worker:
     <<: *selfhost-application
     command: ["node", "--import", "tsx", "src/worker.ts"]
@@ -34,7 +38,11 @@ services:
       SCENELITH_REGISTRATION_MODE: ${SCENELITH_REGISTRATION_MODE:-owner_only}
       PUBLIC_URL: ${PUBLIC_URL:-http://localhost}
     volumes:
-      - scenelith-data:/app/data
+      - type: volume
+        source: scenelith-data
+        target: /app/data
+        volume:
+          nocopy: true
 
   automation-worker:
     <<: *selfhost-application
@@ -45,7 +53,11 @@ services:
       SCENELITH_REGISTRATION_MODE: ${SCENELITH_REGISTRATION_MODE:-owner_only}
       PUBLIC_URL: ${PUBLIC_URL:-http://localhost}
     volumes:
-      - scenelith-data:/app/data
+      - type: volume
+        source: scenelith-data
+        target: /app/data
+        volume:
+          nocopy: true
 
   storage-worker:
     <<: *selfhost-application
@@ -55,7 +67,11 @@ services:
       SCENELITH_USAGE_MODE: bring_your_own
       SCENELITH_REGISTRATION_MODE: ${SCENELITH_REGISTRATION_MODE:-owner_only}
     volumes:
-      - scenelith-data:/app/data
+      - type: volume
+        source: scenelith-data
+        target: /app/data
+        volume:
+          nocopy: true
 
   collaboration:
     <<: *selfhost-application

@@ -516,11 +516,11 @@ manifest_value() {
   key=$2
   file=$3
   awk -v wanted_section="$section" -v wanted_key="$key" '
-    $0 ~ "\\\"" wanted_section "\\\"[[:space:]]*:" { active = 1 }
-    active && $0 ~ "\\\"" wanted_key "\\\"[[:space:]]*:" {
+    $0 ~ "\"" wanted_section "\"[[:space:]]*:" { active = 1 }
+    active && $0 ~ "\"" wanted_key "\"[[:space:]]*:" {
       line = $0
-      sub("^.*\\\"" wanted_key "\\\"[[:space:]]*:[[:space:]]*\\\"", "", line)
-      sub("\\\".*$", "", line)
+      sub("^.*\"" wanted_key "\"[[:space:]]*:[[:space:]]*\"", "", line)
+      sub("\".*$", "", line)
       print line
       exit
     }
@@ -533,10 +533,10 @@ manifest_media_value() {
   file=$2
   awk -v wanted_key="$key" '
     /"media"[[:space:]]*:/ { active = 1 }
-    active && $0 ~ "\\\"" wanted_key "\\\"[[:space:]]*:" {
+    active && $0 ~ "\"" wanted_key "\"[[:space:]]*:" {
       line = $0
-      sub("^.*\\\"" wanted_key "\\\"[[:space:]]*:[[:space:]]*\\\"", "", line)
-      sub("\\\".*$", "", line)
+      sub("^.*\"" wanted_key "\"[[:space:]]*:[[:space:]]*\"", "", line)
+      sub("\".*$", "", line)
       print line
       exit
     }
@@ -612,7 +612,7 @@ restore() {
   compose exec -T postgres psql -U "$user" -d "$database" -v ON_ERROR_STOP=1 -c 'DROP SCHEMA public CASCADE; CREATE SCHEMA public;'
   compose exec -T postgres pg_restore -U "$user" -d "$database" --no-owner --no-acl --exit-on-error < "$source_directory/$database_file"
   if [ -n "$media_file" ]; then
-    compose run --rm --no-deps -T storage-worker sh -c 'find /app/data -mindepth 1 -delete && tar -xzf - -C /app/data' < "$source_directory/$media_file"
+    compose run --rm --no-deps -T storage-worker sh -c 'find /app/data -mindepth 1 -delete && tar -xzf - -C /app/data --no-same-owner --no-same-permissions --touch' < "$source_directory/$media_file"
   fi
   compose up -d
   trap - 0 HUP INT TERM
