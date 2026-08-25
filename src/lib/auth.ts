@@ -5,9 +5,6 @@ import { db, rowToUser } from "@/lib/postgres-db";
 import type { UserRecord } from "@/lib/types";
 
 export const SESSION_COOKIE = "frameflow_session";
-export const OAUTH_STATE_COOKIE = "frameflow_oauth_state";
-export const OAUTH_VERIFIER_COOKIE = "frameflow_oauth_verifier";
-export const OAUTH_RETURN_TO_COOKIE = "frameflow_oauth_return_to";
 export const LAST_AUTH_METHOD_COOKIE = "scenelith_last_auth_method";
 const SESSION_DAYS = 30;
 

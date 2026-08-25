@@ -8,7 +8,7 @@
 
 ## Verification
 
-- [ ] I have read `CLA.md` and have a valid signature at `.github/cla-signatures/v1/MY-GITHUB-LOGIN.json`
+- [ ] If I am an external contributor, I have read `CLA.md` and have a valid signature at `.github/cla-signatures/v1/MY-GITHUB-LOGIN.json`
 - [ ] `npm ci`
 - [ ] `npm run selfhost:audit`
 - [ ] `npm test`

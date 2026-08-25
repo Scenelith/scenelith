@@ -1,10 +1,11 @@
 "use client";
 
-import { useEffect, useState } from "react";
-import { ArrowRight, LoaderCircle } from "lucide-react";
+import { useEffect, useState, type ComponentType } from "react";
+import { ArrowRight } from "lucide-react";
 import AuthCanvasPreview from "@/components/ui/auth-canvas-preview";
+import AuthCredentialsPanel, { type AuthRegistrationCopy } from "@/components/ui/auth-credentials-panel";
 import BrandMark from "@/components/BrandMark";
-import { editionClient } from "@/editions/current/client";
+import type { AuthPageProps } from "@/editions/contracts/client";
 
 const workflowMoments = [
   { stage: "Import", text: "Paste a TikTok link. Scenelith reads the slideshow and keeps the source intact." },
@@ -13,22 +14,22 @@ const workflowMoments = [
   { stage: "Generate", text: "Replace the subject while preserving the original pose, framing, and scene." },
 ];
 
-type AuthMode = "login" | "register";
+type RegistrationConsentProps = {
+  accepted: boolean;
+  onAcceptedChange: (accepted: boolean) => void;
+};
 
-export default function AuthSectionTwo({ googleEnabled, registrationEnabled = true, initialMode = "login", initialEmail = "", registrationVariant = "default", lockRegistrationEmail = false, lastAuthMethod = null, initialError = "", initialNotice = "", returnTo = "/canvas" }: { googleEnabled: boolean; registrationEnabled?: boolean; initialMode?: AuthMode; initialEmail?: string; registrationVariant?: string; lockRegistrationEmail?: boolean; lastAuthMethod?: "email" | "google" | null; initialError?: string; initialNotice?: string; returnTo?: string }) {
+type AuthSectionTwoProps = AuthPageProps & {
+  previewMedia: (asset: string) => string;
+  registrationCopy: AuthRegistrationCopy;
+  AuthRecoveryLink?: ComponentType;
+  RegistrationConsent?: ComponentType<RegistrationConsentProps>;
+};
+
+export default function AuthSectionTwo({ previewMedia, registrationCopy, AuthRecoveryLink, RegistrationConsent, ...props }: AuthSectionTwoProps) {
   const [activeIndex, setActiveIndex] = useState(0);
   const [cycleRevision, setCycleRevision] = useState(0);
-  const [mode, setMode] = useState<AuthMode>(initialMode);
-  const [name, setName] = useState("");
-  const [email, setEmail] = useState(initialEmail);
-  const [password, setPassword] = useState("");
-  const [confirmPassword, setConfirmPassword] = useState("");
-  const [terms, setTerms] = useState(false);
-  const [error, setError] = useState(initialError);
-  const [loading, setLoading] = useState(false);
-  const registrationCopy = editionClient.registrationCopy(registrationVariant);
-  const AuthRecoveryLink = editionClient.AuthRecoveryLink;
-  const RegistrationConsent = editionClient.RegistrationConsent;
+  const googleEnabled = Boolean(props.providerSettings.googleLoginConfigured);
 
   useEffect(() => {
     const interval = window.setInterval(() => setActiveIndex((current) => (current + 1) % workflowMoments.length), 3200);
@@ -40,29 +41,12 @@ export default function AuthSectionTwo({ googleEnabled, registrationEnabled = tr
     setCycleRevision((revision) => revision + 1);
   }
 
-  async function submit(event: React.FormEvent) {
-    event.preventDefault();
-    if (mode === "register" && RegistrationConsent && !terms) { setError("Accept the Terms and Privacy Policy to continue"); return; }
-    if (mode === "register" && password !== confirmPassword) { setError("Passwords do not match"); return; }
-    setLoading(true);
-    setError("");
-    const response = await fetch(mode === "register" ? "/api/auth/register" : "/api/auth/login", {
-      method: "POST",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify(mode === "register" ? { name, email, password, confirmPassword } : { email, password }),
-    });
-    const body = (await response.json().catch(() => ({}))) as { error?: string };
-    setLoading(false);
-    if (!response.ok) { setError(body.error || "Could not continue"); return; }
-    window.location.href = returnTo;
-  }
-
   return (
     <main className="auth-v2-page">
       <section className="auth-v2-showcase">
         <div className="auth-v2-showcase-inner">
           <div className="auth-v2-wordmark"><BrandMark />SCENELITH</div>
-          <AuthCanvasPreview activeStep={activeIndex} mediaUrl={editionClient.authPreviewMedia} />
+          <AuthCanvasPreview activeStep={activeIndex} mediaUrl={previewMedia} />
           <div className="auth-v2-prompt">
             <div className="auth-v2-flow-copy">
               <div className="auth-v2-flow-label"><span>0{activeIndex + 1}</span><b>{workflowMoments[activeIndex].stage}</b></div>
@@ -76,39 +60,25 @@ export default function AuthSectionTwo({ googleEnabled, registrationEnabled = tr
       </section>
 
       <section className="auth-v2-form-side">
-        <div className="auth-v2-form-wrap">
-          <div className="auth-v2-mode" role="tablist" aria-label="Authentication mode">
-            <button type="button" role="tab" aria-selected={mode === "login"} className={mode === "login" ? "is-active" : ""} onClick={() => { setMode("login"); setError(""); }}>Sign in</button>
-            {registrationEnabled && <button type="button" role="tab" aria-selected={mode === "register"} className={mode === "register" ? "is-active" : ""} onClick={() => { setMode("register"); setError(""); }}>Create account</button>}
-          </div>
-          <h1>{mode === "register" ? registrationCopy.title : "Welcome back"}</h1>
-          <p className="auth-v2-lead">{mode === "register" ? registrationCopy.lead : "Continue building in your private creative graph."}</p>
-
-          {!(registrationCopy.hideSocialRegistration && mode === "register") && <>
-            <a className={`auth-v2-google ${googleEnabled ? "" : "is-disabled"}`} href={googleEnabled ? `/api/auth/google?next=${encodeURIComponent(returnTo)}` : undefined} aria-disabled={!googleEnabled} onClick={(event) => { if (!googleEnabled) { event.preventDefault(); setError("Google sign-in is not configured yet"); } }}><GoogleIcon /><span>Continue with Google</span>{lastAuthMethod === "google" && <small>Last used</small>}</a>
-            <div className="auth-v2-divider"><span />or continue with email<span /></div>
-          </>}
-
-          <form onSubmit={submit} className="auth-v2-form">
-            {mode === "register" && <AuthField label="Name" type="text" value={name} onChange={setName} autoComplete="name" placeholder="Your name" />}
-            <AuthField label={mode === "register" ? registrationCopy.emailLabel : "Email"} type="email" value={email} onChange={setEmail} autoComplete="email" placeholder="you@company.com" readOnly={lockRegistrationEmail && mode === "register"} />
-            <AuthField label="Password" type="password" value={password} onChange={setPassword} autoComplete={mode === "register" ? "new-password" : "current-password"} placeholder="At least 8 characters" />
-            {mode === "register" && <AuthField label="Confirm password" type="password" value={confirmPassword} onChange={setConfirmPassword} autoComplete="new-password" placeholder="Enter the same password again" />}
-            {mode === "login" && AuthRecoveryLink && <AuthRecoveryLink />}
-            {mode === "register" && RegistrationConsent && <RegistrationConsent accepted={terms} onAcceptedChange={setTerms} />}
-            {initialNotice && !error && <p className="auth-v2-notice" role="status">{initialNotice}</p>}
-            {error && <p className="auth-v2-error" role="alert">{error}</p>}
-            <button className="auth-v2-submit" type="submit" disabled={loading || !email || !password || (mode === "register" && (!name || !confirmPassword || password !== confirmPassword || (Boolean(RegistrationConsent) && !terms)))}>{loading ? <LoaderCircle className="spin" size={17} /> : <>{mode === "register" ? registrationCopy.submitLabel : "Sign in"}<ArrowRight size={16} /></>}</button>
-          </form>
-          <p className="auth-v2-security">Protected with isolated workspaces, hashed passwords and secure server sessions.</p>
-        </div>
+        <AuthCredentialsPanel
+          {...props}
+          registrationCopy={registrationCopy}
+          signInLead="Continue building in your private creative graph."
+          securityCopy="Protected with isolated workspaces, hashed passwords and secure server sessions."
+          socialAction={{
+            enabled: googleEnabled,
+            href: `/api/auth/google?next=${encodeURIComponent(props.returnTo)}`,
+            icon: <GoogleIcon />,
+            label: "Continue with Google",
+            lastUsed: props.lastAuthMethod === "google",
+            unavailableError: "Google sign-in is not configured yet",
+          }}
+          AuthRecoveryLink={AuthRecoveryLink}
+          RegistrationConsent={RegistrationConsent}
+        />
       </section>
     </main>
   );
-}
-
-function AuthField({ label, type, value, onChange, autoComplete, placeholder, readOnly = false }: { label: string; type: string; value: string; onChange: (value: string) => void; autoComplete: string; placeholder: string; readOnly?: boolean }) {
-  return <label className={`auth-v2-field ${readOnly ? "is-readonly" : ""}`}><span>{label}</span><input type={type} value={value} onChange={(event) => onChange(event.target.value)} autoComplete={autoComplete} placeholder={placeholder} readOnly={readOnly} required /></label>;
 }
 
 function GoogleIcon() {
