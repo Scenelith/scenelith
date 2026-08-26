@@ -126,6 +126,19 @@ test("retry creates a linked run and reuses only safe upstream outputs", async (
   assert.ok(replayed?.events.some((event) => event.type === "node.reused"));
 });
 
+test("an overlapping drain request guarantees a follow-up queue sweep", async () => {
+  const owner = await seedOwner();
+  const workflow = await repository.createAutomationWorkflow({ userId: owner.userId, projectId: owner.projectId, name: "Overlapping drain" });
+  await repository.saveAutomationWorkflowDraft({ userId: owner.userId, workflowId: workflow!.workflow.id, baseDraftVersionId: workflow!.draft!.id, graph: finishGraph("completed") });
+  const firstSweep = runs.drainAutomationWorkflowRuns();
+  const queued = await runs.enqueueAutomationWorkflowRun({ userId: owner.userId, projectId: owner.projectId, workflowId: workflow!.workflow.id, runtimeInputs: {}, mode: "test" });
+  assert.ok("runId" in queued);
+  stopScheduledWorkflowDrain();
+  await Promise.all([firstSweep, runs.drainAutomationWorkflowRuns()]);
+  const completed = await runs.getAutomationWorkflowRun(owner.userId, "runId" in queued ? queued.runId : "");
+  assert.equal(completed?.status, "completed");
+});
+
 function childGraph(): AutomationWorkflowGraph {
   return { schemaVersion: 1, settings: { ...DEFAULT_AUTOMATION_WORKFLOW_SETTINGS, timeoutSeconds: 120 }, groups: [], nodes: [
     { id: "manual", type: "core.manual-trigger", version: 1, name: "Run", description: "", position: { x: 0, y: 0 }, groupId: null, config: {}, bindings: {}, disabled: false },
