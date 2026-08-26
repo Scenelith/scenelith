@@ -1,0 +1,771 @@
+import { isDeepStrictEqual } from "node:util";
+import { lookup } from "node:dns/promises";
+import { isIP } from "node:net";
+import http from "node:http";
+import https from "node:https";
+import { mutateProjectGraphSnapshot, readProjectGraphSnapshot, userCanAccessAsset } from "@/lib/postgres-db";
+import { db } from "@/lib/postgres-db";
+import { mutateCollaborativeGraph } from "@/lib/collaboration-store";
+import { admitGeneration } from "@/lib/generation-admission";
+import { drainGenerationDispatchQueue } from "@/lib/generation-dispatch";
+import { completedGenerationStatuses, failedGenerationStatuses, generationClientState, reconcileGeneration } from "@/lib/generation-state";
+import { generationCreditCost } from "@/lib/generation-pricing";
+import { cancelGeneration } from "@/lib/generation-lifecycle";
+import { settleWithConcurrency } from "@/lib/generation-queue";
+import { runAssistantUsage } from "@/lib/assistant-usage";
+import { readStorageObject, signedStorageReadUrl } from "@/lib/storage";
+import { findTikTokSlideshowSources } from "@/lib/tiktok-slideshow-sources";
+import { referenceMentionToken } from "@/lib/reference-mentions";
+import { generationProvider, intelligenceProvider } from "@/platform/providers/registry";
+import type { FrameEdge, FrameNode, ProjectGraph } from "@/lib/types";
+import { validateAutomationStructuredValue } from "./json-schema";
+import { resolveAutomationCredential } from "./credentials";
+import type { AutomationNodeExecution, AutomationNodeHandlers } from "./runtime";
+
+type MultimodalContent = { type: "text"; text: string } | { type: "image_url"; image_url: { url: string } };
+
+function automationAbortError(signal?: AbortSignal) {
+  const reason = signal?.reason;
+  if (reason instanceof Error && typeof (reason as Error & { code?: unknown }).code === "string") return reason;
+  return Object.assign(new Error("Automation cancelled"), { code: "RUN_CANCELLED", cause: reason });
+}
+
+async function abortableNodeDelay(milliseconds: number, signal?: AbortSignal) {
+  if (!signal) return await new Promise<void>((resolve) => setTimeout(resolve, milliseconds));
+  if (signal.aborted) throw automationAbortError(signal);
+  await new Promise<void>((resolve, reject) => {
+    const timer = setTimeout(() => { signal.removeEventListener("abort", onAbort); resolve(); }, milliseconds);
+    const onAbort = () => { clearTimeout(timer); reject(automationAbortError(signal)); };
+    signal.addEventListener("abort", onAbort, { once: true });
+  });
+}
+
+function pathValue(source: unknown, path: string) {
+  const segments = path.replace(/\[(\d+)\]/g, ".$1").split(".").filter(Boolean);
+  let value = source;
+  for (const segment of segments) {
+    if (value === null || value === undefined || typeof value !== "object") return undefined;
+    if (!Object.prototype.hasOwnProperty.call(value, segment)) return undefined;
+    value = (value as Record<string, unknown>)[segment];
+  }
+  return value;
+}
+
+function printable(value: unknown) {
+  if (typeof value === "string") return value;
+  return JSON.stringify(value ?? null, null, 2);
+}
+
+export function renderAutomationTemplate(template: string, scope: Record<string, unknown>) {
+  const whole = template.trim().match(/^\{\{\s*([^{}]+?)\s*\}\}$/);
+  if (whole) return pathValue(scope, whole[1].trim());
+  return template.replace(/\{\{\s*([^{}]+?)\s*\}\}/g, (_, path: string) => printable(pathValue(scope, path.trim())));
+}
+
+function transformTemplate(value: unknown, scope: Record<string, unknown>): unknown {
+  if (typeof value === "string") return renderAutomationTemplate(value, scope);
+  if (Array.isArray(value)) return value.map((item) => transformTemplate(item, scope));
+  if (value && typeof value === "object") return Object.fromEntries(Object.entries(value).map(([key, item]) => [key, transformTemplate(item, scope)]));
+  return value;
+}
+
+function collectMedia(value: unknown, found: Array<{ path: string; mimeType: string }> = [], seen = new Set<unknown>()) {
+  if (!value || typeof value !== "object" || seen.has(value)) return found;
+  seen.add(value);
+  if (!Array.isArray(value)) {
+    const record = value as Record<string, unknown>;
+    const path = typeof record.analysisPath === "string" ? record.analysisPath : typeof record.path === "string" ? record.path : "";
+    const mimeType = typeof record.analysisMimeType === "string" ? record.analysisMimeType : typeof record.mimeType === "string" ? record.mimeType : "";
+    if (path && mimeType.startsWith("image/") && !found.some((entry) => entry.path === path)) found.push({ path, mimeType });
+  }
+  for (const item of Array.isArray(value) ? value : Object.values(value)) collectMedia(item, found, seen);
+  return found;
+}
+
+async function mediaContent(entry: { path: string; mimeType: string }): Promise<MultimodalContent> {
+  const signedUrl = await signedStorageReadUrl(entry.path, { expiresIn: 20 * 60 }).catch(() => null);
+  if (signedUrl) return { type: "image_url", image_url: { url: signedUrl } };
+  const bytes = await readStorageObject(entry.path);
+  return { type: "image_url", image_url: { url: `data:${entry.mimeType};base64,${bytes.toString("base64")}` } };
+}
+
+async function manualTrigger(execution: AutomationNodeExecution) {
+  return { run: { runId: execution.context.runId, projectId: execution.context.projectId, startedBy: execution.context.userId, trigger: execution.context.triggerPayload || null } };
+}
+
+async function tiktokSource(execution: AutomationNodeExecution) {
+  const sourceNodeId = String(execution.config.source || "");
+  const graph = (await readProjectGraphSnapshot(execution.context.projectId)).graph as ProjectGraph;
+  const source = findTikTokSlideshowSources(graph.nodes || [], graph.edges || []).find((item) => item.id === sourceNodeId);
+  if (!source) throw new Error("Choose an imported TikTok slideshow from this canvas");
+  const sourceNode = graph.nodes.find((node) => node.id === source.id);
+  const slides = [];
+  for (const [index, assetId] of source.assetIds.entries()) {
+    if (!await userCanAccessAsset(execution.context.userId, assetId)) throw new Error(`Source slide ${index + 1} is no longer available`);
+    const asset = await db.prepare("SELECT id, filename, storage_path, mime_type, thumbnail_storage_path, thumbnail_mime_type FROM assets WHERE id = ?")
+      .get(assetId) as { id: string; filename: string; storage_path: string; mime_type: string; thumbnail_storage_path: string | null; thumbnail_mime_type: string | null } | undefined;
+    if (!asset?.mime_type.startsWith("image/")) throw new Error(`Source slide ${index + 1} is not an image`);
+    slides.push({
+      index: index + 1,
+      assetId: asset.id,
+      filename: asset.filename,
+      path: asset.storage_path,
+      mimeType: asset.mime_type,
+      analysisPath: asset.thumbnail_storage_path || asset.storage_path,
+      analysisMimeType: asset.thumbnail_mime_type || asset.mime_type,
+      title: `Screen ${String(index + 1).padStart(2, "0")}`,
+    });
+  }
+  return { source: { sourceNodeId: source.id, label: source.label, caption: String(execution.config.caption || sourceNode?.data.title || ""), slides } };
+}
+
+async function identity(execution: AutomationNodeExecution) {
+  const identityId = String(execution.config.identity || "");
+  if (!identityId && execution.config.optional !== false) return { identity: null };
+  const persona = await db.prepare("SELECT id, name, notes FROM personas WHERE id = ? AND workspace_id = ?")
+    .get(identityId, execution.context.workspaceId) as { id: string; name: string; notes: string } | undefined;
+  if (!persona) throw new Error("Choose an identity available in this workspace");
+  const requestedGroup = String(execution.config.referenceGroup || "auto");
+  const rows = await db.prepare(`SELECT id, filename, role, storage_path, mime_type, thumbnail_storage_path, thumbnail_mime_type
+    FROM assets WHERE persona_id = ? AND role IN ('reference', 'before', 'after')
+    ORDER BY CASE role WHEN 'reference' THEN 0 WHEN 'before' THEN 1 ELSE 2 END, sort_order, created_at, id`).all(persona.id) as Array<{
+      id: string; filename: string; role: "reference" | "before" | "after"; storage_path: string; mime_type: string; thumbnail_storage_path: string | null; thumbnail_mime_type: string | null;
+    }>;
+  const filtered = requestedGroup === "auto" ? rows : rows.filter((asset) => asset.role === requestedGroup);
+  if (!filtered.length && execution.config.optional !== true) throw new Error("This identity has no usable references in the selected group");
+  return { identity: { ...persona, assets: filtered.map((asset) => ({ id: asset.id, filename: asset.filename, role: asset.role, path: asset.storage_path, mimeType: asset.mime_type, analysisPath: asset.thumbnail_storage_path || asset.storage_path, analysisMimeType: asset.thumbnail_mime_type || asset.mime_type })) } };
+}
+
+async function creativeSettings(execution: AutomationNodeExecution) {
+  return { settings: {
+    mode: String(execution.config.mode || "concept"),
+    newOutfit: execution.config.newOutfit !== false,
+    newLocation: execution.config.newLocation !== false,
+    textStrategy: String(execution.config.textStrategy || "rewrite"),
+    creativeBrief: String(execution.config.creativeBrief || ""),
+  } };
+}
+
+async function workflowData(execution: AutomationNodeExecution) {
+  return { data: execution.config.value };
+}
+
+async function structuredAiTask(execution: AutomationNodeExecution) {
+  const runWhen = String(execution.config.runWhen || "always");
+  if (runWhen === "primary != null" && execution.inputs.primary == null) {
+    return { result: null, __usage: { chargedCredits: 0, costUsd: 0 }, __skipped: "Primary input is empty" };
+  }
+  const scope = { ...execution.inputs, run: execution.context.runtimeInputs, config: execution.config };
+  const systemPrompt = String(renderAutomationTemplate(String(execution.config.systemPrompt || ""), scope) || "");
+  const userPrompt = String(renderAutomationTemplate(String(execution.config.userPrompt || ""), scope) || "");
+  const schema = execution.config.responseSchema && typeof execution.config.responseSchema === "object"
+    ? execution.config.responseSchema as Record<string, unknown>
+    : { type: "object" };
+  const media = collectMedia(execution.inputs).slice(0, 24);
+  const content: string | MultimodalContent[] = media.length
+    ? [{ type: "text", text: userPrompt }, ...await Promise.all(media.map(mediaContent))]
+    : userPrompt;
+  const schemaName = `automation_${execution.node.id}`.replace(/[^a-z0-9_-]/gi, "_").slice(0, 64);
+  const primaryModelId = String(execution.config.modelId || "");
+  const fallbackModelId = String(execution.config.fallbackModelId || "").trim();
+  const modelId = execution.attempt > 1 && fallbackModelId ? fallbackModelId : primaryModelId;
+  const metered = await runAssistantUsage({
+    modelId,
+    workspaceId: execution.context.workspaceId,
+    userId: execution.context.userId,
+    kind: `automation:${execution.node.type}`,
+    inputCharacters: systemPrompt.length + userPrompt.length,
+    imageCount: media.length,
+    signal: execution.context.signal,
+    budget: execution.context.budget ? {
+      reserve: (credits) => execution.context.budget!.reserve(execution.node.id, credits),
+      settle: execution.context.budget.settle,
+      release: execution.context.budget.release,
+    } : undefined,
+    run: () => intelligenceProvider().requestStructured({
+      temperature: Math.max(0, Math.min(2, Number(execution.config.temperature ?? 0.2))),
+      messages: [{ role: "system", content: systemPrompt }, { role: "user", content }],
+      response_format: { type: "json_schema", json_schema: { name: schemaName, strict: execution.config.strictSchema === true, schema } },
+    }),
+  });
+  const result = metered.result;
+  const errors = validateAutomationStructuredValue(result, schema);
+  if (errors.length) throw Object.assign(
+    new Error(`AI response did not match this node's schema: ${errors.slice(0, 4).join("; ")}`),
+    { automationUsage: { chargedCredits: metered.chargedCredits, costUsd: metered.costUsd } },
+  );
+  return { result, __usage: { chargedCredits: metered.chargedCredits, costUsd: metered.costUsd } };
+}
+
+async function transform(execution: AutomationNodeExecution) {
+  const inputList = Array.isArray(execution.inputs.data) ? execution.inputs.data : [execution.inputs.data];
+  return { result: transformTemplate(execution.config.template ?? {}, { ...execution.inputs, inputs: inputList, run: execution.context.runtimeInputs }) };
+}
+
+async function condition(execution: AutomationNodeExecution) {
+  const path = String(execution.config.path || "").trim().replace(/^data\.?/, "");
+  const value = path ? pathValue(execution.inputs.data, path) : execution.inputs.data;
+  const expected = execution.config.compareValue;
+  const operator = String(execution.config.operator || "is-truthy");
+  const empty = value === undefined || value === null || value === "" || (Array.isArray(value) && value.length === 0)
+    || (typeof value === "object" && !Array.isArray(value) && Object.keys(value as Record<string, unknown>).length === 0);
+  let match = false;
+  if (operator === "is-truthy") match = Boolean(value);
+  else if (operator === "is-falsy") match = !value;
+  else if (operator === "is-empty") match = empty;
+  else if (operator === "is-not-empty") match = !empty;
+  else if (operator === "equals") match = isDeepStrictEqual(value, expected);
+  else if (operator === "not-equals") match = !isDeepStrictEqual(value, expected);
+  else if (operator === "contains") {
+    match = typeof value === "string"
+      ? value.includes(String(expected ?? ""))
+      : Array.isArray(value) && value.some((item) => isDeepStrictEqual(item, expected));
+  } else if (operator === "greater-than" || operator === "less-than") {
+    const left = Number(value);
+    const right = Number(expected);
+    match = Number.isFinite(left) && Number.isFinite(right) && (operator === "greater-than" ? left > right : left < right);
+  }
+  return match ? { yes: execution.inputs.data } : { no: execution.inputs.data };
+}
+
+async function merge(execution: AutomationNodeExecution) {
+  const branches = Array.isArray(execution.inputs.branches) ? execution.inputs.branches : [execution.inputs.branches];
+  const flat = branches.flatMap((branch) => Array.isArray(branch) ? branch : [branch]).filter((item) => item !== undefined);
+  return { result: flat };
+}
+
+async function limitBatch(execution: AutomationNodeExecution) {
+  const items = Array.isArray(execution.inputs.items) ? execution.inputs.items : [];
+  const maximum = Math.min(500, Math.max(1, Number(execution.config.maxItems || 40)));
+  if (items.length > maximum) throw new Error(`Limit batch received ${items.length} items; its configured maximum is ${maximum}`);
+  return { items, summary: { count: items.length, maximum } };
+}
+
+function childInputs(execution: AutomationNodeExecution, value: unknown) {
+  const fixed = execution.config.childInputs && typeof execution.config.childInputs === "object" && !Array.isArray(execution.config.childInputs)
+    ? structuredClone(execution.config.childInputs as Record<string, unknown>) : {};
+  return { ...fixed, [String(execution.config.childInputKey || "workflow-input.value")]: value };
+}
+
+async function runSubworkflow(execution: AutomationNodeExecution) {
+  if (!execution.context.subworkflow) throw Object.assign(new Error("Subworkflow runtime is unavailable"), { code: "SUBWORKFLOW_UNAVAILABLE" });
+  const child = await execution.context.subworkflow.run({ parentNodeId: execution.node.id, parentAttempt: execution.attempt, slotKey: String(execution.config.subworkflowSlot || ""), runtimeInputs: childInputs(execution, execution.inputs.data) });
+  return { result: { runId: child.runId, output: child.output, warningCount: child.warningCount }, __warnings: child.warningCount ? [`Child workflow completed with ${child.warningCount} warning${child.warningCount === 1 ? "" : "s"}`] : [] };
+}
+
+async function mapSubworkflow(execution: AutomationNodeExecution) {
+  if (!execution.context.subworkflow) throw Object.assign(new Error("Subworkflow runtime is unavailable"), { code: "SUBWORKFLOW_UNAVAILABLE" });
+  const items = Array.isArray(execution.inputs.items) ? execution.inputs.items : [];
+  const maximum = Math.min(500, Math.max(1, Number(execution.config.maxItems || 40)));
+  if (items.length > maximum) throw Object.assign(new Error(`Map received ${items.length} items; its configured maximum is ${maximum}`), { code: "MAP_ITEM_LIMIT" });
+  const concurrency = Math.min(execution.context.policy?.maxParallelism || 8, 16, Math.max(1, Number(execution.config.concurrency || 3)));
+  const settled = await settleWithConcurrency(items, concurrency, async (item, itemIndex) => execution.context.subworkflow!.run({
+    parentNodeId: execution.node.id, parentAttempt: execution.attempt, slotKey: String(execution.config.subworkflowSlot || ""), runtimeInputs: childInputs(execution, item), itemIndex,
+  }));
+  const results = settled.flatMap((entry, itemIndex) => entry.status === "fulfilled" ? [{ itemIndex, runId: entry.value.runId, output: entry.value.output, warningCount: entry.value.warningCount }] : []);
+  const failures = settled.flatMap((entry, itemIndex) => entry.status === "rejected" ? [{ itemIndex, error: entry.reason instanceof Error ? entry.reason.message : String(entry.reason) }] : []);
+  if (!results.length || (failures.length && execution.config.itemFailure === "stop")) throw Object.assign(new Error(failures.map((failure) => `Item ${failure.itemIndex + 1}: ${failure.error}`).join("; ") || "Map produced no results"), { code: "MAP_FAILED" });
+  return { results, failures, __warnings: [
+    ...results.filter((result) => result.warningCount > 0).map((result) => `Item ${result.itemIndex + 1} completed with ${result.warningCount} warning${result.warningCount === 1 ? "" : "s"}`),
+    ...failures.map((failure) => `Item ${failure.itemIndex + 1}: ${failure.error}`),
+  ] };
+}
+
+export function isUnsafeAutomationHttpAddress(rawAddress: string) {
+  const address = rawAddress.toLowerCase().split("%")[0];
+  const mapped = address.match(/^::ffff:(\d+\.\d+\.\d+\.\d+)$/)?.[1];
+  if (mapped) return isUnsafeAutomationHttpAddress(mapped);
+  if (isIP(address) === 6) {
+    return address === "::" || address === "::1" || address.startsWith("fc") || address.startsWith("fd")
+      || /^fe[89ab]/.test(address) || address.startsWith("ff") || address.startsWith("2001:db8:");
+  }
+  if (isIP(address) !== 4) return true;
+  const [a, b, c] = address.split(".").map(Number);
+  return a === 0 || a === 10 || a === 127 || (a === 100 && b >= 64 && b <= 127)
+    || (a === 169 && b === 254) || (a === 172 && b >= 16 && b <= 31)
+    || (a === 192 && b === 0 && c === 0) || (a === 192 && b === 0 && c === 2)
+    || (a === 192 && b === 88 && c === 99) || (a === 192 && b === 168)
+    || (a === 198 && (b === 18 || b === 19)) || (a === 198 && b === 51 && c === 100)
+    || (a === 203 && b === 0 && c === 113) || a >= 224;
+}
+
+async function safeExternalUrl(value: string) {
+  const url = new URL(value);
+  if (!['http:', 'https:'].includes(url.protocol) || url.username || url.password) throw Object.assign(new Error("HTTP node requires a public HTTP or HTTPS URL without embedded credentials"), { code: "UNSAFE_HTTP_URL" });
+  if (/\.(?:local|localhost|internal)$/i.test(url.hostname) || url.hostname.toLowerCase() === "localhost") throw Object.assign(new Error("HTTP node cannot access local network hostnames"), { code: "UNSAFE_HTTP_URL" });
+  const addresses = await lookup(url.hostname, { all: true, verbatim: true });
+  if (!addresses.length || addresses.some((entry) => isUnsafeAutomationHttpAddress(entry.address))) throw Object.assign(new Error("HTTP node cannot access local, private, or reserved network addresses"), { code: "UNSAFE_HTTP_URL" });
+  return { url, addresses };
+}
+
+async function httpRequest(execution: AutomationNodeExecution) {
+  const scope = { data: execution.inputs.data, run: execution.context.runtimeInputs };
+  const renderedUrl = String(renderAutomationTemplate(String(execution.config.url || ""), scope) || "");
+  const { url, addresses } = await safeExternalUrl(renderedUrl);
+  const method = String(execution.config.method || "GET").toUpperCase();
+  if (!new Set(["GET", "POST", "PUT", "PATCH", "DELETE", "HEAD"]).has(method)) throw Object.assign(new Error("HTTP method is not allowed"), { code: "HTTP_METHOD_INVALID" });
+  const headersValue = transformTemplate(execution.config.headers || {}, scope);
+  const headers: Record<string, string> = Object.fromEntries(Object.entries(headersValue && typeof headersValue === "object" && !Array.isArray(headersValue) ? headersValue as Record<string, unknown> : {}).map(([key, value]) => [key, String(value)]));
+  const unsafeRequestHeaders = new Set(["host", "connection", "transfer-encoding", "content-length", "proxy-authorization", "upgrade"]);
+  for (const key of Object.keys(headers)) if (unsafeRequestHeaders.has(key.toLowerCase())) throw Object.assign(new Error(`HTTP header ${key} is managed by Scenelith`), { code: "HTTP_HEADER_INVALID" });
+  const credentialSlot = String(execution.config.credentialSlot || "").trim();
+  const secretValues: string[] = [];
+  if (credentialSlot) {
+    if (!execution.context.workflowId) throw new Error("Credential binding requires a persisted workflow");
+    const credential = await resolveAutomationCredential({ workflowId: execution.context.workflowId, workspaceId: execution.context.workspaceId, slotKey: credentialSlot, credentialId: execution.context.credentialIds?.[credentialSlot] });
+    const payload = credential.payload;
+    secretValues.push(...Object.values(payload).filter((value) => value.length >= 4));
+    if (credential.kind === "bearer") headers.authorization = `Bearer ${payload.token || payload.value || ""}`;
+    else if (credential.kind === "basic") headers.authorization = `Basic ${Buffer.from(`${payload.username || ""}:${payload.password || ""}`).toString("base64")}`;
+    else headers[payload.headerName || (credential.kind === "api-key" ? "x-api-key" : "authorization")] = payload.value || payload.apiKey || payload.token || "";
+  }
+  const hasBody = !["GET", "HEAD"].includes(method);
+  const bodyValue = hasBody ? transformTemplate(execution.config.body || {}, scope) : undefined;
+  const body = hasBody ? Buffer.from(JSON.stringify(bodyValue)) : undefined;
+  if (body && body.length > 1_000_000) throw Object.assign(new Error("HTTP request body exceeded 1 MB"), { code: "HTTP_REQUEST_LIMIT" });
+  if (body) { headers["content-type"] ||= "application/json"; headers["content-length"] = String(body.length); }
+  const timeoutMs = Math.min(120, Math.max(1, Number(execution.config.timeoutSeconds || 30))) * 1_000;
+  const address = addresses[0];
+  const transport = url.protocol === "https:" ? https : http;
+  const response = await new Promise<{ status: number; headers: Record<string, string | string[]>; body: string }>((resolve, reject) => {
+    const request = transport.request({
+      protocol: url.protocol, hostname: url.hostname, port: url.port || undefined, path: `${url.pathname}${url.search}`, method, headers,
+      lookup: (_hostname, _options, callback) => callback(null, address.address, address.family),
+      timeout: timeoutMs, servername: url.hostname,
+    }, (incoming) => {
+      const chunks: Buffer[] = []; let size = 0;
+      incoming.on("data", (chunk: Buffer) => { size += chunk.length; if (size > 5_000_000) incoming.destroy(Object.assign(new Error("HTTP response exceeded 5 MB"), { code: "HTTP_RESPONSE_LIMIT" })); else chunks.push(chunk); });
+      incoming.on("error", reject);
+      incoming.on("end", () => resolve({ status: incoming.statusCode || 0, headers: Object.fromEntries(Object.entries(incoming.headers).flatMap(([key, value]) => value === undefined ? [] : [[key, value as string | string[]]])), body: Buffer.concat(chunks).toString("utf8") }));
+    });
+    request.on("timeout", () => request.destroy(Object.assign(new Error("HTTP request timed out"), { code: "HTTP_TIMEOUT" })));
+    request.on("error", reject);
+    const onAbort = () => request.destroy(automationAbortError(execution.context.signal));
+    if (execution.context.signal?.aborted) onAbort();
+    else execution.context.signal?.addEventListener("abort", onAbort, { once: true });
+    request.on("close", () => execution.context.signal?.removeEventListener("abort", onAbort));
+    if (body) request.write(body);
+    request.end();
+  });
+  const contentType = String(response.headers["content-type"] || "");
+  let parsedBody: unknown = response.body;
+  if (contentType.includes("json")) {
+    try { parsedBody = JSON.parse(response.body || "null"); }
+    catch { parsedBody = response.body; }
+  }
+  const sensitiveResponseKey = /^(?:authorization|proxy-authorization|set-cookie|cookie|www-authenticate|authentication-info|access[_-]?token|refresh[_-]?token|api[_-]?key|secret|password)$/i;
+  const redact = (value: unknown): unknown => {
+    if (typeof value === "string") return secretValues.reduce((text, secret) => text.split(secret).join("[REDACTED]"), value);
+    if (Array.isArray(value)) return value.map(redact);
+    if (value && typeof value === "object") return Object.fromEntries(Object.entries(value as Record<string, unknown>).map(([key, entry]) => [key, sensitiveResponseKey.test(key) ? "[REDACTED]" : redact(entry)]));
+    return value;
+  };
+  const result = { status: response.status, ok: response.status >= 200 && response.status < 300, headers: redact(response.headers), body: redact(parsedBody) };
+  if (!result.ok) throw Object.assign(new Error(`HTTP request returned ${response.status}`), { code: "HTTP_STATUS", safeResponse: result });
+  return { response: result };
+}
+
+type PlannedSlide = {
+  index: number;
+  prompt: string;
+  role: string;
+  overlayText: string;
+  referenceIds: string[];
+};
+
+type GenerationReference = {
+  path: string;
+  mimeType: string;
+  role: string;
+  label: string;
+};
+
+export function buildAutomationGenerationPrompt(plan: Pick<PlannedSlide, "index" | "prompt" | "overlayText">, references: GenerationReference[]) {
+  const bindings = references.map((reference, index) => {
+    const token = referenceMentionToken(reference.label, index);
+    const responsibility = index === 0
+      ? "composition, framing, pose and scene structure only; never copy this person's identity"
+      : "the target person's identity and appearance only; do not copy this image's background or composition";
+    return { ...reference, label: token, token, responsibility };
+  });
+  const contract = bindings.map((binding) => `- ${binding.token}: ${binding.responsibility}`).join("\n");
+  const overlay = plan.overlayText.trim()
+    ? `\nON-SCREEN TEXT:\nRender exactly: ${JSON.stringify(plan.overlayText.trim())}`
+    : "\nON-SCREEN TEXT:\nDo not add text unless the generation plan explicitly requests it.";
+  return {
+    prompt: `REFERENCE RESPONSIBILITIES (do not swap them):\n${contract}\n\nGENERATION PLAN:\n${plan.prompt.trim()}${overlay}`,
+    references: bindings.map((binding) => ({ path: binding.path, mimeType: binding.mimeType, role: binding.role, label: binding.label })),
+  };
+}
+
+function plannedSlides(value: unknown): PlannedSlide[] {
+  const record = value && typeof value === "object" ? value as Record<string, unknown> : {};
+  const source = Array.isArray(record.slides) ? record.slides : Array.isArray(value) ? value : [];
+  const slides = source.map((item, position) => {
+    const slide = item && typeof item === "object" ? item as Record<string, unknown> : {};
+    const index = Number(slide.index || position + 1);
+    const prompt = String(slide.prompt || "").trim();
+    if (!Number.isInteger(index) || index < 1 || !prompt) throw new Error(`Slide ${position + 1} needs a stable index and generation prompt`);
+    return {
+      index,
+      prompt,
+      role: String(slide.role || "scene"),
+      overlayText: String(slide.overlayText || ""),
+      referenceIds: Array.isArray(slide.referenceIds) ? slide.referenceIds.map(String) : [],
+    };
+  }).sort((left, right) => left.index - right.index);
+  const indexes = new Set<number>();
+  for (const slide of slides) {
+    if (indexes.has(slide.index)) throw new Error(`Slide index ${slide.index} appears more than once`);
+    indexes.add(slide.index);
+  }
+  return slides;
+}
+
+async function validateSlidePlans(execution: AutomationNodeExecution) {
+  const slides = plannedSlides(execution.inputs.data);
+  const maximum = Math.min(40, Math.max(1, Number(execution.config.maxSlides || 40)));
+  if (!slides.length) throw new Error("The plan contains no slides");
+  if (slides.length > maximum) throw new Error(`The plan contains ${slides.length} slides; this step allows ${maximum}`);
+  return { plans: { slides } };
+}
+
+async function assertAutomationRunActive(runId: string, expectedWorkerId?: string, deadlineAt?: string) {
+  if (deadlineAt && Date.now() >= new Date(deadlineAt).getTime()) throw Object.assign(new Error("Workflow exceeded its configured timeout"), { code: "WORKFLOW_TIMEOUT" });
+  const row = await db.prepare("SELECT status, worker_id FROM automation_runs WHERE id = ?").get(runId) as { status: string; worker_id: string | null } | undefined;
+  if (row?.status !== "running") throw Object.assign(new Error(row?.status === "cancelled" ? "Automation cancelled" : "Automation stopped"), { code: row?.status === "cancelled" ? "RUN_CANCELLED" : "RUN_LEASE_LOST" });
+  if (expectedWorkerId && row.worker_id !== expectedWorkerId) throw Object.assign(new Error("Automation lease was transferred"), { code: "RUN_LEASE_LOST" });
+}
+
+async function waitForGeneration(runId: string, generationId: string, expectedWorkerId?: string, deadlineAt?: string, signal?: AbortSignal) {
+  for (let poll = 0; poll < 900; poll += 1) {
+    if (signal?.aborted) {
+      await cancelGeneration(generationId);
+      throw automationAbortError(signal);
+    }
+    await assertAutomationRunActive(runId, expectedWorkerId, deadlineAt);
+    await drainGenerationDispatchQueue();
+    const state = await reconcileGeneration(generationId);
+    const normalized = String(state.status || "").toLowerCase();
+    if (failedGenerationStatuses.has(normalized)) throw new Error(state.error || "Image generation failed");
+    if (state.output_asset_id && (completedGenerationStatuses.has(normalized) || state.output_url)) return await generationClientState(state);
+    await abortableNodeDelay(2_000, signal).catch(async (error) => { await cancelGeneration(generationId); throw error; });
+  }
+  throw new Error("Image generation timed out");
+}
+
+async function imageGeneration(execution: AutomationNodeExecution) {
+  const plans = plannedSlides(execution.inputs.plans);
+  if (!plans.length) throw new Error("The workflow produced no slide plans");
+  const assetLimit = Math.min(5_000, execution.context.policy?.maxGeneratedAssets ?? 200);
+  if (plans.length > assetLimit) throw Object.assign(new Error(`This workflow allows at most ${assetLimit} generated assets per run`), { code: "GENERATED_ASSET_LIMIT" });
+  const source = execution.inputs.source && typeof execution.inputs.source === "object" ? execution.inputs.source as Record<string, unknown> : {};
+  const sourceSlides = Array.isArray(source.slides) ? source.slides as Array<Record<string, unknown>> : [];
+  if (sourceSlides.length !== plans.length) throw new Error(`The final plan has ${plans.length} slides but the source has ${sourceSlides.length}`);
+  const sourceByIndex = new Map(sourceSlides.map((slide, position) => [Number(slide.index || position + 1), slide]));
+  const identity = execution.inputs.identity && typeof execution.inputs.identity === "object" ? execution.inputs.identity as Record<string, unknown> : null;
+  const identityAssets = identity && Array.isArray(identity.assets) ? identity.assets as Array<Record<string, unknown>> : [];
+  const identityById = new Map(identityAssets.map((asset) => [String(asset.id), asset]));
+  const provider = generationProvider();
+  const model = provider.getModel(String(execution.config.modelId || "nano-banana-2"));
+  if (model.mediaType !== "image") throw new Error(`${model.label} is not an image model`);
+  if (model.maxReferences < 1) throw new Error(`${model.label} cannot use the required source composition reference`);
+  const allowedResolutions = provider.allowedResolutions(model, false);
+  const requestedResolution = String(execution.config.resolution || "").trim();
+  if (requestedResolution && !allowedResolutions.includes(requestedResolution)) throw new Error(`${requestedResolution} is not available for ${model.label}`);
+  const resolution = requestedResolution || model.defaultResolution || allowedResolutions[0];
+  if (!resolution) throw new Error(`${model.label} has no usable image resolution`);
+  const allowedRatios = provider.allowedRatios(model, resolution, true);
+  const requestedRatio = String(execution.config.ratio || "").trim();
+  if (requestedRatio && !allowedRatios.includes(requestedRatio)) throw new Error(`${requestedRatio} is not available for ${model.label} at ${resolution}`);
+  const aspectRatio = requestedRatio || (model.defaultRatio && allowedRatios.includes(model.defaultRatio) ? model.defaultRatio : allowedRatios[0]);
+  if (!aspectRatio) throw new Error(`${model.label} has no usable aspect ratio`);
+  const concurrency = Math.min(execution.context.policy?.maxParallelism ?? 8, 8, Math.max(1, Number(execution.config.concurrency || 3)));
+  const attempts = Math.min(5, Math.max(1, Number(execution.config.maxAttempts || 3)));
+  const results: Array<Record<string, unknown>> = new Array(plans.length);
+  const configuredAdmissionWait = Number(process.env.AUTOMATION_ADMISSION_WAIT_MS || 10 * 60_000);
+  const admissionWaitMs = Number.isFinite(configuredAdmissionWait) ? Math.max(60_000, configuredAdmissionWait) : 10 * 60_000;
+
+  const settled = await settleWithConcurrency(plans, concurrency, async (plan, position) => {
+    const admissionDeadline = Date.now() + admissionWaitMs;
+    const artifactId = `${execution.context.runId}:${execution.node.id}:${plan.index}`;
+    const existing = await db.prepare("SELECT value_json FROM automation_artifacts WHERE id = ? AND run_id = ?").get(artifactId, execution.context.runId) as { value_json: unknown } | undefined;
+    if (existing?.value_json) {
+      results[position] = typeof existing.value_json === "string" ? JSON.parse(existing.value_json) as Record<string, unknown> : existing.value_json as Record<string, unknown>;
+      return;
+    }
+    if (execution.context.replayOfRunId) {
+      const replayed = await db.prepare(`SELECT id, value_json FROM automation_artifacts
+        WHERE run_id = ? AND node_id = ? AND item_key = ? AND kind = 'generated-image' LIMIT 1`)
+        .get(execution.context.replayOfRunId, execution.node.id, String(plan.index)) as { id: string; value_json: unknown } | undefined;
+      if (replayed?.value_json) {
+        const value = typeof replayed.value_json === "string" ? JSON.parse(replayed.value_json) as Record<string, unknown> : replayed.value_json as Record<string, unknown>;
+        await db.prepare(`INSERT INTO automation_artifacts
+          (id, run_id, node_id, item_key, workspace_id, project_id, kind, asset_id, value_json, source_artifact_id, created_at)
+          VALUES (?, ?, ?, ?, ?, ?, 'generated-image', ?, ?, ?, ?) ON CONFLICT(id) DO NOTHING`)
+          .run(artifactId, execution.context.runId, execution.node.id, String(plan.index), execution.context.workspaceId, execution.context.projectId, value.assetId || null, JSON.stringify(value), replayed.id, new Date().toISOString());
+        results[position] = value;
+        return;
+      }
+    }
+    const sourceSlide = sourceByIndex.get(plan.index);
+    if (!sourceSlide) throw new Error(`Source slide ${plan.index} is missing`);
+    const sourceAssetId = String(sourceSlide.assetId || "");
+    const unknownReferenceIds = plan.referenceIds.filter((id) => id !== sourceAssetId && !identityById.has(id));
+    if (unknownReferenceIds.length) throw new Error(`Slide ${plan.index} requested unavailable identity reference ${unknownReferenceIds[0]}`);
+    const referenceIds = [...new Set([sourceAssetId, ...plan.referenceIds.filter((id) => id !== sourceAssetId)])].filter(Boolean);
+    if (referenceIds.length > model.maxReferences) {
+      throw new Error(`Slide ${plan.index} needs ${referenceIds.length} references, but ${model.label} supports ${model.maxReferences}`);
+    }
+    const rawReferences: GenerationReference[] = referenceIds.map((assetId, referenceIndex) => {
+      const asset = referenceIndex === 0 ? sourceSlide : identityById.get(assetId);
+      if (!asset) throw new Error(`Reference ${assetId} is no longer available`);
+      return {
+        path: String(asset.path || ""),
+        mimeType: String(asset.mimeType || "image/png"),
+        role: "reference-image",
+        label: referenceIndex === 0 ? `Source composition ${plan.index}` : `Identity reference ${referenceIndex}`,
+      };
+    });
+    const generationInput = buildAutomationGenerationPrompt(plan, rawReferences);
+    const references = generationInput.references;
+    if (!references[0]?.path) throw new Error(`Source slide ${plan.index} has no stored image`);
+    const requestedCredits = generationCreditCost(model.id, resolution, "5", references.length, { generateAudio: false, hasVideoInput: false, inputVideoDurationSeconds: 0 });
+    const nodeId = `automation-${execution.context.runId}-${plan.index}`;
+    await execution.context.usage?.reserveGeneratedAssets(1, `${execution.node.id}:${plan.index}`);
+    let latestError: Error | null = null;
+    const persistGenerated = async (generated: Awaited<ReturnType<typeof generationClientState>>, generationId: string) => {
+      const value = { ...generated, ...plan, sourceAssetId, nodeId, generationId, modelId: model.id, aspectRatio, resolution };
+      await db.prepare(`INSERT INTO automation_artifacts (id, run_id, node_id, item_key, workspace_id, project_id, kind, asset_id, value_json, created_at)
+        VALUES (?, ?, ?, ?, ?, ?, 'generated-image', ?, ?, ?) ON CONFLICT(id) DO NOTHING`)
+        .run(artifactId, execution.context.runId, execution.node.id, String(plan.index), execution.context.workspaceId, execution.context.projectId, generated.assetId || null, JSON.stringify(value), new Date().toISOString());
+      results[position] = value;
+    };
+    const reusable = await db.prepare(`SELECT id, status FROM generations
+      WHERE project_id = ? AND requested_by_user_id = ? AND node_id = ?
+      ORDER BY created_at DESC LIMIT 1`).get(execution.context.projectId, execution.context.userId, nodeId) as { id: string; status: string } | undefined;
+    if (reusable && !failedGenerationStatuses.has(String(reusable.status || "").toLowerCase())) {
+      const budgetReservationId = await execution.context.budget?.reserve(execution.node.id, requestedCredits) ?? null;
+      try {
+        const generated = await waitForGeneration(execution.context.runId, reusable.id, execution.context.workerId, execution.context.deadlineAt, execution.context.signal);
+        await persistGenerated(generated, reusable.id);
+        await execution.context.budget?.settle(budgetReservationId, requestedCredits);
+        return;
+      } catch (error) {
+        await execution.context.budget?.release(budgetReservationId);
+        const code = String((error as { code?: unknown })?.code || "");
+        if (code === "RUN_CANCELLED" || code === "RUN_LEASE_LOST") throw error;
+        latestError = error instanceof Error ? error : new Error(String(error));
+      }
+    }
+    for (let attempt = 1; attempt <= attempts; attempt += 1) {
+      await assertAutomationRunActive(execution.context.runId, execution.context.workerId, execution.context.deadlineAt);
+      const budgetReservationId = await execution.context.budget?.reserve(execution.node.id, requestedCredits) ?? null;
+      const admission = await admitGeneration({
+        userId: execution.context.userId,
+        projectId: execution.context.projectId,
+        nodeId,
+        prompt: generationInput.prompt,
+        model,
+        references,
+        operation: "generation",
+        aspectRatio,
+        resolution,
+        duration: "5",
+        generateAudio: false,
+        hasVideoInput: false,
+        inputVideoDurationSeconds: 0,
+      });
+      if (!admission.ok) {
+        await execution.context.budget?.release(budgetReservationId);
+        if (admission.status === 429) {
+          const retryAfterMs = Math.max(250, admission.retryAfterMs || 3_000);
+          if (Date.now() + retryAfterMs > admissionDeadline) throw new Error("Generation capacity did not become available before the automation wait limit");
+          await abortableNodeDelay(retryAfterMs, execution.context.signal);
+          attempt -= 1;
+          continue;
+        }
+        latestError = Object.assign(new Error(admission.error), { code: admission.code });
+        if (admission.status === 402 || admission.status === 404) throw latestError;
+      } else {
+        try {
+          const generated = await waitForGeneration(execution.context.runId, admission.generationId, execution.context.workerId, execution.context.deadlineAt, execution.context.signal);
+          await persistGenerated(generated, admission.generationId);
+          await execution.context.budget?.settle(budgetReservationId, admission.creditCost);
+          return;
+        } catch (error) {
+          await execution.context.budget?.release(budgetReservationId);
+          latestError = error instanceof Error ? error : new Error(String(error));
+        }
+      }
+    }
+    throw latestError || new Error(`Slide ${plan.index} could not be generated`);
+  });
+
+  const failures = settled.flatMap((entry, index) => entry.status === "rejected" ? [{ index: plans[index].index, error: entry.reason instanceof Error ? entry.reason.message : String(entry.reason) }] : []);
+  const successful = results.filter(Boolean);
+  if (!successful.length || (failures.length && String(execution.config.partialFailure || "keep-successful") === "stop")) {
+    throw new Error(failures.map((item) => `Slide ${item.index}: ${item.error}`).join("; ") || "No images were generated");
+  }
+  return {
+    assets: { items: successful, failures, model: { id: model.id, label: model.label, defaultRatio: aspectRatio, defaultResolution: resolution } },
+    __usage: { chargedCredits: successful.reduce((total, item) => total + Number(item.creditCost || 0), 0) },
+  };
+}
+
+async function addToCanvas(execution: AutomationNodeExecution) {
+  const assets = execution.inputs.assets && typeof execution.inputs.assets === "object" ? execution.inputs.assets as Record<string, unknown> : {};
+  const items = Array.isArray(assets.items) ? assets.items as Array<Record<string, unknown>> : [];
+  const failures = Array.isArray(assets.failures) ? assets.failures as Array<Record<string, unknown>> : [];
+  if (!items.length) throw new Error("There are no generated images to add to the canvas");
+  const source = execution.inputs.source && typeof execution.inputs.source === "object" ? execution.inputs.source as Record<string, unknown> : {};
+  const sourceNodeId = String(source.sourceNodeId || "");
+  const resultArtifactId = `${execution.context.runId}:${execution.node.id}:canvas`;
+  const prior = await db.prepare("SELECT value_json FROM automation_artifacts WHERE id = ? AND run_id = ?").get(resultArtifactId, execution.context.runId) as { value_json: unknown } | undefined;
+  if (prior?.value_json) return { result: typeof prior.value_json === "string" ? JSON.parse(prior.value_json) : prior.value_json };
+
+  if (execution.context.runKind === "test" || execution.context.runKind === "node-preview") {
+    return { result: { preview: true, sourceNodeId, added: items.length, failures, message: "Draft test completed without changing the content canvas" } };
+  }
+
+  const noteId = `automation-note-${execution.context.runId}`;
+  const nodeIds = items.map((item) => String(item.nodeId || `automation-${execution.context.runId}-${Number(item.index || 0)}`));
+  const mutate = process.env.COLLABORATION_INTERNAL_SECRET
+    ? (mutator: (graph: ProjectGraph) => ProjectGraph) => mutateCollaborativeGraph(execution.context.projectId, mutator)
+    : (mutator: (graph: ProjectGraph) => ProjectGraph) => mutateProjectGraphSnapshot(execution.context.projectId, mutator);
+  await assertAutomationRunActive(execution.context.runId, execution.context.workerId, execution.context.deadlineAt);
+  await mutate((graph) => {
+    const existingIds = new Set((graph.nodes || []).map((node) => node.id));
+    if (nodeIds.every((id) => existingIds.has(id))) return graph;
+    const nodes = [...(graph.nodes || [])];
+    const edges = [...(graph.edges || [])];
+    const minX = nodes.length ? Math.min(...nodes.map((node) => node.position.x)) : 0;
+    const bottom = nodes.length ? Math.max(...nodes.map((node) => node.position.y + Number(node.measured?.height || node.height || node.data.nodeHeight || 520))) : 0;
+    const sourceNode = nodes.find((node) => node.id === sourceNodeId);
+    const layout = String(execution.config.layout || "beside-source");
+    const blockLeft = layout === "new-row"
+      ? minX
+      : sourceNode
+        ? sourceNode.position.x + Number(sourceNode.measured?.width || sourceNode.width || sourceNode.data.nodeWidth || 580) + 180
+        : minX;
+    const blockTop = layout === "new-row" ? bottom + 180 : sourceNode?.position.y || bottom + 180;
+    if (execution.config.includePlanNote !== false && !existingIds.has(noteId)) {
+      const note: FrameNode = {
+        id: noteId,
+        type: "frameNode",
+        position: { x: blockLeft, y: blockTop },
+        data: {
+          kind: "note",
+          title: "Automated TikTok recreation",
+          subtitle: `${items.length} generated slide${items.length === 1 ? "" : "s"}`,
+          noteColor: "gray",
+          noteText: "Built from a saved no-code workflow. Open Automation settings to inspect or customize every planning and generation step.",
+          nodeWidth: 340,
+          nodeHeight: 300,
+          automationKind: "tiktok-slideshow",
+          automationSourceNodeId: sourceNodeId,
+          automationRunId: execution.context.runId,
+        },
+      };
+      nodes.push(note);
+      existingIds.add(noteId);
+    }
+    for (const [position, item] of items.entries()) {
+      const index = Number(item.index || position + 1);
+      const nodeId = nodeIds[position];
+      if (existingIds.has(nodeId)) continue;
+      const sourceAssetId = String(item.sourceAssetId || "");
+      const sourceScene = nodes.find((node) => String(node.data.assetId || "") === sourceAssetId);
+      const column = position % 2;
+      const row = Math.floor(position / 2);
+      const outputUrl = String(item.outputUrl || (item.assetId ? `/api/assets/${String(item.assetId)}` : ""));
+      const output: FrameNode = {
+        id: nodeId,
+        type: "frameNode",
+        position: { x: blockLeft + (execution.config.includePlanNote === false ? 0 : 410) + column * 520, y: blockTop + row * 890 },
+        data: {
+          kind: "prompt",
+          title: `Slide ${String(index).padStart(2, "0")} · ${String(item.role || "scene")}`,
+          subtitle: "Generated by automation",
+          prompt: String(item.prompt || ""),
+          status: "ready",
+          modelId: String(item.modelId || ""),
+          mediaType: "image",
+          aspectRatio: item.aspectRatio as FrameNode["data"]["aspectRatio"],
+          resolution: item.resolution as FrameNode["data"]["resolution"],
+          generationCount: 1,
+          nodeWidth: 430,
+          outputUrl,
+          assetId: item.assetId ? String(item.assetId) : undefined,
+          generatedAt: new Date().toISOString(),
+          generatedOutputs: outputUrl ? [{ url: outputUrl, assetId: item.assetId ? String(item.assetId) : undefined, mediaType: "image", modelId: String(item.modelId || "") }] : [],
+          activeGeneratedOutputIndex: 0,
+          automationKind: "tiktok-slideshow",
+          automationSourceNodeId: sourceNodeId,
+          automationSlideIndex: index,
+          automationRole: String(item.role || "scene"),
+          automationOverlayText: String(item.overlayText || ""),
+          automationRunId: execution.context.runId,
+        },
+      };
+      nodes.push(output);
+      existingIds.add(nodeId);
+      if (sourceScene) {
+        const edgeId = `automation-edge-${execution.context.runId}-${index}`;
+        if (!edges.some((edge) => edge.id === edgeId)) {
+          const lineage: FrameEdge = {
+            id: edgeId,
+            source: sourceScene.id,
+            sourceHandle: "output",
+            target: nodeId,
+            targetHandle: "reference-image-input",
+            animated: true,
+            className: "is-automation-lineage-edge",
+            data: {
+              portType: "image",
+              inputRole: "reference-image",
+              automationKind: "tiktok-slideshow",
+              automationSourceNodeId: sourceNodeId,
+              automationSlideIndex: index,
+            },
+          };
+          edges.push(lineage);
+        }
+      }
+    }
+    return { ...graph, nodes, edges };
+  });
+  const result = { nodeIds, noteId: execution.config.includePlanNote === false ? null : noteId, sourceNodeId, added: nodeIds.length, failures };
+  await db.prepare(`INSERT INTO automation_artifacts (id, run_id, node_id, item_key, workspace_id, project_id, kind, value_json, created_at)
+    VALUES (?, ?, ?, 'canvas', ?, ?, 'canvas-result', ?, ?) ON CONFLICT(id) DO NOTHING`)
+    .run(resultArtifactId, execution.context.runId, execution.node.id, execution.context.workspaceId, execution.context.projectId, JSON.stringify(result), new Date().toISOString());
+  return { result };
+}
+
+async function finishWorkflow(execution: AutomationNodeExecution) {
+  const message = String(renderAutomationTemplate(String(execution.config.message || "Workflow finished"), { data: execution.inputs.data, run: execution.context.runtimeInputs }) || "Workflow finished");
+  if (execution.config.outcome === "failed") throw Object.assign(new Error(message), { code: "WORKFLOW_STOPPED" });
+  return { result: { outcome: "completed", message, data: execution.inputs.data } };
+}
+
+export function coreAutomationNodeHandlers(): AutomationNodeHandlers {
+  return {
+    "core.manual-trigger@1": manualTrigger,
+    "input.tiktok-source@1": tiktokSource,
+    "input.identity@1": identity,
+    "input.creative-settings@1": creativeSettings,
+    "input.workflow-data@1": workflowData,
+    "ai.structured-task@1": structuredAiTask,
+    "logic.transform@1": transform,
+    "logic.condition@1": condition,
+    "logic.merge@1": merge,
+    "logic.limit-batch@1": limitBatch,
+    "logic.run-subworkflow@1": runSubworkflow,
+    "logic.map-subworkflow@1": mapSubworkflow,
+    "integration.http-request@1": httpRequest,
+    "logic.validate-slide-plans@1": validateSlidePlans,
+    "generation.image@1": imageGeneration,
+    "output.add-to-canvas@1": addToCanvas,
+    "output.finish@1": finishWorkflow,
+  };
+}

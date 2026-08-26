@@ -9,6 +9,7 @@ import {
   usageWorkspaceForUserWorkspace,
   userCanAccessProject,
   userCanAccessWorkspace,
+  userCanPerformAutomationAction,
   userCanManageWorkspace,
   workspaceRoleForUser,
 } from "@/editions/current/access";
@@ -21,6 +22,7 @@ export {
   usageWorkspaceForUserWorkspace,
   userCanAccessProject,
   userCanAccessWorkspace,
+  userCanPerformAutomationAction,
   userCanManageWorkspace,
   workspaceRoleForUser,
 };

@@ -4,6 +4,7 @@ import { db, rowToHook, userCanAccessProject } from "@/lib/postgres-db";
 import { importProvider, intelligenceProvider } from "@/platform/providers/registry";
 import { persistedProjectIdSchema } from "@/lib/project-id";
 import { enforceDistributedRateLimit } from "@/lib/distributed-rate-limit";
+import { fireAutomationCanvasEvent } from "@/lib/automation-workflows/triggers";
 
 export const runtime = "nodejs";
 export const maxDuration = 300;
@@ -26,12 +27,20 @@ export async function POST(request: Request) {
   if (!project) return Response.json({ error: "Project not found" }, { status: 404 });
   try {
     const result = await importProvider("tikwm").importTikTok(parsed.data.url, parsed.data.projectId);
-    await db.prepare("UPDATE projects SET name = ?, source_url = ?, status = 'imported', updated_at = ? WHERE id = ?").run(
-      result.post.title.slice(0, 120) || "TikTok study",
-      parsed.data.url,
-      new Date().toISOString(),
-      parsed.data.projectId,
-    );
+    await db.transaction(async () => {
+      await db.prepare("UPDATE projects SET name = ?, source_url = ?, status = 'imported', updated_at = ? WHERE id = ?").run(
+        result.post.title.slice(0, 120) || "TikTok study",
+        parsed.data.url,
+        new Date().toISOString(),
+        parsed.data.projectId,
+      );
+      await fireAutomationCanvasEvent({
+        userId: auth.user.id,
+        projectId: parsed.data.projectId,
+        event: "tiktok.imported",
+        payload: { sourceUrl: parsed.data.url, assetIds: result.assets.map((asset) => asset.id), title: String(result.post.title || "") },
+      });
+    });
     let hook = null;
     let hookError: string | null = null;
     const firstVisual = result.assets.find((asset) => asset.kind === "slide" || asset.kind === "scene");

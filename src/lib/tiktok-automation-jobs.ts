@@ -72,6 +72,7 @@ function errorCode(result: TikTokAutomationRunResult) {
   return typeof body.code === "string" ? body.code : null;
 }
 
+/** @deprecated Existing queued records only. New requests enter the versioned workflow runtime. */
 export async function enqueueTikTokAutomationJob(input: {
   userId: string;
   workspaceId: string;

@@ -9,5 +9,6 @@ export const workspaceRoleForUser = editionWorkspaceAccess.workspaceRoleForUser.
 export const userCanManageWorkspace = editionWorkspaceAccess.userCanManageWorkspace.bind(editionWorkspaceAccess);
 export const userCanAccessWorkspace = editionWorkspaceAccess.userCanAccessWorkspace.bind(editionWorkspaceAccess);
 export const userCanAccessProject = editionWorkspaceAccess.userCanAccessProject.bind(editionWorkspaceAccess);
+export const userCanPerformAutomationAction = editionWorkspaceAccess.userCanPerformAutomationAction.bind(editionWorkspaceAccess);
 export const usageWorkspaceForUserProject = editionWorkspaceAccess.usageWorkspaceForUserProject.bind(editionWorkspaceAccess);
 export const usageWorkspaceForUserWorkspace = editionWorkspaceAccess.usageWorkspaceForUserWorkspace.bind(editionWorkspaceAccess);

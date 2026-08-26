@@ -25,7 +25,7 @@ src/editions/
 └── current/         thin edition selectors
 ```
 
-The Cloud repository supplies private implementations under `src/cloud/`, keeps its framework-required URL entries under the URL-transparent `src/app/(cloud)/` route group, and overrides only the thin selectors in `src/editions/current/`. Shared modules never import `src/cloud/` or `src/editions/selfhost/` directly. The public distribution rejects both Cloud source roots, and Cloud CI enforces ownership and dependency direction for every source file.
+The Cloud repository supplies private implementations under `src/cloud/`, keeps its framework-required URL entries under the URL-transparent `src/app/(cloud)/` route group, and overrides only the thin selectors in `src/editions/current/`. Shared modules never import `src/cloud/` or `src/editions/selfhost/` directly. Automation notification delivery and retention policy follow the same selector boundary: the public core owns the durable outbox and cleanup engine, while each edition supplies policy/adapters. The public distribution rejects both Cloud source roots, and Cloud CI enforces ownership and dependency direction for every source file.
 
 Server, client, client-safe economics, worker and request-edge selectors are separate so Node-only dependencies and secrets cannot enter browser or edge bundles. Edition UI is a registry of optional components; absent self-hosted surfaces are not dummy feature implementations.
 
@@ -41,7 +41,7 @@ The public repository owns:
 - self-host deployment, backup, restore, upgrade and release tooling;
 - public recipes and document formats.
 
-Self-hosted supports owner-only or explicitly open local registration. It has no team invitations, transactional email, password recovery email, product support inbox, feature-request board, notifications, billing, affiliate program or Cloud marketing site. It calls only infrastructure and providers configured by the operator.
+Self-hosted supports owner-only or explicitly open local registration. It has no team invitations, transactional email, password recovery email, product support inbox, feature-request board, managed user-notification service, billing, affiliate program or Cloud marketing site. Core automation failure alerts remain visible in the local product and may be forwarded only to an operator-owned webhook. It calls only infrastructure and providers configured by the operator.
 
 ## Private Cloud ownership
 
@@ -55,6 +55,8 @@ The private repository owns:
 - affiliate attribution, Cloud landing pages and internal deployment.
 
 These modules may depend on public contracts and core services. Public code cannot depend on them.
+
+Team authorization follows the same direction. Public automation code owns the stable action vocabulary (`run`, `edit`, `publish`, `triggers.manage`, and `credentials.manage`) and enforces it in services and workers. Self-host maps these actions to its owner policy. The private Cloud repository maps its roles and grants to the public contract; it must not duplicate workflow, trigger-delivery, scheduler, fixture, or preview execution code.
 
 ## Database ownership
 

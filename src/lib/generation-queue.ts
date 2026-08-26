@@ -1,11 +1,11 @@
 export const MAX_GENERATION_BATCH = 8;
 
-export async function settleWithConcurrency<T>(
+export async function settleWithConcurrency<T, R = void>(
   items: T[],
   concurrency: number,
-  worker: (item: T, index: number) => Promise<void>,
+  worker: (item: T, index: number) => Promise<R>,
 ) {
-  const results: PromiseSettledResult<void>[] = new Array(items.length);
+  const results: PromiseSettledResult<R>[] = new Array(items.length);
   let cursor = 0;
   const workerCount = Math.min(items.length, Math.max(1, Math.floor(concurrency) || 1));
   const runners = Array.from({ length: workerCount }, async () => {
@@ -13,8 +13,8 @@ export async function settleWithConcurrency<T>(
       const index = cursor;
       cursor += 1;
       try {
-        await worker(items[index], index);
-        results[index] = { status: "fulfilled", value: undefined };
+        const value = await worker(items[index], index);
+        results[index] = { status: "fulfilled", value };
       } catch (reason) {
         results[index] = { status: "rejected", reason };
       }

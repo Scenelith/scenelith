@@ -5,6 +5,11 @@ import { db } from "./lib/postgres-db";
 import { closeKieRateLimiter } from "./lib/kie-rate-limit";
 import { tickGenerationWorker } from "./lib/generation-worker";
 import { drainTikTokAutomationJobs, startTikTokAutomationWorkers } from "./lib/tiktok-automation-jobs";
+import { drainAutomationWorkflowRuns, startAutomationWorkflowWorkers } from "./lib/automation-workflows/runs";
+import { drainAutomationProductEvents, drainAutomationWorkflowTriggers } from "./lib/automation-workflows/triggers";
+import { drainAutomationTriggerDeliveries } from "./lib/automation-workflows/deliveries";
+import { drainAutomationNotifications } from "./lib/automation-workflows/notifications";
+import { cleanupAutomationRetention } from "./lib/automation-workflows/retention";
 import { expireAllStaleGenerations } from "./lib/generation-lifecycle";
 import { workerIdentity } from "./lib/worker-identity";
 import { drainStorageLifecycle } from "./lib/storage-lifecycle";
@@ -63,6 +68,7 @@ async function heartbeat() {
       runsAutomation
         ? db.prepare("DELETE FROM tiktok_automation_jobs WHERE status IN ('completed', 'failed', 'cancelled') AND completed_at < ?").run(sevenDaysAgo)
         : Promise.resolve({ changes: 0 }),
+      runsAutomation ? cleanupAutomationRetention() : Promise.resolve(),
       runsDistribution ? editionWorker.cleanup(thirtyDaysAgo) : Promise.resolve(),
       runsStorage
         ? db.prepare("DELETE FROM audit_events WHERE expires_at < ?").run(now)
@@ -102,7 +108,16 @@ async function cycle() {
   try {
     await Promise.all([
       runsGeneration ? tickGenerationWorker() : Promise.resolve(),
-      runsAutomation ? drainTikTokAutomationJobs() : Promise.resolve(),
+      runsAutomation ? Promise.all([
+        (async () => {
+          await drainAutomationWorkflowTriggers();
+          await drainAutomationProductEvents();
+          await drainAutomationTriggerDeliveries();
+          await drainAutomationNotifications();
+          await drainAutomationWorkflowRuns();
+        })(),
+        drainTikTokAutomationJobs(),
+      ]) : Promise.resolve(),
       runsDistribution ? editionWorker.drain() : Promise.resolve(),
       runsStorage ? drainStorageLifecycle() : Promise.resolve(0),
       runsGeneration ? expireAllStaleGenerations() : Promise.resolve(0),
@@ -200,7 +215,7 @@ process.once("SIGTERM", () => void shutdown("SIGTERM"));
 process.once("SIGINT", () => void shutdown("SIGINT"));
 
 async function main() {
-  if (runsAutomation) await startTikTokAutomationWorkers();
+  if (runsAutomation) await Promise.all([startTikTokAutomationWorkers(), startAutomationWorkflowWorkers()]);
   await heartbeat();
   heartbeatTimer = setInterval(() => void heartbeat().catch((error) => {
     heartbeatFailures += 1;

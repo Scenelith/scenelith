@@ -1,0 +1,207 @@
+import assert from "node:assert/strict";
+import { test } from "node:test";
+import { createDefaultTikTokWorkflowGraph } from "../src/lib/automation-workflows/default-tiktok";
+import { coreAutomationNodeHandlers, isUnsafeAutomationHttpAddress } from "../src/lib/automation-workflows/node-handlers";
+import { automationNodeDefinitions } from "../src/lib/automation-workflows/registry";
+import { automationRunInputFields, topologicalAutomationNodeIds, validateAutomationConnection, validateAutomationRunInputs, validateAutomationWorkflowGraph } from "../src/lib/automation-workflows/validation";
+
+test("default TikTok workflow exposes every AI request and validates", () => {
+  const graph = createDefaultTikTokWorkflowGraph();
+  const result = validateAutomationWorkflowGraph(graph);
+  assert.deepEqual(result.issues, []);
+  assert.equal(result.valid, true);
+  assert.equal(graph.nodes.filter((node) => node.type === "ai.structured-task").length, 10);
+  for (const aiNode of graph.nodes.filter((node) => node.type === "ai.structured-task")) {
+    assert.equal(typeof aiNode.config.systemPrompt, "string");
+    assert.equal(typeof aiNode.config.userPrompt, "string");
+    assert.ok(String(aiNode.config.userPrompt).length > 20);
+  }
+});
+
+test("runtime panel fields come from ask-on-run bindings", () => {
+  const fields = automationRunInputFields(createDefaultTikTokWorkflowGraph());
+  assert.deepEqual(fields.map((field) => field.key), [
+    "tiktok-source.source",
+    "identity.identity",
+    "creative-settings.mode",
+    "creative-settings.newOutfit",
+    "creative-settings.newLocation",
+    "creative-settings.textStrategy",
+    "creative-settings.creativeBrief",
+    "generate-images.modelId",
+  ]);
+});
+
+test("runtime inputs are derived from node contracts rather than built-in node ids", () => {
+  const graph = createDefaultTikTokWorkflowGraph();
+  const source = graph.nodes.find((node) => node.id === "tiktok-source")!;
+  source.id = "source-created-by-user";
+  for (const edge of graph.edges) {
+    if (edge.source === "tiktok-source") edge.source = source.id;
+    if (edge.target === "tiktok-source") edge.target = source.id;
+  }
+  const fields = automationRunInputFields(graph);
+  assert.ok(fields.some((field) => field.key === "source-created-by-user.source" && field.valueType === "tiktok-source"));
+  assert.ok(!fields.some((field) => field.key === "tiktok-source.source"));
+});
+
+test("server validates exact published run inputs and rejects hidden extras", () => {
+  const graph = createDefaultTikTokWorkflowGraph();
+  const values = Object.fromEntries(automationRunInputFields(graph).map((field) => [field.key, field.value ?? (field.required ? "selected" : "")]));
+  values["creative-settings.newOutfit"] = true;
+  values["creative-settings.newLocation"] = true;
+  const valid = validateAutomationRunInputs(graph, values);
+  assert.equal(valid.valid, true);
+  const invalid = validateAutomationRunInputs(graph, { ...values, "old-hardcoded.setting": "ignored" });
+  assert.equal(invalid.valid, false);
+  assert.ok(invalid.issues.some((entry) => entry.code === "UNEXPECTED_RUN_INPUT"));
+});
+
+test("workflow validation rejects settings and bindings outside the node registry", () => {
+  const graph = createDefaultTikTokWorkflowGraph();
+  const node = graph.nodes.find((entry) => entry.id === "generate-images")!;
+  node.config.legacyConcurrencyHack = 99;
+  node.bindings.unknownProviderKey = { mode: "ask-on-run", required: false };
+  const result = validateAutomationWorkflowGraph(graph);
+  assert.ok(result.issues.some((entry) => entry.code === "UNKNOWN_NODE_SETTING"));
+  assert.ok(result.issues.some((entry) => entry.code === "UNKNOWN_NODE_BINDING"));
+});
+
+test("HTTP workflows reject embedded secrets and private or reserved destinations", () => {
+  const graph = createDefaultTikTokWorkflowGraph();
+  const node = graph.nodes.find((entry) => entry.id === "review-series")!;
+  node.type = "integration.http-request";
+  node.config = { url: "https://api.example.com", headers: { Authorization: "Bearer secret-token-that-must-not-be-stored" }, credentialSlot: "provider", credentialKind: "bearer" };
+  const validation = validateAutomationWorkflowGraph(graph);
+  assert.ok(validation.issues.some((entry) => entry.code === "SECRET_IN_WORKFLOW" && entry.nodeId === node.id));
+  for (const address of ["127.0.0.1", "10.0.0.5", "100.64.1.1", "169.254.169.254", "192.0.2.1", "198.51.100.3", "203.0.113.9", "::1", "fc00::1", "fe80::1", "2001:db8::1", "::ffff:127.0.0.1"]) {
+    assert.equal(isUnsafeAutomationHttpAddress(address), true, address);
+  }
+  assert.equal(isUnsafeAutomationHttpAddress("8.8.8.8"), false);
+  assert.equal(isUnsafeAutomationHttpAddress("2606:4700:4700::1111"), false);
+});
+
+test("deployment slot names cannot collide across secret kinds or workflow bindings", () => {
+  const graph = createDefaultTikTokWorkflowGraph();
+  const first = graph.nodes.find((entry) => entry.id === "review-series")!;
+  const second = graph.nodes.find((entry) => entry.id === "repair-slides")!;
+  first.type = "integration.http-request";
+  first.config = { url: "https://api.example.com/a", method: "GET", headers: {}, body: {}, credentialSlot: "shared-slot", credentialKind: "bearer", failureMode: "stop" };
+  first.bindings = {};
+  second.type = "integration.http-request";
+  second.config = { url: "https://api.example.com/b", method: "GET", headers: {}, body: {}, credentialSlot: "shared-slot", credentialKind: "basic", failureMode: "stop" };
+  second.bindings = {};
+  let result = validateAutomationWorkflowGraph(graph);
+  assert.ok(result.issues.some((entry) => entry.code === "CREDENTIAL_SLOT_KIND_CONFLICT"));
+
+  second.type = "logic.run-subworkflow";
+  second.config = { subworkflowSlot: "shared-slot", childInputKey: "workflow-input.value", childInputs: {}, failureMode: "stop" };
+  result = validateAutomationWorkflowGraph(graph);
+  assert.ok(result.issues.some((entry) => entry.code === "DEPLOYMENT_SLOT_TYPE_CONFLICT"));
+});
+
+test("every node exposed in the editor has a server runtime handler", () => {
+  const handlers = coreAutomationNodeHandlers();
+  assert.deepEqual(automationNodeDefinitions().filter((definition) => !handlers[`${definition.type}@${definition.version}`]).map((definition) => `${definition.type}@${definition.version}`), []);
+});
+
+test("validation rejects incompatible ports and cycles", () => {
+  const graph = createDefaultTikTokWorkflowGraph();
+  graph.edges.push({ id: "bad-port", source: "generate-images", sourcePort: "assets", target: "identity", targetPort: "run" });
+  graph.edges.push({ id: "cycle", source: "add-to-canvas", sourcePort: "result", target: "analyze-source", targetPort: "context" });
+  const result = validateAutomationWorkflowGraph(graph);
+  assert.equal(result.valid, false);
+  assert.ok(result.issues.some((entry) => entry.code === "INCOMPATIBLE_PORTS"));
+  assert.ok(result.issues.some((entry) => entry.code === "UNBOUNDED_CYCLE"));
+});
+
+test("generic data cannot impersonate stronger domain ports", () => {
+  const graph = createDefaultTikTokWorkflowGraph();
+  const result = validateAutomationConnection(graph, {
+    source: "repair-slides",
+    sourcePort: "result",
+    target: "generate-images",
+    targetPort: "source",
+  });
+  assert.equal(result.valid, false);
+  assert.ok(result.issues.some((entry) => entry.code === "INCOMPATIBLE_PORTS"));
+  const unvalidatedPlans = validateAutomationConnection(graph, {
+    source: "repair-slides",
+    sourcePort: "result",
+    target: "generate-images",
+    targetPort: "plans",
+  });
+  assert.ok(unvalidatedPlans.issues.some((entry) => entry.code === "INCOMPATIBLE_PORTS"));
+});
+
+test("connection guard rejects duplicate edges, occupied inputs and cycles before they enter the graph", () => {
+  const graph = createDefaultTikTokWorkflowGraph();
+  const duplicate = graph.edges.find((edge) => edge.target === "generate-images" && edge.targetPort === "plans")!;
+  assert.ok(validateAutomationConnection(graph, { ...duplicate, id: "new-edge" }).issues.some((entry) => entry.code === "DUPLICATE_CONNECTION"));
+  assert.ok(validateAutomationConnection(graph, {
+    source: "plan-slides", sourcePort: "result", target: "generate-images", targetPort: "plans",
+  }).issues.some((entry) => entry.code === "TOO_MANY_INPUTS"));
+  assert.ok(validateAutomationConnection(graph, {
+    source: "add-to-canvas", sourcePort: "result", target: "analyze-source", targetPort: "context",
+  }).issues.some((entry) => entry.code === "UNBOUNDED_CYCLE"));
+});
+
+test("required settings cannot be made optional at run time", () => {
+  const graph = createDefaultTikTokWorkflowGraph();
+  graph.nodes.find((node) => node.id === "tiktok-source")!.bindings.source.required = false;
+  const result = validateAutomationWorkflowGraph(graph);
+  assert.ok(result.issues.some((entry) => entry.code === "REQUIRED_BINDING_OPTIONAL"));
+  assert.equal(automationRunInputFields(graph).find((field) => field.key === "tiktok-source.source")?.required, true);
+});
+
+test("condition nodes require both outcomes to lead somewhere", () => {
+  const graph = createDefaultTikTokWorkflowGraph();
+  graph.edges = graph.edges.filter((edge) => !(edge.source === "repair-slides" && edge.target === "validate-slide-plans" && edge.targetPort === "data"));
+  graph.nodes.push({
+    id: "quality-gate", type: "logic.condition", version: 1, name: "Quality gate", description: "", position: { x: 4500, y: 80 }, groupId: null,
+    config: { path: "passed", operator: "is-truthy", compareValue: null }, bindings: {}, disabled: false,
+  });
+  graph.edges.push(
+    { id: "repair-to-gate", source: "repair-slides", sourcePort: "result", target: "quality-gate", targetPort: "data" },
+    { id: "gate-yes", source: "quality-gate", sourcePort: "yes", target: "validate-slide-plans", targetPort: "data" },
+  );
+  const result = validateAutomationWorkflowGraph(graph);
+  assert.ok(result.issues.some((entry) => entry.code === "MISSING_REQUIRED_OUTPUT" && entry.nodeId === "quality-gate"));
+});
+
+test("error branches and failure policy must agree", () => {
+  const graph = createDefaultTikTokWorkflowGraph();
+  graph.edges.push({ id: "unused-error", source: "review-series", sourcePort: "error", target: "repair-slides", targetPort: "context" });
+  let result = validateAutomationWorkflowGraph(graph);
+  assert.ok(result.issues.some((entry) => entry.code === "DORMANT_ERROR_OUTPUT"));
+  graph.nodes.find((node) => node.id === "review-series")!.config.failureMode = "error-output";
+  graph.edges = graph.edges.filter((edge) => edge.id !== "unused-error");
+  result = validateAutomationWorkflowGraph(graph);
+  assert.ok(result.issues.some((entry) => entry.code === "MISSING_ERROR_HANDLER"));
+});
+
+test("AI model and response schema contracts fail closed before publishing", () => {
+  const graph = createDefaultTikTokWorkflowGraph();
+  const node = graph.nodes.find((entry) => entry.id === "review-series")!;
+  node.config.modelId = "made-up/model";
+  node.bindings.modelId = { mode: "fixed", value: "made-up/model", required: true };
+  node.config.responseSchema = { type: "object", properties: { passed: { type: "boolean" } }, unsupportedKeyword: true };
+  let result = validateAutomationWorkflowGraph(graph);
+  assert.ok(result.issues.some((entry) => entry.code === "INVALID_SETTING_OPTION"));
+  assert.ok(result.issues.some((entry) => entry.code === "INVALID_RESPONSE_SCHEMA"));
+
+  node.config.modelId = "google/gemini-3.7-flash";
+  node.bindings.modelId = { mode: "fixed", value: "google/gemini-3.7-flash", required: true };
+  node.config.responseSchema = { type: "object", properties: { passed: { type: "boolean" } }, required: ["passed"] };
+  node.config.strictSchema = true;
+  result = validateAutomationWorkflowGraph(graph);
+  assert.ok(result.issues.some((entry) => entry.code === "INVALID_RESPONSE_SCHEMA" && entry.message.includes("additionalProperties")));
+});
+
+test("execution order includes every active node", () => {
+  const graph = createDefaultTikTokWorkflowGraph();
+  const ordered = topologicalAutomationNodeIds(graph);
+  assert.equal(ordered.length, graph.nodes.length);
+  assert.ok(ordered.indexOf("manual-run") < ordered.indexOf("tiktok-source"));
+  assert.ok(ordered.indexOf("repair-slides") < ordered.indexOf("generate-images"));
+});

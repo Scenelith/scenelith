@@ -41,6 +41,11 @@ export const ownerWorkspaceAccess: WorkspaceAccess = Object.freeze({
       WHERE p.id = ? AND wm.user_id = ? AND wm.role = 'owner'`).get(projectId, userId) as { allowed: number } | undefined;
     return Boolean(row);
   },
+  async userCanPerformAutomationAction(userId: string, workspaceId: string) {
+    // Community self-host is deliberately single-owner. Cloud replaces this
+    // adapter with its team role/grant policy without forking workflow code.
+    return await this.workspaceRoleForUser(userId, workspaceId) === "owner";
+  },
   async usageWorkspaceForUserProject(userId: string, projectId: string) {
     const row = await db.prepare(`SELECT p.workspace_id
       FROM projects p

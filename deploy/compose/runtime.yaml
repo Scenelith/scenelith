@@ -28,6 +28,18 @@ x-collaboration-client-environment: &collaboration-client-environment
 x-observability-environment: &observability-environment
   SCENELITH_INTERNAL_METRICS_SECRET: ${SCENELITH_INTERNAL_METRICS_SECRET}
 
+x-automation-environment: &automation-environment
+  AUTOMATION_CREDENTIAL_ENCRYPTION_KEY: ${AUTOMATION_CREDENTIAL_ENCRYPTION_KEY}
+  AUTOMATION_ALERT_WEBHOOK_URL: ${AUTOMATION_ALERT_WEBHOOK_URL:-}
+  AUTOMATION_SUCCESSFUL_RUN_RETENTION_DAYS: ${AUTOMATION_SUCCESSFUL_RUN_RETENTION_DAYS:-30}
+  AUTOMATION_FAILED_RUN_RETENTION_DAYS: ${AUTOMATION_FAILED_RUN_RETENTION_DAYS:-90}
+  AUTOMATION_DELIVERY_RETENTION_DAYS: ${AUTOMATION_DELIVERY_RETENTION_DAYS:-90}
+  AUTOMATION_PRODUCT_EVENT_RETENTION_DAYS: ${AUTOMATION_PRODUCT_EVENT_RETENTION_DAYS:-30}
+  AUTOMATION_NOTIFICATION_RETENTION_DAYS: ${AUTOMATION_NOTIFICATION_RETENTION_DAYS:-30}
+  AUTOMATION_FIXTURE_RETENTION_DAYS: ${AUTOMATION_FIXTURE_RETENTION_DAYS:-}
+  AUTOMATION_WORKFLOW_CONCURRENCY: ${AUTOMATION_WORKFLOW_CONCURRENCY:-3}
+  AUTOMATION_WORKSPACE_CONCURRENCY: ${AUTOMATION_WORKSPACE_CONCURRENCY:-4}
+
 x-runtime-security: &runtime-security
   security_opt:
     - no-new-privileges:true
@@ -83,7 +95,7 @@ services:
     <<: *runtime-security
     restart: unless-stopped
     environment:
-      <<: [*deployment-environment, *storage-environment, *collaboration-client-environment, *observability-environment]
+      <<: [*deployment-environment, *storage-environment, *collaboration-client-environment, *observability-environment, *automation-environment]
       DATABASE_URL: postgresql://${POSTGRES_USER}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB}
       DATABASE_POOL_SIZE: ${DATABASE_POOL_SIZE:-12}
       REDIS_URL: redis://redis:6379
@@ -131,7 +143,7 @@ services:
     <<: *worker
     stop_grace_period: 5m
     environment:
-      <<: [*deployment-environment, *storage-environment, *collaboration-client-environment, *observability-environment]
+      <<: [*deployment-environment, *storage-environment, *collaboration-client-environment, *observability-environment, *automation-environment]
       DATABASE_URL: postgresql://${POSTGRES_USER}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB}
       REDIS_URL: redis://redis:6379
       PUBLIC_URL: ${PUBLIC_URL}
