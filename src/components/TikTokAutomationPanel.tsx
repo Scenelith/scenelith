@@ -19,6 +19,16 @@ export type TikTokAutomationSlideState = {
   nodeId?: string;
 };
 
+export type TikTokAutomationPanelDemo = Readonly<{
+  workflows: AutomationWorkflowRecord[];
+  capabilities: AutomationCapabilities;
+  detail: AutomationWorkflowDetail;
+  productionRunInputs: AutomationRunInputField[];
+  draftRunInputs?: AutomationRunInputField[];
+  runtimeValues?: Record<string, unknown>;
+  openTriggerAlerts?: Record<string, number>;
+}>;
+
 function emptyRuntimeValue(value: unknown) {
   return value === undefined || value === null || (typeof value === "string" && !value.trim());
 }
@@ -40,6 +50,7 @@ export function TikTokAutomationPanel({
   workflowId,
   setWorkflowId,
   workflowRefreshKey,
+  demo,
   onConfigure,
   sources,
   personas,
@@ -57,6 +68,7 @@ export function TikTokAutomationPanel({
   workflowId: string;
   setWorkflowId: (value: string) => void;
   workflowRefreshKey: number;
+  demo?: TikTokAutomationPanelDemo;
   onConfigure: (workflowId: string) => void;
   sources: TikTokSlideshowSource[];
   personas: PersonaRecord[];
@@ -70,22 +82,24 @@ export function TikTokAutomationPanel({
   onClose: () => void;
   onSourceSelected?: (sourceId: string) => void;
 }) {
-  const [workflows, setWorkflows] = useState<AutomationWorkflowRecord[]>([]);
-  const [capabilities, setCapabilities] = useState<AutomationCapabilities>({ run: false, edit: false, publish: false, manageTriggers: false, manageCredentials: false });
-  const [openTriggerAlerts, setOpenTriggerAlerts] = useState<Record<string, number>>({});
+  const initialDemoInputs = demo ? [...new Map([...(demo.productionRunInputs || []), ...(demo.draftRunInputs || [])].map((field) => [field.key, field])).values()] : [];
+  const [workflows, setWorkflows] = useState<AutomationWorkflowRecord[]>(() => demo?.workflows || []);
+  const [capabilities, setCapabilities] = useState<AutomationCapabilities>(() => demo?.capabilities || { run: false, edit: false, publish: false, manageTriggers: false, manageCredentials: false });
+  const [openTriggerAlerts, setOpenTriggerAlerts] = useState<Record<string, number>>(() => demo?.openTriggerAlerts || {});
   const [workflowError, setWorkflowError] = useState("");
   const [creatingWorkflow, setCreatingWorkflow] = useState(false);
   const importInputRef = useRef<HTMLInputElement>(null);
-  const [runInputs, setRunInputs] = useState<AutomationRunInputField[]>([]);
-  const [productionRunInputs, setProductionRunInputs] = useState<AutomationRunInputField[]>([]);
-  const [draftRunInputs, setDraftRunInputs] = useState<AutomationRunInputField[]>([]);
-  const [runtimeValuesByWorkflow, setRuntimeValuesByWorkflow] = useState<Record<string, Record<string, unknown>>>({});
+  const [runInputs, setRunInputs] = useState<AutomationRunInputField[]>(() => initialDemoInputs);
+  const [productionRunInputs, setProductionRunInputs] = useState<AutomationRunInputField[]>(() => demo?.productionRunInputs || []);
+  const [draftRunInputs, setDraftRunInputs] = useState<AutomationRunInputField[]>(() => demo?.draftRunInputs || []);
+  const [runtimeValuesByWorkflow, setRuntimeValuesByWorkflow] = useState<Record<string, Record<string, unknown>>>(() => demo ? { [demo.detail.workflow.id]: demo.runtimeValues || {} } : {});
   const busy = status === "planning" || status === "building" || status === "generating";
   const selectedWorkflow = workflows.find((workflow) => workflow.id === workflowId);
   const selectedAlertCount = openTriggerAlerts[workflowId] || 0;
   const runtimeValues = runtimeValuesByWorkflow[workflowId] || {};
 
   useEffect(() => {
+    if (demo) return;
     let cancelled = false;
     void fetch(`/api/automation-workflows?projectId=${encodeURIComponent(projectId)}`, { cache: "no-store" })
       .then(async (response) => {
@@ -101,10 +115,10 @@ export function TikTokAutomationPanel({
       })
       .catch((error) => { if (!cancelled) setWorkflowError(error instanceof Error ? error.message : "Could not load workflows"); });
     return () => { cancelled = true; };
-  }, [projectId, setWorkflowId, workflowId, workflowRefreshKey]);
+  }, [demo, projectId, setWorkflowId, workflowId, workflowRefreshKey]);
 
   useEffect(() => {
-    if (!workflowId) return;
+    if (!workflowId || demo) return;
     let cancelled = false;
     void fetch(`/api/automation-workflows/${encodeURIComponent(workflowId)}`, { cache: "no-store" })
       .then(async (response) => {
@@ -148,7 +162,7 @@ export function TikTokAutomationPanel({
       })
       .catch((error) => { if (!cancelled) setWorkflowError(error instanceof Error ? error.message : "Could not load workflow inputs"); });
     return () => { cancelled = true; };
-  }, [models, personas, sources, workflowId, workflowRefreshKey]);
+  }, [demo, models, personas, sources, workflowId, workflowRefreshKey]);
 
   const setRuntimeField = (field: AutomationRunInputField, value: unknown) => setRuntimeValuesByWorkflow((current) => {
     const next = { ...(current[workflowId] || {}), [field.key]: value };
