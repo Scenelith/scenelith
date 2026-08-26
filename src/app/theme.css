@@ -1438,12 +1438,13 @@ body,
 }
 .automation-editor-error span { flex: 1; }
 .automation-editor-error button { width: 24px; height: 24px; border: 0; background: transparent; color: inherit; cursor: pointer; }
-.automation-editor-body { min-height: 0; display: grid; grid-template-columns: 232px minmax(0, 1fr) 306px; }
+.automation-editor-body { min-height: 0; display: grid; grid-template-columns: 268px minmax(0, 1fr) 360px; }
 .automation-node-library,.automation-node-inspector { min-height: 0; background: var(--color-ink-3); }
 .automation-node-library { display: grid; grid-template-rows: auto 1fr; border-right: 1px solid var(--color-border-faint); }
 .automation-node-inspector { border-left: 1px solid var(--color-border-faint); }
-.automation-library-head { display: grid; gap: 10px; padding: 15px 12px 12px; border-bottom: 1px solid var(--color-border-faint); }
+.automation-library-head { display: grid; gap: 9px; padding: 15px 12px 12px; border-bottom: 1px solid var(--color-border-faint); }
 .automation-library-head > span { display: flex; align-items: center; gap: 6px; color: var(--color-text-soft); font-size: 11px; font-weight: 740; }
+.automation-library-head > small { margin-top:-3px; color:var(--color-text-dim); font-size:8.5px; line-height:1.4; }
 .automation-library-head label {
   height: 32px;
   display: flex;
@@ -1460,24 +1461,37 @@ body,
 .automation-library-list section { padding: 10px 0 4px; border-bottom: 1px solid var(--color-border-faint); }
 .automation-library-list section:last-child { border: 0; }
 .automation-library-list h3 { margin: 0 7px 6px; color: var(--color-text-dim); font: 720 8px/1 ui-monospace, monospace; letter-spacing: .12em; text-transform: uppercase; }
-.automation-library-list section > button {
-  width: 100%;
+.automation-library-list section > article {
+  width:100%;
   min-height: 51px;
   display: grid;
-  grid-template-columns: 26px 1fr 14px;
+  grid-template-columns:minmax(0,1fr) 28px;
   align-items: center;
-  gap: 8px;
-  padding: 7px;
+  gap: 2px;
+  padding: 3px;
   border: 0;
   border-radius: 9px;
   background: transparent;
+}
+.automation-library-list section > article:hover,.automation-library-list section > article.is-selected { background: var(--color-ink-4); }
+.automation-library-info {
+  min-width:0;
+  min-height:45px;
+  display:grid;
+  grid-template-columns:26px minmax(0,1fr);
+  align-items:center;
+  gap:8px;
+  padding:4px;
+  border:0;
+  background:transparent;
   color: var(--color-text-muted);
   text-align: left;
   cursor: pointer;
 }
-.automation-library-list section > button:hover { background: var(--color-ink-4); color: var(--color-text-soft); }
-.automation-library-list section > button:disabled { opacity: .48; cursor: default; }
-.automation-library-list section > button > span,.automation-node-inspector header > span {
+.automation-library-info:hover { color:var(--color-text-soft); }
+.automation-library-add { width:26px; height:26px; display:grid; place-items:center; padding:0; border:1px solid transparent; border-radius:7px; background:transparent; color:var(--color-text-dim); cursor:pointer; }
+.automation-library-add:hover { border-color:var(--color-mint-line); background:var(--color-mint-soft); color:var(--color-mint); }
+.automation-library-info > span,.automation-node-inspector header > span,.automation-definition-preview > span {
   width: 26px;
   height: 26px;
   display: grid;
@@ -1485,13 +1499,13 @@ body,
   border-radius: 8px;
   background: var(--color-ink-5);
 }
-.automation-library-list section > button > span.is-mint,.automation-node-inspector header > span.is-mint { color: var(--color-mint); background: var(--color-mint-soft); }
-.automation-library-list section > button > span.is-amber,.automation-node-inspector header > span.is-amber { color: var(--color-source); background: var(--color-source-soft); }
-.automation-library-list section > button > span.is-blue,.automation-node-inspector header > span.is-blue { color: var(--color-video); background: var(--color-video-soft); }
-.automation-library-list section > button > span.is-rose,.automation-node-inspector header > span.is-rose { color: var(--color-rose); background: rgba(226, 105, 105, .1); }
-.automation-library-list section > button > i { min-width: 0; display: flex; flex-direction: column; gap: 3px; font-style: normal; }
+.automation-library-info > span.is-mint,.automation-node-inspector header > span.is-mint,.automation-definition-preview > span.is-mint { color: var(--color-mint); background: var(--color-mint-soft); }
+.automation-library-info > span.is-amber,.automation-node-inspector header > span.is-amber,.automation-definition-preview > span.is-amber { color: var(--color-source); background: var(--color-source-soft); }
+.automation-library-info > span.is-blue,.automation-node-inspector header > span.is-blue,.automation-definition-preview > span.is-blue { color: var(--color-video); background: var(--color-video-soft); }
+.automation-library-info > span.is-rose,.automation-node-inspector header > span.is-rose,.automation-definition-preview > span.is-rose { color: var(--color-rose); background: rgba(226, 105, 105, .1); }
+.automation-library-info > i { min-width: 0; display: flex; flex-direction: column; gap: 3px; font-style: normal; }
 .automation-library-list b { color: var(--color-text-soft); font-size: 10px; }
-.automation-library-list small { overflow: hidden; color: var(--color-text-dim); font-size: 9px; line-height: 1.35; text-overflow: ellipsis; white-space: nowrap; }
+.automation-library-list small { overflow: hidden; color: var(--color-text-dim); font-size: 9px; line-height: 1.35; display:-webkit-box; -webkit-box-orient:vertical; -webkit-line-clamp:2; }
 .automation-flow-stage { position: relative; min-width: 0; min-height: 0; background: var(--color-ink-1); }
 .automation-flow-stage .react-flow__renderer { cursor: grab; }
 .automation-flow-stage .react-flow__controls { overflow: hidden; border: 1px solid var(--color-border); border-radius: 10px; box-shadow: none; }
@@ -1535,6 +1549,9 @@ body,
 .automation-flow-node-kicker { display: flex; align-items: center; gap: 5px; color: var(--color-text-dim); font: 690 8px/1 ui-monospace, monospace; letter-spacing: .08em; text-transform: uppercase; }
 .automation-flow-node > strong,.automation-flow-group > strong { color: var(--color-text); font-size: 12px; line-height: 1.2; }
 .automation-flow-node > p,.automation-flow-group > p { min-height: 34px; margin: 0; overflow: hidden; color: var(--color-text-muted); font-size: 10px; line-height: 1.45; display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 2; }
+.automation-flow-node-io { min-width:0; display:grid; grid-template-columns:minmax(0,1fr) minmax(0,1fr); gap:8px; margin-top:auto; padding-top:8px; border-top:1px solid var(--color-border-faint); }
+.automation-flow-node-io i { overflow:hidden; color:var(--color-text-dim); font:650 7px/1.2 ui-monospace,monospace; font-style:normal; text-overflow:ellipsis; white-space:nowrap; }
+.automation-flow-node-io i:last-child { text-align:right; }
 .automation-flow-node.is-mint { border-top-color: var(--color-mint-line); }
 .automation-flow-node.is-amber { border-top-color: var(--color-source-line); }
 .automation-flow-node.is-blue { border-top-color: rgba(99, 198, 223, .35); }
@@ -1547,6 +1564,21 @@ body,
 .automation-node-inspector > header small { overflow: hidden; color: var(--color-text-dim); font: 650 8px/1 ui-monospace, monospace; text-overflow: ellipsis; white-space: nowrap; }
 .automation-node-inspector > header input { width: 100%; padding: 0; border: 0; outline: 0; background: transparent; color: var(--color-text); font-size: 12px; font-weight: 720; }
 .automation-inspector-scroll { min-height: 0; overflow: auto; padding: 13px 13px 30px; scrollbar-width: thin; }
+.automation-node-guide { display:grid; gap:10px; padding:13px; border:1px solid var(--color-border-faint); border-radius:11px; background:var(--color-ink-4); }
+.automation-node-guide > small { color:var(--color-mint); font:720 7px/1 ui-monospace,monospace; letter-spacing:.12em; }
+.automation-node-guide > p { margin:0; color:var(--color-text-muted); font-size:10px; line-height:1.5; }
+.automation-node-guide > div { display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:8px; }
+.automation-node-guide > div > span,.automation-node-guide-settings { min-width:0; display:flex; flex-wrap:wrap; align-content:flex-start; gap:5px; }
+.automation-node-guide b { width:100%; color:var(--color-text-dim); font:680 7px/1 ui-monospace,monospace; letter-spacing:.07em; text-transform:uppercase; }
+.automation-node-guide i { max-width:100%; overflow:hidden; padding:4px 6px; border:1px solid var(--color-border-faint); border-radius:999px; color:var(--color-text-soft); font-size:8px; font-style:normal; text-overflow:ellipsis; white-space:nowrap; }
+.automation-node-guide em { color:var(--color-text-dim); font-size:8px; font-style:normal; line-height:1.4; }
+.automation-node-guide.is-compact { margin-bottom:2px; }
+.automation-node-guide.is-compact .automation-node-guide-settings { display:none; }
+.automation-definition-preview { min-height:0; overflow:auto; display:flex; flex-direction:column; align-items:flex-start; gap:10px; padding:22px 18px; }
+.automation-definition-preview > small { color:var(--color-text-dim); font:700 7px/1 ui-monospace,monospace; letter-spacing:.12em; }
+.automation-definition-preview > h2 { margin:0; color:var(--color-text); font-size:16px; }
+.automation-definition-preview > .automation-node-guide { width:100%; }
+.automation-definition-preview > button { min-height:34px; display:inline-flex; align-items:center; gap:6px; padding:0 10px; border:1px solid var(--color-mint-line); border-radius:8px; background:var(--color-mint); color:var(--color-ink-1); font-size:9px; font-weight:720; cursor:pointer; }
 .automation-inspector-field { display: flex; flex-direction: column; gap: 6px; padding: 10px 0; border-bottom: 1px solid var(--color-border-faint); }
 .automation-inspector-field > span { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
 .automation-runtime-required { width: fit-content; display: inline-flex; align-items: center; gap: 6px; padding: 0; border: 0; background: transparent; color: var(--color-text-dim); font-size: 9px; cursor: pointer; }
@@ -1639,7 +1671,7 @@ body,
 .automation-workflow-policy h2,.automation-workflow-policy p { margin:0; }
 .automation-workflow-policy h2 { color:var(--color-text); font-size:15px; }
 .automation-workflow-policy p { color:var(--color-text-dim); font-size:11px; line-height:1.5; }
-.automation-workflow-policy > label,.automation-advanced-settings label { display:grid; grid-template-columns:1fr 96px; align-items:center; gap:10px; padding-top:10px; border-top:1px solid var(--color-border-faint); color:var(--color-text-soft); font-size:10px; }
+.automation-workflow-policy > label,.automation-advanced-settings label { display:grid; grid-template-columns:minmax(0,1fr) minmax(126px,44%); align-items:center; gap:10px; padding-top:10px; border-top:1px solid var(--color-border-faint); color:var(--color-text-soft); font-size:10px; }
 .automation-workflow-policy > label span i { display:block; margin-top:3px; color:var(--color-text-dim); font:600 7px/1 ui-monospace,monospace; }
 .automation-workflow-policy input,.automation-workflow-policy select { min-width:0; min-height:36px; padding:8px; border:1px solid var(--color-border); border-radius:7px; background:var(--color-ink-4); color:var(--color-text); font-size:10px; }
 .automation-workflow-policy > button { min-height:34px; border:1px solid var(--color-border); border-radius:8px; background:var(--color-ink-4); color:var(--color-text-soft); font-size:9px; }
@@ -1727,7 +1759,7 @@ body,
 @media (max-width: 980px) {
   .automation-editor-overlay { padding: 0; }
   .automation-editor-shell { border: 0; border-radius: 0; }
-  .automation-editor-body { grid-template-columns: 190px minmax(0, 1fr); }
+  .automation-editor-body { grid-template-columns: 224px minmax(0, 1fr); }
   .automation-node-inspector { display:none; position: absolute; right: 0; top: 58px; bottom: 0; width: min(340px, 86vw); z-index: 7; box-shadow: -24px 0 50px rgba(0,0,0,.38); }
   .automation-node-inspector.is-open { display:flex; }
   .automation-inspector-close { position:absolute; z-index:3; right:10px; top:10px; width:30px; height:30px; display:grid; place-items:center; padding:0; border:1px solid var(--color-border-faint); border-radius:8px; background:var(--color-ink-4); color:var(--color-text-muted); cursor:pointer; }

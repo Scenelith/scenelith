@@ -7,6 +7,7 @@ const panelSource = readFileSync(new URL("../src/components/TikTokAutomationPane
 const legacyRouteSource = readFileSync(new URL("../src/app/api/automations/tiktok/plan/route.ts", import.meta.url), "utf8");
 const workflowDetailRouteSource = readFileSync(new URL("../src/app/api/automation-workflows/[workflowId]/route.ts", import.meta.url), "utf8");
 const workflowRunsSource = readFileSync(new URL("../src/lib/automation-workflows/runs.ts", import.meta.url), "utf8");
+const workflowEditorSource = readFileSync(new URL("../src/components/automation/AutomationWorkflowEditorOverlay.tsx", import.meta.url), "utf8");
 
 test("canvas run submission does not inject legacy built-in node ids", () => {
   for (const legacyKey of [
@@ -43,4 +44,16 @@ test("run-only roles cannot see or execute drafts and each version keeps its own
   assert.match(workflowDetailRouteSource, /canViewDraft = capabilities\.edit \|\| capabilities\.publish/);
   assert.match(workflowDetailRouteSource, /draftRunInputs/);
   assert.match(workflowRunsSource, /runKind === "test".*automation\.edit/s);
+});
+
+test("automation canvas owns an isolated React Flow store and cannot replace the content canvas graph", () => {
+  assert.match(workflowEditorSource, /<ReactFlowProvider>\s*<ReactFlow/s);
+});
+
+test("automation steps explain their contract without exposing JSON as navigation", () => {
+  assert.match(workflowEditorSource, /WHAT THIS STEP DOES/);
+  assert.match(workflowEditorSource, /Receives/);
+  assert.match(workflowEditorSource, /Sends/);
+  assert.match(workflowEditorSource, /Overview/);
+  assert.match(workflowEditorSource, /Full workflow/);
 });
