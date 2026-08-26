@@ -224,6 +224,9 @@ export async function persistGenerationOutput(id: string, outputUrl: string) {
     };
   } catch {}
 
+  const generationEventOwner = !generation.node_id.startsWith("automation-")
+    ? await db.prepare("SELECT requested_by_user_id FROM generations WHERE id = ?").get(id) as { requested_by_user_id: string } | undefined
+    : undefined;
   const now = new Date().toISOString();
   const persisted = await db.transaction(async () => {
     const current = await db.prepare("SELECT output_asset_id FROM generations WHERE id = ?").get(id) as { output_asset_id: string | null } | undefined;
@@ -248,6 +251,16 @@ export async function persistGenerationOutput(id: string, outputUrl: string) {
       );
     await db.prepare("UPDATE generations SET output_asset_id = ?, output_url = ?, updated_at = ? WHERE id = ? AND output_asset_id IS NULL")
       .run(assetId, outputUrl, now, id);
+    if (generationEventOwner?.requested_by_user_id) {
+      const { fireAutomationCanvasEvent } = await import("./automation-workflows/triggers");
+      await fireAutomationCanvasEvent({
+        userId: generationEventOwner.requested_by_user_id,
+        projectId: generation.project_id,
+        event: "generation.completed",
+        payload: { generationId: id, nodeId: generation.node_id, assetId, mediaType: generation.media_type, operation: generation.operation },
+        sourceKey: `generation:${id}`,
+      });
+    }
     return { assetId, inserted: true };
   })();
 
@@ -310,6 +323,7 @@ export async function generationClientState(generation: GenerationStateRow) {
 export async function reconcileGeneration(id: string) {
   let generation = await readGenerationState(id);
   if (!generation) throw new Error("Generation was not found");
+  if (["cancelled", "canceled"].includes(String(generation.status).toLowerCase())) return generation;
   if (!generation.provider_task_id) {
     return generation;
   }
@@ -375,6 +389,8 @@ export async function finalizeGenerationFromWebhook(input: {
   outputUrl?: string | null;
   error?: string | null;
 }) {
+  const current = await readGenerationState(input.generationId);
+  if (current && ["cancelled", "canceled"].includes(String(current.status).toLowerCase())) return current;
   const normalizedStatus = input.status.toLowerCase();
   if (input.error || failedGenerationStatuses.has(normalizedStatus)) {
     await (await usageAuthority()).releaseGeneration(input.generationId, "provider_webhook_failed");

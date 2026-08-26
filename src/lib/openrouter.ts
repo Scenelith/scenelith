@@ -21,6 +21,7 @@ export type OpenRouterUsageTracker = { entries: OpenRouterUsageEntry[] };
 type OpenRouterUsageStore = { tracker: OpenRouterUsageTracker; stage: string };
 const openRouterUsageStorage = new AsyncLocalStorage<OpenRouterUsageStore>();
 const openRouterModelStorage = new AsyncLocalStorage<string>();
+const openRouterSignalStorage = new AsyncLocalStorage<AbortSignal>();
 
 export function createOpenRouterUsageTracker(): OpenRouterUsageTracker {
   return { entries: [] };
@@ -37,6 +38,16 @@ export function withOpenRouterUsageStage<T>(stage: string, callback: () => Promi
 
 export function withOpenRouterModel<T>(modelId: string | undefined, callback: () => Promise<T>) {
   return openRouterModelStorage.run(getAssistantModel(modelId).id, callback);
+}
+
+export function withOpenRouterSignal<T>(signal: AbortSignal | undefined, callback: () => Promise<T>) {
+  return signal ? openRouterSignalStorage.run(signal, callback) : callback();
+}
+
+function openRouterRequestSignal() {
+  const timeout = AbortSignal.timeout(90_000);
+  const external = openRouterSignalStorage.getStore();
+  return external ? AbortSignal.any([timeout, external]) : timeout;
 }
 
 function selectedOpenRouterModel(body: Record<string, unknown>) {
@@ -105,7 +116,7 @@ export async function requestOpenRouter(body: Record<string, unknown>) {
       "X-Title": "Frameflow",
     },
     body: JSON.stringify({ temperature: 0.2, ...body, model: requestModel }),
-    signal: AbortSignal.timeout(90_000),
+    signal: openRouterRequestSignal(),
   });
   const payload = (await response.json().catch(() => ({}))) as {
     id?: string;
@@ -137,7 +148,7 @@ async function requestOpenRouterText(body: Record<string, unknown>) {
       "X-Title": "Frameflow",
     },
     body: JSON.stringify({ temperature: 0.35, ...body, model: requestModel }),
-    signal: AbortSignal.timeout(90_000),
+    signal: openRouterRequestSignal(),
   });
   const payload = (await response.json().catch(() => ({}))) as {
     id?: string;

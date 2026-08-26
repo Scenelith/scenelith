@@ -98,6 +98,10 @@ random_secret() {
   od -An -N32 -tx1 /dev/urandom | tr -d ' \n'
 }
 
+random_base64_secret() {
+  openssl rand -base64 32 | tr -d '\n'
+}
+
 initialize() {
   [ -f "$ENV_EXAMPLE" ] || die "Missing release configuration: $ENV_EXAMPLE"
   [ ! -e "$ENV_FILE" ] || die "deploy/selfhost/.env already exists; refusing to overwrite its secrets"
@@ -113,6 +117,7 @@ initialize() {
   for key in POSTGRES_PASSWORD SESSION_SECRET COLLABORATION_JWT_SECRET COLLABORATION_INTERNAL_SECRET SCENELITH_INTERNAL_METRICS_SECRET; do
     replace_environment_value "$key" "$(random_secret)"
   done
+  replace_environment_value "AUTOMATION_CREDENTIAL_ENCRYPTION_KEY" "$(random_base64_secret)"
 
   say "Created deploy/selfhost/.env with unique private secrets."
   say "Add KIE_API_KEY and OPENROUTER_API_KEY when you are ready to enable those providers."
@@ -274,7 +279,7 @@ doctor() {
       *) doctor_add error permissions "deploy/selfhost/.env must not be readable by group or other users (use mode 0600)." ;;
     esac
 
-    for key in POSTGRES_PASSWORD SESSION_SECRET COLLABORATION_JWT_SECRET COLLABORATION_INTERNAL_SECRET SCENELITH_INTERNAL_METRICS_SECRET; do
+    for key in POSTGRES_PASSWORD SESSION_SECRET COLLABORATION_JWT_SECRET COLLABORATION_INTERNAL_SECRET SCENELITH_INTERNAL_METRICS_SECRET AUTOMATION_CREDENTIAL_ENCRYPTION_KEY; do
       value=$(environment_value "$key")
       case "$value" in
         *change*|*CHANGE*|*replace*|*REPLACE*|*example*|*EXAMPLE*|'')

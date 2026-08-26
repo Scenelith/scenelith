@@ -25,7 +25,7 @@ Scenelith keeps the source, references, prompts, generations, edits, and reusabl
 - Import TikTok slideshows and video, detect scenes, and keep the source context visible.
 - Save people and characters as reusable single or Before/After identities.
 - Build longer video sequences in Video Master without losing per-scene versions.
-- Automate repeatable TikTok slideshow workflows and keep the generated nodes connected on the canvas.
+- Build no-code TikTok slideshow workflows on a separate node canvas, edit every AI request, and keep generated branches connected on the content canvas.
 - Run the complete self-hosted product on your own server with your own storage and provider accounts.
 
 ## Run it yourself
@@ -100,6 +100,8 @@ TikTok import does not use a logged-in TikTok account or TikTok cookies. Video s
 Canvas projects can be exported as a versioned `.scenelith.json` document and imported into another instance. Portable documents contain graph structure and safe settings, but never instance IDs, stored media URLs, generated outputs, or credentials.
 
 The [`recipes/`](recipes) directory contains small, reviewable workflow examples. A recipe is an ordinary portable Scenelith document: fork it, improve it, or contribute a new one with the media and provider requirements documented in its pull request.
+
+Saved automation workflows use immutable drafts and published versions, typed node ports, durable worker runs, and run-time inputs generated from each node's **Ask on run** bindings. See [Automation workflows](docs/AUTOMATION_WORKFLOWS.md) for the editor, execution, recovery, and node-extension contract.
 
 ## Architecture and operations
 

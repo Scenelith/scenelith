@@ -3,6 +3,7 @@
 /* eslint-disable @next/next/no-img-element */
 
 import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState, type CSSProperties, type Dispatch, type SetStateAction } from "react";
+import dynamic from "next/dynamic";
 import {
   BaseEdge,
   Controls,
@@ -59,7 +60,7 @@ import {
 } from "lucide-react";
 import { assetDirectUrl, assetDownloadUrl, assetThumbnailUrl, FrameNodeCard, GeneratorNodeContext, OPEN_NODE_CREATOR_EVENT, OPEN_VIDEO_EDITOR_EVENT, generatorModelCreditDescription, generatorRatiosFor, generatorResolutionsFor, generatorSettingsForModel, type GeneratorModelOption } from "./FrameNode";
 import { InspectorSelect } from "./InspectorSelect";
-import { TikTokAutomationPanel, type TikTokAutomationSlideState, type TikTokAutomationStage, type TikTokAutomationStatus } from "./TikTokAutomationPanel";
+import { TikTokAutomationPanel, type TikTokAutomationSlideState, type TikTokAutomationStatus } from "./TikTokAutomationPanel";
 import { MediaViewer, type ImageEditOptions } from "./MediaViewer";
 import { VideoEditorViewer, type VideoEditorReference } from "./VideoEditorViewer";
 import type { ImageEditPersona, ImageEditReference } from "./ImageEditReferencePicker";
@@ -70,10 +71,7 @@ import BrandMark from "./BrandMark";
 import type { BackgroundTaskRecord, FrameEdge, FrameNode, GeneratorInputRole, HookRecord, LibraryMediaAsset, PersonaRecord, ProjectRecord, UserRecord, VideoMasterClip, VideoSceneSegment, WorkspaceRecord } from "@/lib/types";
 import { editReferenceMentionToken, referenceMentionToken } from "@/lib/reference-mentions";
 import { MAX_GENERATION_BATCH, settleWithConcurrency } from "@/lib/generation-queue";
-import { generationCreditCost } from "@/lib/generation-pricing";
-import { tiktokPlanningReserveCredits } from "@/lib/automation-pricing";
-import { DEFAULT_ASSISTANT_MODEL_ID, tiktokAutomationPlanningModels } from "@/lib/assistant-models";
-import type { TikTokAutomationMode, TikTokAutomationPlanResponse, TikTokTextStrategy } from "@/lib/tiktok-automation-types";
+import { DEFAULT_ASSISTANT_MODEL_ID } from "@/lib/assistant-models";
 import { duplicateGraphSelection, generatorInputCapacity, generatorSourceAssetIds, normalizeEdgePorts, selectGraphNode, stableGraphEdges, stableGraphNodes, upsertGraphEdge } from "@/lib/canvas-graph";
 import { assetIdFromAssetUrl, compatibleMasterReferences, hydrateVideoMasterSourceClips, masterClipOriginalReference, nearestVideoMasterRatio, resolveVideoMasterSourceTarget, shouldIncludeAutomaticMasterVideoReference, videoMasterClipExportMedia, videoMasterClipPlaybackMedia, videoMasterClipThumbnail, videoMasterGenerationDuration, videoMasterModelsForScene, videoMasterProviderAspectRatio, videoMasterSourceRatio, videoMasterTimelineDuration, type VideoMasterDownloadLane } from "@/lib/video-master";
 import { stopAllVideoPlayback } from "@/lib/video-playback-owner";
@@ -94,6 +92,10 @@ function DisconnectableEdge({ id, sourceX, sourceY, targetX, targetY, sourcePosi
 
 const nodeTypes = { frameNode: FrameNodeCard };
 const edgeTypes = { disconnectable: DisconnectableEdge };
+const AutomationWorkflowEditorOverlay = dynamic(
+  () => import("./automation/AutomationWorkflowEditorOverlay").then((module) => module.AutomationWorkflowEditorOverlay),
+  { ssr: false },
+);
 
 const canvasLoadingTwinkleLayers = [
   { size: "72px 54px", position: "0 0", duration: "3.7s", delay: "-1.8s", peak: ".46" },
@@ -289,27 +291,6 @@ function canonicalGeneratorRole(modelId: string | undefined, role: string | unde
 type NodeCreatorState = { nodeId: string; clientX: number; clientY: number; segment?: VideoSceneSegment; intent?: "video-master" | "video-master-replace" } | null;
 type GraphSnapshot = { nodes: FrameNode[]; edges: FrameEdge[] };
 type TikTokAutomationSourceOption = TikTokSlideshowSource;
-type TikTokAutomationJobResponse = {
-  id: string;
-  status: "queued" | "running" | "completed" | "failed" | "cancelled";
-  stage: string;
-  stageLabel: string;
-  progress: number;
-  result: TikTokAutomationPlanResponse | null;
-  error: string | null;
-  code: string | null;
-  httpStatus: number | null;
-  queuePosition: number | null;
-};
-
-function automationUiStage(stage: string): TikTokAutomationStage {
-  if (stage === "text_sequence") return "rewrite";
-  if (stage === "reference_binding") return "references";
-  if (stage === "slide_prompt_planning") return "direct";
-  if (["series_review", "series_repair", "series_recheck", "finalizing", "completed"].includes(stage)) return "review";
-  if (stage === "brief_interpretation") return "decompose";
-  return "analyze";
-}
 
 function uid(prefix: string) {
   return `${prefix}-${crypto.randomUUID()}`;
@@ -509,20 +490,14 @@ function CanvasWorkspace({ initialProject, projects: initialProjects, initialWor
   const [hookLibraryOpen, setHookLibraryOpen] = useState(false);
   const [productPanelFocus, setProductPanelFocus] = useState<{ kind: ProductPanelKind; id?: string; nonce: number } | null>(null);
   const [tiktokAutomationOpen, setTikTokAutomationOpen] = useState(false);
+  const [automationWorkflowId, setAutomationWorkflowId] = useState("");
+  const [automationWorkflowRefreshKey, setAutomationWorkflowRefreshKey] = useState(0);
+  const [automationEditorWorkflowId, setAutomationEditorWorkflowId] = useState<string | null>(null);
   const [automationSourceId, setAutomationSourceId] = useState("");
-  const [automationMode, setAutomationMode] = useState<TikTokAutomationMode>("concept");
-  const [automationPersonaId, setAutomationPersonaId] = useState("");
-  const [automationModelId, setAutomationModelId] = useState("");
-  const [automationPlanningModelId, setAutomationPlanningModelId] = useState(DEFAULT_ASSISTANT_MODEL_ID);
-  const [automationNewOutfit, setAutomationNewOutfit] = useState(true);
-  const [automationNewLocation, setAutomationNewLocation] = useState(true);
-  const [automationTextStrategy, setAutomationTextStrategy] = useState<TikTokTextStrategy>("rewrite");
-  const [automationCreativeBrief, setAutomationCreativeBrief] = useState("");
   const [automationStatus, setAutomationStatus] = useState<TikTokAutomationStatus>("idle");
-  const [automationStage, setAutomationStage] = useState<TikTokAutomationStage>("ready");
+  const [automationRunId, setAutomationRunId] = useState<string | null>(null);
   const [automationStageLabel, setAutomationStageLabel] = useState("Ready to analyze");
   const [automationPlanningProgress, setAutomationPlanningProgress] = useState(0);
-  const [automationPlan, setAutomationPlan] = useState<TikTokAutomationPlanResponse | null>(null);
   const [automationSlideStates, setAutomationSlideStates] = useState<TikTokAutomationSlideState[]>([]);
   const [hooks, setHooks] = useState<HookRecord[]>([]);
   const [hookBusy, setHookBusy] = useState(false);
@@ -762,7 +737,6 @@ function CanvasWorkspace({ initialProject, projects: initialProjects, initialWor
     () => findTikTokSlideshowSources(nodes, edges),
     [nodes, edges],
   );
-  const tiktokAutomationModels = useMemo(() => models.filter((model) => model.mediaType === "image" && model.maxReferences >= 1), [models]);
   const selectedAutomationSourceId = tiktokAutomationSources.some((source) => source.id === automationSourceId)
     ? automationSourceId
     : tiktokAutomationSources[0]?.id || "";
@@ -794,44 +768,6 @@ function CanvasWorkspace({ initialProject, projects: initialProjects, initialWor
       });
     });
   }, [fitView, tiktokAutomationSources]);
-  const selectedAutomationPersonaId = personas.some((persona) => persona.id === automationPersonaId)
-    ? automationPersonaId
-    : personas[0]?.id || "";
-  const selectedAutomationModelId = tiktokAutomationModels.some((model) => model.id === automationModelId && model.maxReferences >= (automationMode === "identity" ? 2 : 1))
-    ? automationModelId
-    : tiktokAutomationModels.find((model) => model.id === "nano-banana-2" && model.maxReferences >= (automationMode === "identity" ? 2 : 1))?.id
-      || tiktokAutomationModels.find((model) => model.maxReferences >= (automationMode === "identity" ? 2 : 1))?.id || "";
-  const selectedAutomationPlanningModelId = tiktokAutomationPlanningModels.some((model) => model.id === automationPlanningModelId)
-    ? automationPlanningModelId
-    : DEFAULT_ASSISTANT_MODEL_ID;
-  const automationEstimatedCredits = useMemo(() => {
-    const source = tiktokAutomationSources.find((item) => item.id === selectedAutomationSourceId);
-    const persona = personas.find((item) => item.id === selectedAutomationPersonaId);
-    const model = tiktokAutomationModels.find((item) => item.id === selectedAutomationModelId);
-    if (!source || !model || (automationMode === "identity" && !persona)) return 0;
-    const largestIdentityStage = Math.max(
-      persona?.assets.filter((asset) => asset.role === "reference").length || 0,
-      persona?.assets.filter((asset) => asset.role === "before").length || 0,
-      persona?.assets.filter((asset) => asset.role === "after").length || 0,
-    );
-    const personaReferenceCount = automationMode === "identity" ? Math.min(4, Math.max(0, model.maxReferences - 1), largestIdentityStage) : 0;
-    try {
-      const generationCredits = source.assetIds.length * generationCreditCost(
-        model.id,
-        model.defaultResolution || model.resolutions?.[0] || "1K",
-        model.defaultDuration || model.durations?.[0] || "5",
-        1 + personaReferenceCount,
-      );
-      return tiktokPlanningReserveCredits(source.assetIds.length, selectedAutomationPlanningModelId) + generationCredits;
-    } catch {
-      return 0;
-    }
-  }, [automationMode, personas, selectedAutomationModelId, selectedAutomationPersonaId, selectedAutomationPlanningModelId, selectedAutomationSourceId, tiktokAutomationModels, tiktokAutomationSources]);
-  const automationPlanningCredits = automationPlan?.planningCredits
-    ?? (tiktokAutomationSources.find((source) => source.id === selectedAutomationSourceId)?.assetIds.length
-      ? tiktokPlanningReserveCredits(tiktokAutomationSources.find((source) => source.id === selectedAutomationSourceId)!.assetIds.length, selectedAutomationPlanningModelId)
-      : 0);
-  const automationGenerationCredits = automationPlan?.generationCredits ?? Math.max(0, automationEstimatedCredits - automationPlanningCredits);
   const automationSourceSlideNodeIds = useMemo(() => {
     const focused = new Set<string>();
     if (!tiktokAutomationOpen || !selectedAutomationSourceId) return focused;
@@ -3684,314 +3620,88 @@ function CanvasWorkspace({ initialProject, projects: initialProjects, initialWor
     setNotice(`Remake branch created from ${scene.data.title}`);
   }
 
-  async function runTikTokAutomation() {
-    const source = tiktokAutomationSources.find((item) => item.id === selectedAutomationSourceId);
-    const sourceNode = nodesRef.current.find((node) => node.id === source?.id);
-    const persona = personas.find((item) => item.id === selectedAutomationPersonaId);
-    const model = models.find((item) => item.id === selectedAutomationModelId);
-    if (!source || !sourceNode || (automationMode === "identity" && !persona) || !model || generating) {
-      setNotice(!source ? "Import a TikTok slideshow first" : automationMode === "identity" && !persona ? "Choose an identity" : !model ? "Choose an image model" : "Wait for the current generation to finish");
+  async function runAutomationWorkflow(runtimeOverrides: Record<string, unknown> = {}, mode: "production" | "test" = "production") {
+    if (!automationWorkflowId) {
+      setNotice("Choose a workflow");
       return;
     }
-    if (liveCreditUsage.usageMode === "metered" && automationEstimatedCredits > liveCreditUsage.remaining) {
-      setAccountView("access");
-      setNotice(`This automation needs about ${automationEstimatedCredits.toLocaleString("en-US")} credits. You have ${liveCreditUsage.remaining.toLocaleString("en-US")}.`);
-      return;
-    }
-
     setAutomationStatus("planning");
-    setAutomationStage("analyze");
-    setAutomationStageLabel("Reading every slide and its source role");
+    setAutomationStageLabel("Waiting for the workflow worker");
     setAutomationPlanningProgress(1);
-    setAutomationPlan(null);
     setAutomationSlideStates([]);
-    setNotice("TikTok automation is analyzing every slide");
     try {
-      const response = await fetch("/api/automations/tiktok/plan", {
+      const response = await fetch("/api/automation-runs", {
         method: "POST",
         headers: { "content-type": "application/json" },
-        body: JSON.stringify({
-          projectId: project.id,
-          sourceNodeId: source.id,
-          sourceAssetIds: source.assetIds,
-          personaId: automationMode === "identity" ? persona?.id : null,
-          modelId: model.id,
-          planningModelId: selectedAutomationPlanningModelId,
-          caption: String(sourceNode.data.title || ""),
-          preferences: {
-            mode: automationMode,
-            newOutfit: automationNewOutfit,
-            newLocation: automationNewLocation,
-            textStrategy: automationTextStrategy,
-            creativeBrief: automationCreativeBrief,
-          },
-        }),
+        body: JSON.stringify({ projectId: project.id, workflowId: automationWorkflowId, inputs: runtimeOverrides, mode }),
       });
-      const queued = (await response.json().catch(() => ({}))) as { jobId?: string; error?: string };
-      if (!response.ok || !queued.jobId) {
+      const queued = await response.json().catch(() => ({})) as { runId?: string; error?: string };
+      if (!response.ok || !queued.runId) {
         if (response.status === 402) setAccountView("access");
-        throw new Error(queued.error || "Could not queue the slideshow plan");
+        throw new Error(queued.error || "Could not start the workflow");
       }
+      setAutomationRunId(queued.runId);
       window.dispatchEvent(new Event("scenelith:tasks-changed"));
-
-      let body: TikTokAutomationPlanResponse | null = null;
-      for (let attempt = 0; attempt < 1_200; attempt += 1) {
-        if (attempt > 0) await new Promise((resolve) => window.setTimeout(resolve, 1_000));
-        const poll = await fetch(`/api/automations/tiktok/plan?jobId=${encodeURIComponent(queued.jobId)}`, { cache: "no-store" });
-        const job = (await poll.json().catch(() => ({}))) as TikTokAutomationJobResponse & { error?: string };
-        if (!poll.ok) throw new Error(job.error || "Could not read automation progress");
-        setAutomationStage(automationUiStage(job.stage));
-        setAutomationPlanningProgress(job.progress);
-        setAutomationStageLabel(job.status === "queued" && job.queuePosition
-          ? `Waiting for a planning slot · ${job.queuePosition} in queue`
-          : job.stageLabel || "Planning the slideshow");
-        if (job.status === "failed" || job.status === "cancelled") {
-          await refreshUsage();
-          if (job.httpStatus === 402) setAccountView("access");
-          throw new Error(job.error || "Could not build the slideshow plan");
-        }
-        if (job.status === "completed") {
-          body = job.result;
-          break;
-        }
-      }
-      await refreshUsage();
-      if (!body?.slides?.length) throw new Error("Automation planning timed out. You can safely try again.");
-      if (automationMode === "identity") {
-        if (!persona || !body.persona || body.persona.id !== persona.id) throw new Error(`Identity selection changed during planning. Expected ${persona?.name || "the selected identity"}, received ${body.persona?.name || "none"}.`);
-        const selectedPersonaAssetIds = new Set(persona.assets.map((asset) => asset.id));
-        const mismatchedReferenceIds = body.slides.flatMap((slide) => slide.personaAssetIds).filter((assetId) => !selectedPersonaAssetIds.has(assetId));
-        if (mismatchedReferenceIds.length) throw new Error("The automation returned references from a different identity. Nothing was generated.");
-      } else if (body.persona || body.slides.some((slide) => slide.personaAssetIds.length)) {
-        throw new Error("Concept mode returned identity references. Nothing was generated.");
-      }
-
-      setAutomationPlan(body);
-      setAutomationStatus("building");
-      setAutomationStage("build");
-      setAutomationStageLabel("Creating one reviewed canvas node per slide");
-
-      const currentNodes = nodesRef.current;
-      const currentEdges = edgesRef.current;
-      const minX = currentNodes.length ? Math.min(...currentNodes.map((node) => node.position.x)) : 0;
-      const bottom = currentNodes.length ? Math.max(...currentNodes.map((node) => node.position.y + Number(node.measured?.height || node.height || node.data.nodeHeight || 520))) : 0;
-      const blockTop = bottom + 180;
-      const noteId = uid("automation-note");
-      const noteNode: FrameNode = {
-        id: noteId,
-        type: "frameNode",
-        position: { x: minX, y: blockTop },
-        data: {
-          kind: "note",
-          title: body.direction.campaignName,
-          subtitle: `${body.analysis.format} · ${body.slides.length} slides`,
-          noteColor: "gray",
-          noteText: [
-            body.direction.creativeThesis,
-            `Hook: ${body.direction.rewrittenHook}`,
-            `Comment angle: ${body.direction.commentAngle}`,
-            `Ending: ${body.direction.endingInstruction}`,
-          ].filter(Boolean).join("\n\n"),
-          nodeWidth: 340,
-          nodeHeight: 310,
-          automationKind: "tiktok-slideshow",
-          automationSourceNodeId: source.id,
-        },
-      };
-
-      const responsePersonaAssets = body.persona?.assets || [];
-      const created: Array<{ plan: TikTokAutomationPlanResponse["slides"][number]; node: FrameNode; sourceScene: FrameNode; references: typeof responsePersonaAssets }> = [];
-      const createdEdges: FrameEdge[] = [];
-      for (const [positionIndex, slide] of body.slides.entries()) {
-        const sourceScene = currentNodes.find((node) => node.data.assetId === slide.sourceAssetId);
-        if (!sourceScene) throw new Error(`Source slide ${slide.index} is missing from the canvas`);
-        const personaAssetById = new Map(responsePersonaAssets.map((asset) => [asset.id, asset]));
-        const references = slide.personaAssetIds.map((assetId) => personaAssetById.get(assetId)).filter((asset): asset is (typeof responsePersonaAssets)[number] => Boolean(asset));
-        if (references.length !== slide.personaAssetIds.length) throw new Error(`Identity references for slide ${slide.index} changed while the automation was running`);
-        const nodeId = uid("automation-slide");
-        const column = positionIndex % 2;
-        const row = Math.floor(positionIndex / 2);
-        const node: FrameNode = {
-          id: nodeId,
-          type: "frameNode",
-          position: { x: minX + 410 + column * 520, y: blockTop + row * 890 },
-          data: {
-            kind: "prompt",
-            title: `Slide ${String(slide.index).padStart(2, "0")} · ${slide.role}`,
-            subtitle: `${slide.personaVariant === "none" ? "Concept adaptation" : `${body.persona?.name || "Identity"} · ${slide.personaVariant}`} · QA ${slide.reviewPassed ? "passed" : "revised"}`,
-            prompt: slide.prompt,
-            status: "queued",
-            queueReason: "plan",
-            modelId: body.model.id,
-            mediaType: "image",
-            aspectRatio: body.model.defaultRatio as FrameNode["data"]["aspectRatio"],
-            resolution: body.model.defaultResolution as FrameNode["data"]["resolution"],
-            generationCount: 1,
-            nodeWidth: 430,
-            personaId: body.persona?.id,
-            personaVariant: slide.personaVariant === "none" ? undefined : slide.personaVariant,
-            attachedReferences: references.map((asset) => ({ assetId: asset.id, url: asset.url, title: `${body.persona?.name || "Identity"} · ${asset.filename}`, personaId: body.persona?.id, variant: asset.role })),
-            automationKind: "tiktok-slideshow",
-            automationSourceNodeId: source.id,
-            automationSlideIndex: slide.index,
-            automationRole: slide.role,
-            automationOverlayText: slide.overlayText,
-            automationReviewIssues: slide.reviewIssues,
-            generationError: undefined,
-          },
+      for (let pollIndex = 0; pollIndex < 7_200; pollIndex += 1) {
+        if (pollIndex > 0) await new Promise((resolve) => window.setTimeout(resolve, 1_000));
+        const poll = await fetch(`/api/automation-runs/${encodeURIComponent(queued.runId)}`, { cache: "no-store" });
+        const body = await poll.json().catch(() => ({})) as {
+          run?: {
+            status: "queued" | "running" | "completed" | "completed_with_warnings" | "failed" | "cancelled";
+            stageLabel: string;
+            progress: number;
+            error?: string | null;
+            output?: Record<string, { result?: { nodeIds?: string[]; failures?: Array<{ index?: number; error?: string }> } }> | null;
+            nodeRuns?: Array<{ nodeId: string; nodeType: string; status: string }>;
+          };
+          error?: string;
         };
-        created.push({ plan: slide, node, sourceScene, references });
-        createdEdges.push({
-          id: uid("edge"),
-          source: sourceScene.id,
-          sourceHandle: "output",
-          target: nodeId,
-          targetHandle: "reference-image-input",
-          animated: true,
-          className: "is-automation-lineage-edge",
-          data: {
-            portType: "image",
-            inputRole: "reference-image",
-            automationKind: "tiktok-slideshow",
-            automationSourceNodeId: source.id,
-            automationSlideIndex: slide.index,
-          },
-        });
-      }
-
-      pushHistory();
-      const nextNodes = [...currentNodes, noteNode, ...created.map((item) => item.node)];
-      const nextEdges = [...currentEdges, ...createdEdges];
-      nodesRef.current = nextNodes;
-      edgesRef.current = nextEdges;
-      setNodes(nextNodes);
-      setEdges(nextEdges);
-      setAutomationSlideStates(created.map(({ plan, node }) => ({ index: plan.index, role: plan.role, personaVariant: plan.personaVariant, status: "queued", nodeId: node.id })));
-      if (!(await save(true))) throw new Error("Could not save the automation nodes before generation");
-      setAutomationStatus("generating");
-      setAutomationStage("generate");
-      setAutomationStageLabel(`Generating ${created.length} adapted slides…`);
-      setGenerating(true);
-      setNotice(`${created.length} reviewed nodes created · generation started`);
-
-      const setSlideStatus = (index: number, status: TikTokAutomationSlideState["status"]) => setAutomationSlideStates((current) => current.map((slide) => slide.index === index ? { ...slide, status } : slide));
-      const runOne = async ({ plan: slide, node, sourceScene, references }: (typeof created)[number]) => {
-        const nodeId = node.id;
-        const setActive = (active: boolean) => setGeneratingNodeIds((current) => active
-          ? current.includes(nodeId) ? current : [...current, nodeId]
-          : current.filter((id) => id !== nodeId));
-        const referenceAssetIds = [String(sourceScene.data.assetId), ...references.map((asset) => asset.id)];
-        const referenceLabels = slide.referenceLabels;
-        const referenceRoles = referenceAssetIds.map(() => "reference-image" as GeneratorInputRole);
-        try {
-          let generationId = "";
-          while (!generationId) {
-            const start = await fetch("/api/generate", {
-              method: "POST",
-              headers: { "content-type": "application/json" },
-              body: JSON.stringify({
-                projectId: project.id,
-                nodeId,
-                prompt: slide.prompt,
-                modelId: body.model.id,
-                referenceAssetIds,
-                referenceLabels,
-                referenceRoles,
-                aspectRatio: body.model.defaultRatio,
-                resolution: body.model.defaultResolution,
-                duration: "5",
-                generateAudio: false,
-              }),
-            });
-            const started = (await start.json().catch(() => ({}))) as { error?: string; code?: string; generationId?: string; retryAfterMs?: number; status?: string };
-            if (start.status === 429 && started.code === "GENERATION_CONCURRENCY_LIMIT") {
-              setActive(false);
-              setSlideStatus(slide.index, "queued");
-              updateNode(nodeId, { status: "queued", queueReason: "plan" });
-              await new Promise((resolve) => window.setTimeout(resolve, Math.max(1000, started.retryAfterMs || 3000)));
-              continue;
-            }
-            await refreshUsage();
-            if (!start.ok || !started.generationId) throw new Error(started.error || "Generation failed");
-            generationId = started.generationId;
-            window.dispatchEvent(new Event("scenelith:tasks-changed"));
-            if (started.status === "queued") {
-              setActive(false);
-              setSlideStatus(slide.index, "queued");
-              updateNode(nodeId, { status: "queued", queueReason: "provider" });
-            } else {
-              setActive(true);
-              setSlideStatus(slide.index, "generating");
-              updateNode(nodeId, { status: "working", queueReason: undefined });
-            }
-          }
-          for (let attempt = 0; attempt < 920; attempt += 1) {
-            await new Promise((resolve) => window.setTimeout(resolve, 3000));
-            const poll = await fetch(`/api/generate/${generationId}`, { cache: "no-store" });
-            const polled = (await poll.json().catch(() => ({}))) as { generation?: { status: string; outputUrl?: string; assetId?: string; mediaType?: "image" | "video"; modelId?: string; createdAt?: string; error?: string | null }; error?: string };
-            const polledStatus = String(polled.generation?.status || "").toLowerCase();
-            if (polledStatus === "queued" || polledStatus === "dispatching") {
-              setActive(false);
-              setSlideStatus(slide.index, "queued");
-              updateNode(nodeId, { status: "queued", queueReason: "provider" });
-              continue;
-            }
-            if (["failed", "fail", "error", "cancelled", "canceled"].includes(polledStatus) || polled.error) throw new Error(polled.error || polled.generation?.error || "Generation failed");
-            if (polled.generation && !polled.generation.outputUrl) {
-              setActive(true);
-              setSlideStatus(slide.index, "generating");
-              updateNode(nodeId, { status: "working", queueReason: undefined });
-            }
-            if (polled.generation?.outputUrl) {
-              const output = { url: polled.generation.outputUrl, assetId: polled.generation.assetId, mediaType: "image" as const, modelId: polled.generation.modelId || body.model.id };
-              updateNode(nodeId, {
-                outputUrl: output.url,
-                assetId: output.assetId,
-                mediaType: "image",
-                modelId: output.modelId,
-                generatedAt: polled.generation.createdAt || new Date().toISOString(),
-                generatedOutputs: [output],
-                activeGeneratedOutputIndex: 0,
-                status: "ready",
-                queueReason: undefined,
-                generationError: undefined,
-              });
-              setSlideStatus(slide.index, "ready");
-              return;
-            }
-          }
-          throw new Error("Generation did not complete in time");
-        } catch (error) {
-          updateNode(nodeId, { status: "failed", queueReason: undefined, generationError: error instanceof Error ? error.message : "Generation failed" });
-          setSlideStatus(slide.index, "failed");
-          throw error;
-        } finally {
-          setActive(false);
+        if (!poll.ok || !body.run) throw new Error(body.error || "Could not read workflow progress");
+        const run = body.run;
+        setAutomationPlanningProgress(run.progress);
+        setAutomationStageLabel(run.status === "queued" ? "Waiting for an automation slot" : run.stageLabel || "Running workflow");
+        const activeNode = [...(run.nodeRuns || [])].reverse().find((nodeRun) => nodeRun.status === "running");
+        const activeNodeType = activeNode?.nodeType || "";
+        if (activeNodeType.startsWith("generation.")) setAutomationStatus("generating");
+        else if (activeNodeType.startsWith("output.")) setAutomationStatus("building");
+        else if (run.status === "running") setAutomationStatus("planning");
+        if (run.status === "failed" || run.status === "cancelled") throw new Error(run.error || "Workflow stopped");
+        if (run.status === "completed" || run.status === "completed_with_warnings") {
+          const terminal = Object.values(run.output || {}).find((value) => value?.result?.nodeIds?.length);
+          const nodeIds = terminal?.result?.nodeIds || [];
+          const failedOutputs = terminal?.result?.failures?.length || 0;
+          setAutomationSlideStates(nodeIds.map((nodeId, index) => ({ index: index + 1, role: "output", personaVariant: "workflow", status: "ready", nodeId })));
+          setAutomationStatus("complete");
+          setAutomationPlanningProgress(100);
+          setAutomationStageLabel(mode === "test" ? "Draft test completed without changing the canvas" : nodeIds.length ? `${nodeIds.length} output${nodeIds.length === 1 ? "" : "s"} added${failedOutputs ? ` · ${failedOutputs} failed` : ""}` : "Published workflow completed");
+          setAutomationRunId(null);
+          setNotice(mode === "test" ? "Draft test complete · canvas unchanged" : nodeIds.length ? `Workflow complete · ${nodeIds.length} output${nodeIds.length === 1 ? "" : "s"} ready${failedOutputs ? ` · ${failedOutputs} failed` : ""}` : "Workflow complete");
+          await refreshUsage();
+          window.dispatchEvent(new Event("scenelith:tasks-changed"));
+          return;
         }
-      };
-
-      const results = await settleWithConcurrency(created, Math.max(1, liveCreditUsage.generationConcurrency || 1), runOne);
-      const completed = results.filter((result) => result.status === "fulfilled").length;
-      const firstFailure = results.find((result): result is PromiseRejectedResult => result.status === "rejected");
-      setGenerating(false);
-      setGeneratingNodeIds([]);
+      }
+      throw new Error("Workflow did not complete in time");
+    } catch (error) {
       await refreshUsage();
-      if (completed === created.length) {
-        setAutomationStatus("complete");
-        setAutomationStageLabel(`${completed} slides recreated and ready`);
-        setNotice(`TikTok recreation ready · ${completed} slides`);
-      } else {
-        setAutomationStatus("failed");
-        setAutomationStageLabel(`${completed} of ${created.length} slides ready · failed slides can be rerun`);
-        setNotice(firstFailure?.reason instanceof Error ? firstFailure.reason.message : `${completed} of ${created.length} slides ready`);
+      setAutomationRunId(null);
+      setAutomationStatus("failed");
+      setAutomationStageLabel(error instanceof Error ? error.message : "Workflow failed");
+      setNotice(error instanceof Error ? error.message : "Workflow failed");
+    }
+  }
+
+  async function cancelAutomationWorkflow() {
+    if (!automationRunId) return;
+    setAutomationStageLabel("Cancelling workflow");
+    try {
+      const response = await fetch(`/api/automation-runs/${encodeURIComponent(automationRunId)}`, { method: "DELETE" });
+      if (!response.ok && response.status !== 409) {
+        const body = await response.json().catch(() => ({})) as { error?: string };
+        throw new Error(body.error || "Could not cancel the workflow");
       }
     } catch (error) {
-      setGenerating(false);
-      setGeneratingNodeIds([]);
-      await refreshUsage();
-      setAutomationStatus("failed");
-      setAutomationStageLabel(error instanceof Error ? error.message : "Automation failed");
-      setNotice(error instanceof Error ? error.message : "Automation failed");
+      setNotice(error instanceof Error ? error.message : "Could not cancel the workflow");
     }
   }
 
@@ -4660,7 +4370,7 @@ function CanvasWorkspace({ initialProject, projects: initialProjects, initialWor
       )}
 
       <aside className={`tool-rail ${tiktokAutomationOpen || hookLibraryOpen || identityLibraryOpen || productPanelFocus ? "has-open-panel" : ""}`}>
-        <button className={tiktokAutomationOpen ? "is-active" : ""} data-tooltip="TikTok automation" aria-label="Open TikTok automation" onClick={() => { const nextOpen = !tiktokAutomationOpen; setTikTokAutomationOpen(nextOpen); setHookLibraryOpen(false); setIdentityLibraryOpen(false); setProductPanelFocus(null); if (nextOpen && selectedAutomationSourceId) focusAutomationSource(selectedAutomationSourceId); }}><Workflow size={18} /></button>
+        <button className={tiktokAutomationOpen ? "is-active" : ""} data-tooltip="Automation" aria-label="Open automation" onClick={() => { const nextOpen = !tiktokAutomationOpen; setTikTokAutomationOpen(nextOpen); setHookLibraryOpen(false); setIdentityLibraryOpen(false); setProductPanelFocus(null); if (nextOpen && selectedAutomationSourceId) focusAutomationSource(selectedAutomationSourceId); }}><Workflow size={18} /></button>
         <button className={hookLibraryOpen ? "is-active" : ""} data-tooltip="Hooks" aria-label="Open hooks" onClick={() => { setHookLibraryOpen((value) => !value); setIdentityLibraryOpen(false); setTikTokAutomationOpen(false); setProductPanelFocus(null); }}><Quote size={18} /></button>
         <button className={identityLibraryOpen ? "is-active" : ""} data-tooltip="Library" aria-label="Open Library" onClick={() => { setIdentityLibraryOpen((value) => !value); setHookLibraryOpen(false); setTikTokAutomationOpen(false); setProductPanelFocus(null); }}><Images size={18} /></button>
         {editionClient.railItems.length > 0 && <span className="tool-rail-divider" />}
@@ -4670,37 +4380,36 @@ function CanvasWorkspace({ initialProject, projects: initialProjects, initialWor
       {ProductPanelRouter && <ProductPanelRouter focus={productPanelFocus} user={user} workspace={workspace} onRequestAccountView={(view) => { setProductPanelFocus(null); setAccountView(view); }} onClose={() => setProductPanelFocus(null)} />}
 
       {tiktokAutomationOpen && <TikTokAutomationPanel
+        projectId={project.id}
+        workflowId={automationWorkflowId}
+        setWorkflowId={(value) => { setAutomationWorkflowId(value); setAutomationStatus("idle"); setAutomationSlideStates([]); }}
+        workflowRefreshKey={automationWorkflowRefreshKey}
+        onConfigure={setAutomationEditorWorkflowId}
         sources={tiktokAutomationSources}
-        sourceId={selectedAutomationSourceId}
-        setSourceId={(value) => { setAutomationSourceId(value); setAutomationPlan(null); setAutomationStatus("idle"); focusAutomationSource(value); }}
-        mode={automationMode}
-        setMode={(value) => { setAutomationMode(value); setAutomationPlan(null); setAutomationStatus("idle"); setAutomationSlideStates([]); }}
         personas={personas}
-        personaId={selectedAutomationPersonaId}
-        setPersonaId={(value) => { setAutomationPersonaId(value); setAutomationPlan(null); setAutomationStatus("idle"); setAutomationSlideStates([]); }}
         models={models}
-        modelId={selectedAutomationModelId}
-        setModelId={(value) => { setAutomationModelId(value); setAutomationPlan(null); setAutomationStatus("idle"); }}
-        planningModelId={selectedAutomationPlanningModelId}
-        setPlanningModelId={(value) => { setAutomationPlanningModelId(value); setAutomationPlan(null); setAutomationStatus("idle"); }}
-        newOutfit={automationNewOutfit}
-        setNewOutfit={setAutomationNewOutfit}
-        newLocation={automationNewLocation}
-        setNewLocation={setAutomationNewLocation}
-        textStrategy={automationTextStrategy}
-        setTextStrategy={setAutomationTextStrategy}
-        creativeBrief={automationCreativeBrief}
-        setCreativeBrief={setAutomationCreativeBrief}
         status={automationStatus}
-        activeStage={automationStage}
         stageLabel={automationStageLabel}
         planningProgress={automationPlanningProgress}
         slideStates={automationSlideStates}
-        estimatedCredits={automationPlan?.estimatedCredits || automationEstimatedCredits}
-        planningCredits={automationPlanningCredits}
-        generationCredits={automationGenerationCredits}
-        onRun={() => void runTikTokAutomation()}
+        onSourceSelected={(value) => { setAutomationSourceId(value); setAutomationStatus("idle"); focusAutomationSource(value); }}
+        onRun={(runtimeInputs, mode) => void runAutomationWorkflow(runtimeInputs, mode)}
+        onCancel={() => void cancelAutomationWorkflow()}
         onClose={() => setTikTokAutomationOpen(false)}
+      />}
+      {automationEditorWorkflowId && <AutomationWorkflowEditorOverlay
+        key={automationEditorWorkflowId}
+        projectId={project.id}
+        workflowId={automationEditorWorkflowId}
+        sources={tiktokAutomationSources}
+        personas={personas}
+        models={models}
+        onClose={() => setAutomationEditorWorkflowId(null)}
+        onWorkflowChanged={(workflowId) => {
+          setAutomationWorkflowId(workflowId);
+          setAutomationEditorWorkflowId(workflowId);
+          setAutomationWorkflowRefreshKey((current) => current + 1);
+        }}
       />}
 
       <section

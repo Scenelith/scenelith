@@ -57,6 +57,26 @@ export async function timeoutGeneration(generationId: string, mediaType: string,
   })();
 }
 
+export async function cancelGeneration(generationId: string, reason = "Automation run cancelled") {
+  return await db.transaction(async () => {
+    const generation = await db.prepare("SELECT status, output_url, output_asset_id FROM generations WHERE id = ? FOR UPDATE").get(generationId) as
+      | { status: string; output_url: string | null; output_asset_id: string | null }
+      | undefined;
+    if (!generation || generation.output_url || generation.output_asset_id || terminalStatuses.has(generation.status.toLowerCase())) return false;
+    const dispatch = await db.prepare("SELECT status FROM generation_dispatch_jobs WHERE generation_id = ?").get(generationId) as { status: string } | undefined;
+    const now = new Date().toISOString();
+    const changed = await db.prepare(`UPDATE generations SET status = 'cancelled', error = ?, updated_at = ?
+      WHERE id = ? AND output_url IS NULL AND output_asset_id IS NULL`).run(reason.slice(0, 1_000), now, generationId);
+    if (changed.changes !== 1) return false;
+    await db.prepare(`UPDATE generation_dispatch_jobs SET status = 'failed', last_error = ?, locked_at = NULL, locked_by = NULL, updated_at = ?
+      WHERE generation_id = ? AND status IN ('queued','dispatching','dispatched')`).run(reason.slice(0, 1_000), now, generationId);
+    const usage = await usageAuthority();
+    if (dispatch?.status === "dispatched") await usage.settleGeneration(generationId);
+    else await usage.releaseGeneration(generationId, "automation_cancelled");
+    return true;
+  })();
+}
+
 async function expireRows(active: Array<{ id: string; media_type: string; created_at: string }>, now: number) {
   let expired = 0;
   for (const generation of active) {

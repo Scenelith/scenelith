@@ -64,6 +64,18 @@ export async function GET() {
       progress: number; error: string | null; created_at: string; updated_at: string;
     }>;
 
+  const workflowRuns = await db.prepare(`SELECT run.*, project.name AS project_name, workflow.name AS workflow_name
+    FROM automation_runs run
+    JOIN projects project ON project.id = run.project_id
+    JOIN automation_workflows workflow ON workflow.id = run.workflow_id
+    WHERE run.user_id = ?
+      AND (run.status IN ('queued','running') OR run.updated_at >= ?)
+    ORDER BY CASE WHEN run.status IN ('queued','running') THEN 0 ELSE 1 END, run.created_at DESC
+    LIMIT 20`).all(auth.user.id, new Date(Date.now() - 48 * 60 * 60_000).toISOString()) as Array<{
+      id: string; project_id: string; project_name: string; workflow_id: string; workflow_name: string; status: string;
+      stage_label: string; progress: number; error: string | null; charged_credits: number; created_at: string; updated_at: string;
+    }>;
+
   const visibleGenerations = [];
   for (const row of generations) {
     if (await userCanAccessProject(auth.user.id, row.project_id)) visibleGenerations.push(row);
@@ -108,7 +120,27 @@ export async function GET() {
     updatedAt: row.updated_at,
   }));
 
-  const tasks = [...generationTasks, ...automationTasks]
+  const visibleWorkflowRuns = [];
+  for (const row of workflowRuns) {
+    if (await userCanAccessProject(auth.user.id, row.project_id)) visibleWorkflowRuns.push(row);
+  }
+  const workflowTasks: BackgroundTaskRecord[] = visibleWorkflowRuns.map((row) => ({
+    id: row.id,
+    kind: "automation",
+    projectId: row.project_id,
+    projectName: row.project_name,
+    nodeId: row.workflow_id,
+    title: row.workflow_name,
+    status: row.status === "completed" ? "completed" : row.status === "failed" || row.status === "cancelled" ? "failed" : row.status === "queued" ? "queued" : "running",
+    stageLabel: row.stage_label,
+    progress: Math.max(0, Math.min(100, Number(row.progress || 0))),
+    creditCost: Number(row.charged_credits || 0),
+    error: row.error,
+    createdAt: row.created_at,
+    updatedAt: row.updated_at,
+  }));
+
+  const tasks = [...generationTasks, ...automationTasks, ...workflowTasks]
     .sort((left, right) => {
       const leftActive = left.status === "queued" || left.status === "running";
       const rightActive = right.status === "queued" || right.status === "running";
