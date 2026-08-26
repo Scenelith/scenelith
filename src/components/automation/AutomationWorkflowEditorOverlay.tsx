@@ -7,6 +7,7 @@ import {
   MarkerType,
   Position,
   ReactFlow,
+  ReactFlowProvider,
   addEdge,
   type Connection,
   type Edge,
@@ -15,7 +16,6 @@ import {
 } from "@xyflow/react";
 import {
   ArrowLeft,
-  Braces,
   Check,
   ChevronRight,
   CircleAlert,
@@ -67,6 +67,7 @@ type WorkflowBindingOption = { id: string; name: string; status: string; publish
 type CredentialOption = { id: string; name: string; kind: string; fingerprint: string };
 type WorkflowBinding = { slotKey: string; type: "credential" | "subworkflow"; credentialId: string | null; credentialName: string | null; targetWorkflowId: string | null; targetWorkflowName: string | null };
 type AutomationWorkflowClientDetail = AutomationWorkflowDetail & { capabilities: AutomationCapabilities };
+type AutomationNodeDefinitionRecord = ReturnType<typeof automationNodeDefinitions>[number];
 
 const categoryLabels = {
   trigger: "Triggers",
@@ -106,6 +107,10 @@ function AutomationNodeCard({ data, selected }: NodeProps<Node<FlowNodeData>>) {
     <span className="automation-flow-node-kicker">{categoryLabels[definition.category]}</span>
     <strong>{node.name}</strong>
     <p>{node.description || definition.description}</p>
+    <span className="automation-flow-node-io" aria-hidden="true">
+      <i>{definition.inputs.length ? `← ${definition.inputs.map((port) => port.label).join(" + ")}` : "Starts here"}</i>
+      <i>{definition.outputs.length ? `${definition.outputs.map((port) => port.label).join(" + ")} →` : "Ends here"}</i>
+    </span>
     {definition.outputs.map((port, index) => <Handle
       key={port.id}
       id={port.id}
@@ -119,6 +124,18 @@ function AutomationNodeCard({ data, selected }: NodeProps<Node<FlowNodeData>>) {
 }
 
 const nodeTypes = { automationNode: AutomationNodeCard };
+
+function AutomationNodeGuide({ definition, compact = false }: { definition: AutomationNodeDefinitionRecord; compact?: boolean }) {
+  return <section className={`automation-node-guide ${compact ? "is-compact" : ""}`}>
+    <small>WHAT THIS STEP DOES</small>
+    <p>{definition.description}</p>
+    <div>
+      <span><b>Receives</b>{definition.inputs.length ? definition.inputs.map((port) => <i key={port.id}>{port.label}</i>) : <em>Nothing · starts a run</em>}</span>
+      <span><b>Sends</b>{definition.outputs.length ? definition.outputs.map((port) => <i key={port.id}>{port.label}</i>) : <em>Nothing · ends a branch</em>}</span>
+    </div>
+    {!compact && definition.fields.length > 0 && <span className="automation-node-guide-settings"><b>You can configure</b>{definition.fields.slice(0, 6).map((field) => <i key={field.id}>{field.label}</i>)}{definition.fields.length > 6 && <em>+{definition.fields.length - 6} more</em>}</span>}
+  </section>;
+}
 
 function displayGraph(graph: AutomationWorkflowGraph, view: EditorView, readOnly: boolean) {
   const groups = graph.groups ?? [];
@@ -217,6 +234,7 @@ export function AutomationWorkflowEditorOverlay({ projectId, workflowId, sources
   const [view, setView] = useState<EditorView>("groups");
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [search, setSearch] = useState("");
+  const [previewDefinitionKey, setPreviewDefinitionKey] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState("");
@@ -303,6 +321,7 @@ export function AutomationWorkflowEditorOverlay({ projectId, workflowId, sources
   const selectedGroup = graph?.groups.find((group) => `group:${group.id}` === selectedId) || null;
   const selectedEdge = graph?.edges.find((edge) => `edge:${edge.id}` === selectedId) || null;
   const selectedDefinition = selectedNode ? automationNodeDefinition(selectedNode.type, selectedNode.version) : null;
+  const previewDefinition = previewDefinitionKey ? automationNodeDefinitions().find((definition) => `${definition.type}@${definition.version}` === previewDefinitionKey) || null : null;
   function selectedFieldOptions(field: AutomationNodeFieldDefinition) {
     if (!selectedNode) return field.options || [];
     if (field.runtimeValueType === "tiktok-source") return sources.map((source) => ({ value: source.id, label: source.label }));
@@ -606,59 +625,72 @@ export function AutomationWorkflowEditorOverlay({ projectId, workflowId, sources
 
       {loading ? <div className="automation-editor-loading" aria-live="polite"><i /><i /><i /><span>Opening workflow…</span></div> : graph && <div className="automation-editor-body">
         <aside className="automation-node-library">
-          <div className="automation-library-head"><span><Plus size={13} /> Add step</span><label><Search size={13} /><input aria-label="Search steps" value={search} onChange={(event) => setSearch(event.target.value)} placeholder="Search steps…" /></label></div>
+          <div className="automation-library-head"><span><Plus size={13} /> Step library</span><small>Click a step to understand it. Use + to add it.</small><label><Search size={13} /><input aria-label="Search steps" value={search} onChange={(event) => setSearch(event.target.value)} placeholder="Search steps…" /></label></div>
           <div className="automation-library-list">
             {(Object.keys(categoryLabels) as Array<keyof typeof categoryLabels>).map((category) => {
               const categoryNodes = filteredDefinitions.filter((definition) => definition.category === category);
               if (!categoryNodes.length) return null;
-              return <section key={category}><h3>{categoryLabels[category]}</h3>{categoryNodes.map((definition) => <button type="button" key={`${definition.type}@${definition.version}`} disabled={Boolean(readOnly)} onClick={() => addNode(definition.type, definition.version)}><span className={`is-${definition.accent}`}>{definition.category === "ai" ? <Sparkles size={14} /> : definition.category === "logic" ? <GitBranch size={14} /> : definition.category === "output" ? <Layers3 size={14} /> : <Workflow size={14} />}</span><i><b>{definition.title}</b><small>{definition.description}</small></i><Plus size={12} /></button>)}</section>;
+              return <section key={category}><h3>{categoryLabels[category]}</h3>{categoryNodes.map((definition) => {
+                const definitionKey = `${definition.type}@${definition.version}`;
+                return <article key={definitionKey} className={previewDefinitionKey === definitionKey ? "is-selected" : ""}>
+                  <button type="button" className="automation-library-info" onClick={() => { setPreviewDefinitionKey(definitionKey); setSelectedId(null); setMobileInspectorOpen(true); }}>
+                    <span className={`is-${definition.accent}`}>{definition.category === "ai" ? <Sparkles size={14} /> : definition.category === "logic" ? <GitBranch size={14} /> : definition.category === "output" ? <Layers3 size={14} /> : <Workflow size={14} />}</span>
+                    <i><b>{definition.title}</b><small>{definition.description}</small></i>
+                  </button>
+                  {!readOnly && <button type="button" className="automation-library-add" aria-label={`Add ${definition.title}`} onClick={() => addNode(definition.type, definition.version)}><Plus size={13} /></button>}
+                </article>;
+              })}</section>;
             })}
           </div>
         </aside>
 
         <main className="automation-flow-stage">
           <div className="automation-flow-breadcrumb">
-            <button type="button" className={view === "groups" ? "is-active" : ""} onClick={() => { setView("groups"); setSelectedId(null); setMobileInspectorOpen(false); }}>Workflow</button>
+            <button type="button" className={view === "groups" ? "is-active" : ""} onClick={() => { setView("groups"); setSelectedId(null); setPreviewDefinitionKey(null); setMobileInspectorOpen(false); }}><Layers3 size={12} /> Overview</button>
             {currentGroup && <><ChevronRight size={12} /><span>{currentGroup.name}</span></>}
-            <div><button type="button" className={view === "all" ? "is-active" : ""} onClick={() => { setView("all"); setSelectedId(null); setMobileInspectorOpen(false); }}><Braces size={12} /> All steps</button></div>
+            <div><button type="button" className={view === "all" ? "is-active" : ""} onClick={() => { setView("all"); setSelectedId(null); setPreviewDefinitionKey(null); setMobileInspectorOpen(false); }}><Workflow size={12} /> Full workflow</button></div>
           </div>
-          <ReactFlow
-            nodes={display.nodes}
-            edges={display.edges}
-            nodeTypes={nodeTypes}
-            fitView
-            fitViewOptions={{ padding: 0.22, minZoom: 0.2, maxZoom: 1.1 }}
-            minZoom={0.08}
-            maxZoom={1.7}
-            nodesDraggable={!readOnly}
-            nodesConnectable={!readOnly && view !== "groups"}
-            elementsSelectable
-            deleteKeyCode={null}
-            onNodeClick={(_, node) => { setSelectedId(node.id); setMobileInspectorOpen(true); }}
-            onEdgeClick={(_, edge) => { setSelectedId(`edge:${edge.id}`); setMobileInspectorOpen(true); }}
-            onNodeDoubleClick={(_, node) => {
-              if (node.data.syntheticGroup && node.data.group) { setView({ groupId: node.data.group.id }); setSelectedId(null); setMobileInspectorOpen(false); }
-            }}
-            onNodeDragStop={(_, flowNode) => mutateGraph((current) => {
-              if (flowNode.id.startsWith("group:")) return { ...current, groups: current.groups.map((group) => `group:${group.id}` === flowNode.id ? { ...group, position: flowNode.position } : group) };
-              return { ...current, nodes: current.nodes.map((node) => node.id === flowNode.id ? { ...node, position: flowNode.position } : node) };
-            })}
-            onConnect={onConnect}
-            onEdgesDelete={(edges) => mutateGraph((current) => ({ ...current, edges: current.edges.filter((edge) => !edges.some((removed) => removed.id === edge.id)) }))}
-            onPaneClick={() => { setSelectedId(null); setMobileInspectorOpen(false); }}
-          >
-            <Background color="var(--ff-grid-dot)" gap={28} size={1.15} />
-            <Controls showInteractive={false} />
-          </ReactFlow>
+          <ReactFlowProvider>
+            <ReactFlow
+              nodes={display.nodes}
+              edges={display.edges}
+              nodeTypes={nodeTypes}
+              fitView
+              fitViewOptions={{ padding: 0.22, minZoom: 0.2, maxZoom: 1.1 }}
+              minZoom={0.08}
+              maxZoom={1.7}
+              nodesDraggable={!readOnly}
+              nodesConnectable={!readOnly && view !== "groups"}
+              elementsSelectable
+              deleteKeyCode={null}
+              onNodeClick={(_, node) => { setSelectedId(node.id); setPreviewDefinitionKey(null); setMobileInspectorOpen(true); }}
+              onEdgeClick={(_, edge) => { setSelectedId(`edge:${edge.id}`); setPreviewDefinitionKey(null); setMobileInspectorOpen(true); }}
+              onNodeDoubleClick={(_, node) => {
+                if (node.data.syntheticGroup && node.data.group) { setView({ groupId: node.data.group.id }); setSelectedId(null); setPreviewDefinitionKey(null); setMobileInspectorOpen(false); }
+              }}
+              onNodeDragStop={(_, flowNode) => mutateGraph((current) => {
+                if (flowNode.id.startsWith("group:")) return { ...current, groups: current.groups.map((group) => `group:${group.id}` === flowNode.id ? { ...group, position: flowNode.position } : group) };
+                return { ...current, nodes: current.nodes.map((node) => node.id === flowNode.id ? { ...node, position: flowNode.position } : node) };
+              })}
+              onConnect={onConnect}
+              onEdgesDelete={(edges) => mutateGraph((current) => ({ ...current, edges: current.edges.filter((edge) => !edges.some((removed) => removed.id === edge.id)) }))}
+              onPaneClick={() => { setSelectedId(null); setPreviewDefinitionKey(null); setMobileInspectorOpen(false); }}
+            >
+              <Background color="var(--ff-grid-dot)" gap={28} size={1.15} />
+              <Controls showInteractive={false} />
+            </ReactFlow>
+          </ReactFlowProvider>
         </main>
 
         <aside className={`automation-node-inspector ${mobileInspectorOpen ? "is-open" : ""}`}>
           <button type="button" className="automation-inspector-close" aria-label="Close settings" onClick={() => setMobileInspectorOpen(false)}><X size={15} /></button>
-          {selectedGroup ? <div className="automation-inspector-empty is-group"><Layers3 size={20} /><small>COLLAPSED SUBFLOW</small><h2>{selectedGroup.name}</h2><p>{selectedGroup.description}</p><button type="button" onClick={() => { setView({ groupId: selectedGroup.id }); setSelectedId(null); setMobileInspectorOpen(false); }}>Open {selectedGroup.nodeIds.length} steps <ChevronRight size={13} /></button></div>
+          {previewDefinition ? <div className="automation-definition-preview"><span className={`is-${previewDefinition.accent}`}><Workflow size={16} /></span><small>{categoryLabels[previewDefinition.category]} STEP</small><h2>{previewDefinition.title}</h2><AutomationNodeGuide definition={previewDefinition} />{!readOnly && <button type="button" onClick={() => addNode(previewDefinition.type, previewDefinition.version)}><Plus size={13} /> Add to workflow</button>}</div>
+            : selectedGroup ? <div className="automation-inspector-empty is-group"><Layers3 size={20} /><small>COLLAPSED SUBFLOW</small><h2>{selectedGroup.name}</h2><p>{selectedGroup.description}</p><button type="button" onClick={() => { setView({ groupId: selectedGroup.id }); setSelectedId(null); setPreviewDefinitionKey(null); setMobileInspectorOpen(false); }}>Open {selectedGroup.nodeIds.length} steps <ChevronRight size={13} /></button></div>
             : selectedEdge ? <div className="automation-inspector-empty is-group"><GitBranch size={20} /><small>CONNECTION</small><h2>{graph.nodes.find((node) => node.id === selectedEdge.source)?.name || "Step"} → {graph.nodes.find((node) => node.id === selectedEdge.target)?.name || "Step"}</h2><p>{selectedEdge.sourcePort} → {selectedEdge.targetPort}</p>{!readOnly && <button type="button" className="is-danger" onClick={removeSelectedEdge}><Trash2 size={13} /> Remove connection</button>}</div>
             : selectedNode && selectedDefinition ? <>
               <header><span className={`is-${selectedDefinition.accent}`}><Settings2 size={15} /></span><div><small>{categoryLabels[selectedDefinition.category]} · advanced type {selectedDefinition.type}@{selectedDefinition.version}</small><input aria-label="Step name" value={selectedNode.name} disabled={Boolean(readOnly)} onChange={(event) => mutateGraph((current) => ({ ...current, nodes: current.nodes.map((node) => node.id === selectedNode.id ? { ...node, name: event.target.value } : node) }))} /></div></header>
               <div className="automation-inspector-scroll">
+                <AutomationNodeGuide definition={selectedDefinition} compact />
                 <label className="automation-inspector-field"><span><b>Description</b></span><textarea disabled={Boolean(readOnly)} value={selectedNode.description} onChange={(event) => mutateGraph((current) => ({ ...current, nodes: current.nodes.map((node) => node.id === selectedNode.id ? { ...node, description: event.target.value } : node) }))} /></label>
                 {selectedDefinition.fields.filter((field) => !field.visibleWhen || field.visibleWhen.values.some((value) => {
                   const controlling = selectedNode.bindings[field.visibleWhen!.fieldId]?.mode === "fixed" && selectedNode.bindings[field.visibleWhen!.fieldId]?.value !== undefined
@@ -693,7 +725,7 @@ export function AutomationWorkflowEditorOverlay({ projectId, workflowId, sources
             ] as const).map(([key, label, min, max]) => <label key={key}><span>{label}</span><input type="number" disabled={Boolean(readOnly)} min={min} max={max} value={(graph.settings || DEFAULT_AUTOMATION_WORKFLOW_SETTINGS)[key]} onChange={(event) => mutateGraph((current) => ({ ...current, settings: { ...DEFAULT_AUTOMATION_WORKFLOW_SETTINGS, ...(current.settings || {}), [key]: Number(event.target.value) } }))} /></label>)}
               <label><span>Maximum credits <i>optional</i></span><input type="number" disabled={Boolean(readOnly)} min={0} value={(graph.settings || DEFAULT_AUTOMATION_WORKFLOW_SETTINGS).maxCredits ?? ""} placeholder="No workflow cap" onChange={(event) => mutateGraph((current) => ({ ...current, settings: { ...DEFAULT_AUTOMATION_WORKFLOW_SETTINGS, ...(current.settings || {}), maxCredits: event.target.value === "" ? null : Number(event.target.value) } }))} /></label>
               </div></details>
-              {view === "groups" && <button type="button" onClick={() => setView("all")}><Braces size={13} /> Show every step</button>}
+              {view === "groups" && <button type="button" onClick={() => setView("all")}><Workflow size={13} /> Show every step</button>}
             </div>}
         </aside>
       </div>}
