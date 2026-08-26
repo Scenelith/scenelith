@@ -25,6 +25,12 @@ test("automation panel renders the selected workflow input contract", () => {
   assert.match(panelSource, /selectedWorkflow\?\.publishedVersionId/);
 });
 
+test("the live automation panel exposes a read-only demo contract for Cloud marketing", () => {
+  assert.match(panelSource, /export type TikTokAutomationPanelDemo/);
+  assert.match(panelSource, /demo\?: TikTokAutomationPanelDemo/);
+  assert.match(panelSource, /if \(demo\) return;/);
+});
+
 test("legacy TikTok API adapts into the versioned workflow runtime instead of creating legacy jobs", () => {
   assert.match(legacyRouteSource, /enqueueAutomationWorkflowRun/);
   assert.doesNotMatch(legacyRouteSource, /enqueueTikTokAutomationJob/);
