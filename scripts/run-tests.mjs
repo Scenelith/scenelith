@@ -50,6 +50,8 @@ const temporaryRoot = mkdtempSync(join(tmpdir(), "scenelith-tests-"));
 let pgCtl;
 let pgData;
 let databaseUrl = process.env.TEST_DATABASE_URL || "";
+const edition = argument("--edition");
+if (edition && !["selfhost", "cloud"].includes(edition)) throw new Error(`Unsupported test edition: ${edition}`);
 try {
   if (!databaseUrl) {
     const initdb = commandPath("initdb");
@@ -77,12 +79,11 @@ try {
     COLLABORATION_INTERNAL_URL: "",
     STORAGE_PROVIDER: "local",
     STORAGE_PATH: join(temporaryRoot, "storage"),
+    SCENELITH_TEST_EDITION: edition || "",
     PATH: process.env.PATH?.split(delimiter).join(delimiter),
   };
   run(process.execPath, ["database/migrate.mjs"], { env });
   run(process.execPath, ["collaboration/migrate.mjs"], { env });
-  const edition = argument("--edition");
-  if (edition && !["selfhost", "cloud"].includes(edition)) throw new Error(`Unsupported test edition: ${edition}`);
   const tests = testFiles("tests")
     .filter((path) => !path.includes(`${join("tests", "editions")}${process.platform === "win32" ? "\\" : "/"}`) || !edition || path.includes(join("tests", "editions", edition)))
     .sort();

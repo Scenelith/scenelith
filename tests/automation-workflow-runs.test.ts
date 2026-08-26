@@ -411,7 +411,9 @@ test("trigger overlap policies skip or supersede runs before worker admission", 
   }
 });
 
-test("a dead trigger delivery creates one durable notification and self-host acknowledges it in-app", async () => {
+test("a dead trigger delivery creates one durable notification and self-host acknowledges it in-app", {
+  skip: process.env.SCENELITH_TEST_EDITION === "cloud" ? "Cloud notification delivery is covered by the private adapter suite" : false,
+}, async () => {
   const owner = await seedOwner();
   const workflow = await repository.createAutomationWorkflow({ userId: owner.userId, projectId: owner.projectId, name: "Delivery alert" });
   await repository.saveAutomationWorkflowDraft({ userId: owner.userId, workflowId: workflow!.workflow.id, baseDraftVersionId: workflow!.draft!.id, graph: finishGraph("completed") });
