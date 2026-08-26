@@ -63,6 +63,7 @@ type RunRow = {
 
 type RunsGlobal = typeof globalThis & {
   scenelithWorkflowRunDrain?: Promise<void>;
+  scenelithWorkflowRunDrainRequested?: boolean;
   scenelithWorkflowRunTimer?: ReturnType<typeof setTimeout>;
   scenelithWorkflowRunActive?: Set<Promise<void>>;
 };
@@ -914,8 +915,16 @@ async function runDrain() {
 }
 
 export function drainAutomationWorkflowRuns() {
+  shared.scenelithWorkflowRunDrainRequested = true;
   if (shared.scenelithWorkflowRunDrain) return shared.scenelithWorkflowRunDrain;
-  shared.scenelithWorkflowRunDrain = runDrain().finally(() => { shared.scenelithWorkflowRunDrain = undefined; });
+  shared.scenelithWorkflowRunDrain = (async () => {
+    while (shared.scenelithWorkflowRunDrainRequested) {
+      shared.scenelithWorkflowRunDrainRequested = false;
+      await runDrain();
+    }
+  })().finally(() => {
+    shared.scenelithWorkflowRunDrain = undefined;
+  });
   return shared.scenelithWorkflowRunDrain;
 }
 
