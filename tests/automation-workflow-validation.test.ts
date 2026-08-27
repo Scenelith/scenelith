@@ -10,12 +10,68 @@ test("default TikTok workflow exposes every AI request and validates", () => {
   const result = validateAutomationWorkflowGraph(graph);
   assert.deepEqual(result.issues, []);
   assert.equal(result.valid, true);
-  assert.equal(graph.nodes.filter((node) => node.type === "ai.structured-task").length, 10);
+  assert.equal(graph.nodes.filter((node) => node.type === "ai.structured-task").length, 12);
   for (const aiNode of graph.nodes.filter((node) => node.type === "ai.structured-task")) {
+    assert.equal(aiNode.version, 2);
+    assert.equal(aiNode.config.outputMode, "structured");
+    assert.equal(aiNode.config.creativity, "consistent");
     assert.equal(typeof aiNode.config.systemPrompt, "string");
     assert.equal(typeof aiNode.config.userPrompt, "string");
     assert.ok(String(aiNode.config.userPrompt).length > 20);
   }
+  const merge = graph.nodes.find((node) => node.id === "assemble-contract");
+  assert.equal(merge?.type, "logic.merge");
+  assert.equal(merge?.config.mode, "named-object");
+  assert.deepEqual(merge?.config.inputs, [
+    { id: "input-copy", name: "copy" },
+    { id: "input-brief", name: "brief" },
+    { id: "input-references", name: "references" },
+  ]);
+  assert.deepEqual(graph.edges.filter((edge) => edge.target === "assemble-contract").map((edge) => edge.targetPort).sort(), ["input-brief", "input-copy", "input-references"]);
+  assert.ok(graph.edges.filter((edge) => edge.role === "data").length >= 8);
+  assert.ok(graph.edges.some((edge) => edge.role === "flow"));
+
+  const visualReferences = graph.nodes.find((node) => node.id === "visual-references");
+  assert.equal(visualReferences?.type, "input.visual-references");
+  assert.equal(visualReferences?.config.maxItems, 8);
+  assert.equal(visualReferences?.bindings.references.mode, "ask-on-run");
+  assert.deepEqual(
+    graph.edges
+      .filter((edge) => edge.source === "visual-references")
+      .map((edge) => `${edge.target}.${edge.targetPort}`)
+      .sort(),
+    [
+      "bind-references.context",
+      "generate-images.references",
+      "interpret-brief.context",
+      "validate-slide-plans.references",
+    ],
+  );
+});
+
+test("the product exposes one current AI contract", () => {
+  const aiDefinitions = automationNodeDefinitions().filter((definition) => definition.type === "ai.structured-task");
+  assert.deepEqual(aiDefinitions.map((definition) => definition.version), [2]);
+  const handlers = coreAutomationNodeHandlers();
+  assert.equal(typeof handlers["ai.structured-task@2"], "function");
+});
+
+test("the AI node validates only the selected output contract and keeps permanent instructions static", () => {
+  const graph = createDefaultTikTokWorkflowGraph();
+  const node = graph.nodes.find((entry) => entry.id === "review-series")!;
+  node.config.outputMode = "text";
+  node.config.responseSchema = null;
+  assert.equal(validateAutomationWorkflowGraph(graph).valid, true);
+
+  node.config.outputMode = "structured";
+  node.config.responseSchema = { type: "object", additionalProperties: false, properties: {}, required: [] };
+  let result = validateAutomationWorkflowGraph(graph);
+  assert.ok(result.issues.some((entry) => entry.code === "EMPTY_RESPONSE_SCHEMA"));
+
+  node.config.responseSchema = { type: "object", additionalProperties: false, properties: { passed: { type: "boolean" } }, required: ["passed"] };
+  node.config.systemPrompt = "Always follow {{ primary }}";
+  result = validateAutomationWorkflowGraph(graph);
+  assert.ok(result.issues.some((entry) => entry.code === "VARIABLE_IN_PERMANENT_INSTRUCTIONS"));
 });
 
 test("runtime panel fields come from ask-on-run bindings", () => {
@@ -28,8 +84,12 @@ test("runtime panel fields come from ask-on-run bindings", () => {
     "creative-settings.newLocation",
     "creative-settings.textStrategy",
     "creative-settings.creativeBrief",
+    "visual-references.references",
     "generate-images.modelId",
   ]);
+  const references = fields.find((field) => field.key === "visual-references.references");
+  assert.equal(references?.valueType, "visual-references");
+  assert.equal(references?.selectionLimit, 8);
 });
 
 test("runtime inputs are derived from node contracts rather than built-in node ids", () => {
@@ -71,6 +131,7 @@ test("HTTP workflows reject embedded secrets and private or reserved destination
   const graph = createDefaultTikTokWorkflowGraph();
   const node = graph.nodes.find((entry) => entry.id === "review-series")!;
   node.type = "integration.http-request";
+  node.version = 1;
   node.config = { url: "https://api.example.com", headers: { Authorization: "Bearer secret-token-that-must-not-be-stored" }, credentialSlot: "provider", credentialKind: "bearer" };
   const validation = validateAutomationWorkflowGraph(graph);
   assert.ok(validation.issues.some((entry) => entry.code === "SECRET_IN_WORKFLOW" && entry.nodeId === node.id));
@@ -86,16 +147,19 @@ test("deployment slot names cannot collide across secret kinds or workflow bindi
   const first = graph.nodes.find((entry) => entry.id === "review-series")!;
   const second = graph.nodes.find((entry) => entry.id === "repair-slides")!;
   first.type = "integration.http-request";
+  first.version = 1;
   first.config = { url: "https://api.example.com/a", method: "GET", headers: {}, body: {}, credentialSlot: "shared-slot", credentialKind: "bearer", failureMode: "stop" };
   first.bindings = {};
   second.type = "integration.http-request";
+  second.version = 1;
   second.config = { url: "https://api.example.com/b", method: "GET", headers: {}, body: {}, credentialSlot: "shared-slot", credentialKind: "basic", failureMode: "stop" };
   second.bindings = {};
   let result = validateAutomationWorkflowGraph(graph);
   assert.ok(result.issues.some((entry) => entry.code === "CREDENTIAL_SLOT_KIND_CONFLICT"));
 
   second.type = "logic.run-subworkflow";
-  second.config = { subworkflowSlot: "shared-slot", childInputKey: "workflow-input.value", childInputs: {}, failureMode: "stop" };
+  second.version = 1;
+  second.config = { subworkflowSlot: "shared-slot", childInputs: {}, failureMode: "stop" };
   result = validateAutomationWorkflowGraph(graph);
   assert.ok(result.issues.some((entry) => entry.code === "DEPLOYMENT_SLOT_TYPE_CONFLICT"));
 });
@@ -134,6 +198,15 @@ test("generic data cannot impersonate stronger domain ports", () => {
   assert.ok(unvalidatedPlans.issues.some((entry) => entry.code === "INCOMPATIBLE_PORTS"));
 });
 
+test("supporting data cannot replace a visible execution route", () => {
+  const graph = createDefaultTikTokWorkflowGraph();
+  const route = graph.edges.find((edge) => edge.target === "analyze-source" && edge.role === "flow");
+  assert.ok(route);
+  route.role = "data";
+  const result = validateAutomationWorkflowGraph(graph);
+  assert.ok(result.issues.some((entry) => entry.code === "MISSING_FLOW_ROUTE" && entry.nodeId === "analyze-source"));
+});
+
 test("connection guard rejects duplicate edges, occupied inputs and cycles before they enter the graph", () => {
   const graph = createDefaultTikTokWorkflowGraph();
   const duplicate = graph.edges.find((edge) => edge.target === "generate-images" && edge.targetPort === "plans")!;
@@ -144,6 +217,27 @@ test("connection guard rejects duplicate edges, occupied inputs and cycles befor
   assert.ok(validateAutomationConnection(graph, {
     source: "add-to-canvas", sourcePort: "result", target: "analyze-source", targetPort: "context",
   }).issues.some((entry) => entry.code === "UNBOUNDED_CYCLE"));
+});
+
+test("merge inputs are separate named sockets instead of one shared multi-input port", () => {
+  const graph = createDefaultTikTokWorkflowGraph();
+  const merge = graph.nodes.find((node) => node.id === "assemble-contract")!;
+  assert.ok(validateAutomationConnection(graph, {
+    source: "analyze-source", sourcePort: "result", target: merge.id, targetPort: "input-copy", role: "data",
+  }).issues.some((entry) => entry.code === "TOO_MANY_INPUTS"));
+
+  merge.config.inputs = [...(merge.config.inputs as Array<{ id: string; name: string }>), { id: "input-extra", name: "extra" }];
+  assert.equal(validateAutomationConnection(graph, {
+    source: "analyze-source", sourcePort: "result", target: merge.id, targetPort: "input-extra", role: "data",
+  }).valid, true);
+
+  merge.config.inputs = [{ id: "input-a", name: "same" }, { id: "input-b", name: "same" }];
+  const invalid = validateAutomationWorkflowGraph(graph);
+  assert.ok(invalid.issues.some((entry) => entry.code === "DUPLICATE_MERGE_INPUT" && entry.nodeId === merge.id));
+
+  merge.config.inputs = [{ id: "input-copy", name: "copy" }, { id: "", name: "" }];
+  const malformed = validateAutomationWorkflowGraph(graph);
+  assert.ok(malformed.issues.some((entry) => entry.code === "INVALID_MERGE_INPUT" && entry.nodeId === merge.id));
 });
 
 test("required settings cannot be made optional at run time", () => {
@@ -180,6 +274,18 @@ test("error branches and failure policy must agree", () => {
   assert.ok(result.issues.some((entry) => entry.code === "MISSING_ERROR_HANDLER"));
 });
 
+test("connection roles cannot disguise error routes as normal flow", () => {
+  const graph = createDefaultTikTokWorkflowGraph();
+  const errorAsFlow = validateAutomationConnection(graph, {
+    source: "review-series", sourcePort: "error", target: "repair-slides", targetPort: "context", role: "flow",
+  });
+  assert.ok(errorAsFlow.issues.some((entry) => entry.code === "ERROR_ROUTE_ROLE"));
+  const normalAsError = validateAutomationConnection(graph, {
+    source: "review-series", sourcePort: "result", target: "repair-slides", targetPort: "context", role: "error",
+  });
+  assert.ok(normalAsError.issues.some((entry) => entry.code === "ERROR_ROUTE_ROLE"));
+});
+
 test("AI model and response schema contracts fail closed before publishing", () => {
   const graph = createDefaultTikTokWorkflowGraph();
   const node = graph.nodes.find((entry) => entry.id === "review-series")!;
@@ -193,7 +299,6 @@ test("AI model and response schema contracts fail closed before publishing", () 
   node.config.modelId = "google/gemini-3.7-flash";
   node.bindings.modelId = { mode: "fixed", value: "google/gemini-3.7-flash", required: true };
   node.config.responseSchema = { type: "object", properties: { passed: { type: "boolean" } }, required: ["passed"] };
-  node.config.strictSchema = true;
   result = validateAutomationWorkflowGraph(graph);
   assert.ok(result.issues.some((entry) => entry.code === "INVALID_RESPONSE_SCHEMA" && entry.message.includes("additionalProperties")));
 });

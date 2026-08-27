@@ -137,7 +137,7 @@ export async function requestOpenRouter(body: Record<string, unknown>) {
   return parseOpenRouterJson(text);
 }
 
-async function requestOpenRouterText(body: Record<string, unknown>) {
+export async function requestOpenRouterText(body: Record<string, unknown>) {
   const requestModel = selectedOpenRouterModel(body);
   const response = await fetch(endpoint, {
     method: "POST",

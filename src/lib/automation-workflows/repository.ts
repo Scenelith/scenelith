@@ -1,7 +1,7 @@
 import { randomUUID } from "node:crypto";
 import { db, userCanAccessProject, userCanAccessWorkspace, workspaceIdForProject } from "@/lib/postgres-db";
-import { createDefaultTikTokWorkflowGraph, DEFAULT_TIKTOK_WORKFLOW_KEY, DEFAULT_TIKTOK_WORKFLOW_REVISION } from "./default-tiktok";
 import { createAutomationPackage, parseAutomationPackage } from "./portable";
+import { AUTOMATION_SYSTEM_WORKFLOW_TEMPLATES, DEFAULT_TIKTOK_AUTOMATION_TEMPLATE, type AutomationSystemWorkflowTemplate } from "./system-templates";
 import { automationWorkflowGraphSchema, DEFAULT_AUTOMATION_WORKFLOW_SETTINGS, type AutomationWorkflowDetail, type AutomationWorkflowGraph, type AutomationWorkflowRecord, type AutomationWorkflowVersion, type AutomationWorkflowVersionSummary } from "./types";
 import { validateAutomationRunInputs, validateAutomationWorkflowGraph } from "./validation";
 import { canPerformAutomationAction, requireAutomationPermission } from "./permissions";
@@ -90,23 +90,37 @@ async function workflowRowById(id: string) {
   return await db.prepare("SELECT * FROM automation_workflows WHERE id = ?").get(id) as WorkflowRow | undefined;
 }
 
-export async function ensureDefaultAutomationWorkflow(workspaceId: string, userId: string) {
+async function ensureSystemAutomationWorkflow(
+  workspaceId: string,
+  userId: string,
+  template: AutomationSystemWorkflowTemplate,
+) {
   return await db.transaction(async () => {
-    await db.prepare("SELECT pg_advisory_xact_lock(hashtextextended(?, 0))").get(`automation-system:${workspaceId}:${DEFAULT_TIKTOK_WORKFLOW_KEY}`);
+    await db.prepare("SELECT pg_advisory_xact_lock(hashtextextended(?, 0))").get(`automation-system:${workspaceId}:${template.key}`);
     const current = await db.prepare("SELECT * FROM automation_workflows WHERE workspace_id = ? AND system_key = ?")
-      .get(workspaceId, DEFAULT_TIKTOK_WORKFLOW_KEY) as (WorkflowRow & { system_revision: number | null }) | undefined;
-    if (current && Number(current.system_revision || 0) >= DEFAULT_TIKTOK_WORKFLOW_REVISION) return workflowRecord(current);
+      .get(workspaceId, template.key) as (WorkflowRow & { system_revision: number | null }) | undefined;
+    const currentRevision = Number(current?.system_revision || 0);
+    if (current && currentRevision > template.revision) return workflowRecord(current);
+    if (current && currentRevision === template.revision) {
+      if (current.name !== template.name || current.description !== template.description || current.status !== "system") {
+        const now = new Date().toISOString();
+        await db.prepare("UPDATE automation_workflows SET name = ?, description = ?, status = 'system', updated_at = ? WHERE id = ?")
+          .run(template.name, template.description, now, current.id);
+        return workflowRecord((await workflowRowById(current.id))!);
+      }
+      return workflowRecord(current);
+    }
 
     const now = new Date().toISOString();
-    const graph = createDefaultTikTokWorkflowGraph();
+    const graph = template.createGraph();
     const validation = validateAutomationWorkflowGraph(graph);
-    if (!validation.valid) throw new Error(`Default workflow is invalid: ${validation.issues.map((entry) => entry.message).join("; ")}`);
+    if (!validation.valid) throw new Error(`System workflow ${template.key} is invalid: ${validation.issues.map((entry) => entry.message).join("; ")}`);
     const workflowId = current?.id || randomUUID();
     if (!current) {
       await db.prepare(`INSERT INTO automation_workflows
         (id, workspace_id, project_id, name, description, status, system_key, system_revision, created_by, created_at, updated_at)
         VALUES (?, ?, NULL, ?, ?, 'system', ?, ?, ?, ?, ?)`)
-        .run(workflowId, workspaceId, "Recreate TikTok slideshow", "Analyze a source slideshow, adapt it and generate an editable canvas branch.", DEFAULT_TIKTOK_WORKFLOW_KEY, DEFAULT_TIKTOK_WORKFLOW_REVISION, userId, now, now);
+        .run(workflowId, workspaceId, template.name, template.description, template.key, template.revision, userId, now, now);
     }
     const latest = await db.prepare("SELECT COALESCE(MAX(version), 0) AS version FROM automation_workflow_versions WHERE workflow_id = ?")
       .get(workflowId) as { version: number };
@@ -122,9 +136,21 @@ export async function ensureDefaultAutomationWorkflow(workspaceId: string, userI
     await db.prepare(`UPDATE automation_workflows SET
       name = ?, description = ?, status = 'system', system_revision = ?, published_version_id = ?, draft_version_id = NULL, updated_at = ?
       WHERE id = ?`)
-      .run("Recreate TikTok slideshow", "Analyze a source slideshow, adapt it and generate an editable canvas branch.", DEFAULT_TIKTOK_WORKFLOW_REVISION, versionId, now, workflowId);
+      .run(template.name, template.description, template.revision, versionId, now, workflowId);
     return workflowRecord((await workflowRowById(workflowId))!);
   })();
+}
+
+export async function ensureSystemAutomationWorkflows(workspaceId: string, userId: string) {
+  const workflows: AutomationWorkflowRecord[] = [];
+  for (const template of AUTOMATION_SYSTEM_WORKFLOW_TEMPLATES) {
+    workflows.push(await ensureSystemAutomationWorkflow(workspaceId, userId, template));
+  }
+  return workflows;
+}
+
+export async function ensureDefaultAutomationWorkflow(workspaceId: string, userId: string) {
+  return await ensureSystemAutomationWorkflow(workspaceId, userId, DEFAULT_TIKTOK_AUTOMATION_TEMPLATE);
 }
 
 export async function listAutomationWorkflows(userId: string, projectId: string) {
@@ -132,7 +158,7 @@ export async function listAutomationWorkflows(userId: string, projectId: string)
   const workspaceId = await workspaceIdForProject(projectId);
   if (!workspaceId) return null;
   if (await canPerformAutomationAction(userId, workspaceId, "automation.edit")) {
-    await ensureDefaultAutomationWorkflow(workspaceId, userId);
+    await ensureSystemAutomationWorkflows(workspaceId, userId);
   }
   const rows = await db.prepare(`SELECT * FROM automation_workflows
     WHERE workspace_id = ? AND status <> 'archived' AND (project_id IS NULL OR project_id = ?)

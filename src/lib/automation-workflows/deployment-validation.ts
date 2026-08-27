@@ -103,15 +103,17 @@ export async function validateAutomationDeploymentBindings(input: {
         const setting = (fieldId: string) => node.bindings[fieldId]?.mode === "fixed" && node.bindings[fieldId].value !== undefined
           ? node.bindings[fieldId].value
           : node.config[fieldId] ?? definition?.fields.find((field) => field.id === fieldId)?.defaultValue;
-        const dynamicKey = String(setting("childInputKey") || "").trim();
         const fixedInputs = setting("childInputs");
         const runtimeInputs = fixedInputs && typeof fixedInputs === "object" && !Array.isArray(fixedInputs)
           ? structuredClone(fixedInputs as Record<string, unknown>) : {};
-        const dynamicField = childFields.get(dynamicKey);
-        runtimeInputs[dynamicKey] = dynamicField?.valueType === "boolean" ? false
-          : dynamicField?.valueType === "number" ? 0
-            : dynamicField?.valueType === "json" ? {}
-              : dynamicField?.options?.[0]?.value || "deployment-preflight";
+        for (const childNode of childGraph.nodes.filter((candidate) => candidate.type === "input.workflow-data")) {
+          const dynamicField = childFields.get(`${childNode.id}.value`);
+          if (!dynamicField) continue;
+          runtimeInputs[dynamicField.key] = dynamicField.valueType === "boolean" ? false
+            : dynamicField.valueType === "number" ? 0
+              : dynamicField.valueType === "json" ? {}
+                : dynamicField.options?.[0]?.value || "deployment-preflight";
+        }
         const inputValidation = validateAutomationRunInputs(childGraph, runtimeInputs);
         for (const childIssue of inputValidation.issues) {
           issues.push({

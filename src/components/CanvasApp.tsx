@@ -58,9 +58,11 @@ import {
   Workflow,
   X,
 } from "lucide-react";
-import { assetDirectUrl, assetDownloadUrl, assetThumbnailUrl, FrameNodeCard, GeneratorNodeContext, OPEN_NODE_CREATOR_EVENT, OPEN_VIDEO_EDITOR_EVENT, generatorModelCreditDescription, generatorRatiosFor, generatorResolutionsFor, generatorSettingsForModel, type GeneratorModelOption } from "./FrameNode";
+import { assetDirectUrl, assetDownloadUrl, assetThumbnailUrl, FrameNodeCard, GeneratorNodeContext, OPEN_NODE_CREATOR_EVENT, OPEN_VIDEO_EDITOR_EVENT, generatorModelCreditDescription, generatorRatiosFor, generatorResolutionsFor, generatorSettingsForModel, type GeneratorModelOption, type GeneratorNodeActions } from "./FrameNode";
 import { InspectorSelect } from "./InspectorSelect";
 import { TikTokAutomationPanel, type TikTokAutomationSlideState, type TikTokAutomationStatus } from "./TikTokAutomationPanel";
+import type { AutomationWorkflowExecutionState } from "./automation/AutomationWorkflowEditorOverlay";
+import type { AutomationReferenceCandidate } from "./automation/AutomationReferencePicker";
 import { MediaViewer, type ImageEditOptions } from "./MediaViewer";
 import { VideoEditorViewer, type VideoEditorReference } from "./VideoEditorViewer";
 import type { ImageEditPersona, ImageEditReference } from "./ImageEditReferencePicker";
@@ -359,11 +361,41 @@ function projectStats(project: ProjectRecord) {
   };
 }
 
-function projectSaveSignature(project: ProjectRecord, graphNodes: FrameNode[], graphEdges: FrameEdge[], viewport = project.graph.viewport) {
-  return JSON.stringify({ name: project.name, sourceUrl: project.sourceUrl, nodes: graphNodes, edges: graphEdges, viewport });
+function projectSaveSignature(project: ProjectRecord, graphNodes: FrameNode[], graphEdges: FrameEdge[]) {
+  return JSON.stringify({ name: project.name, sourceUrl: project.sourceUrl, nodes: graphNodes, edges: graphEdges });
+}
+
+function graphNodePositionsChanged(before: FrameNode[], after: FrameNode[]) {
+  if (before.length !== after.length) return true;
+  const afterById = new Map(after.map((node) => [node.id, node.position]));
+  return before.some((node) => {
+    const position = afterById.get(node.id);
+    return !position || position.x !== node.position.x || position.y !== node.position.y;
+  });
 }
 
 const projectSessionCachePrefix = "scenelith:canvas-graph:v1:";
+const canvasViewportSessionPrefix = "scenelith:canvas-viewport:v1:";
+
+function readCanvasViewportSession(projectId: string, fallback?: ProjectRecord["graph"]["viewport"]) {
+  if (typeof window === "undefined") return fallback || { x: 0, y: 0, zoom: 1 };
+  try {
+    const raw = window.sessionStorage.getItem(`${canvasViewportSessionPrefix}${projectId}`);
+    if (!raw) return fallback || { x: 0, y: 0, zoom: 1 };
+    const viewport = JSON.parse(raw) as { x?: unknown; y?: unknown; zoom?: unknown };
+    if (![viewport.x, viewport.y, viewport.zoom].every((value) => typeof value === "number" && Number.isFinite(value))) {
+      return fallback || { x: 0, y: 0, zoom: 1 };
+    }
+    return { x: Number(viewport.x), y: Number(viewport.y), zoom: Number(viewport.zoom) };
+  } catch {
+    return fallback || { x: 0, y: 0, zoom: 1 };
+  }
+}
+
+function writeCanvasViewportSession(projectId: string, viewport: { x: number; y: number; zoom: number }) {
+  if (typeof window === "undefined") return;
+  try { window.sessionStorage.setItem(`${canvasViewportSessionPrefix}${projectId}`, JSON.stringify(viewport)); } catch {}
+}
 
 function readProjectSessionCache(projectId: string, expectedRevision?: number) {
   if (typeof window === "undefined") return null;
@@ -493,9 +525,11 @@ function CanvasWorkspace({ initialProject, projects: initialProjects, initialWor
   const [automationWorkflowId, setAutomationWorkflowId] = useState("");
   const [automationWorkflowRefreshKey, setAutomationWorkflowRefreshKey] = useState(0);
   const [automationEditorWorkflowId, setAutomationEditorWorkflowId] = useState<string | null>(null);
+  const [automationRuntimePreview, setAutomationRuntimePreview] = useState<{ workflowId: string; values: Record<string, unknown> } | null>(null);
   const [automationSourceId, setAutomationSourceId] = useState("");
   const [automationStatus, setAutomationStatus] = useState<TikTokAutomationStatus>("idle");
   const [automationRunId, setAutomationRunId] = useState<string | null>(null);
+  const [automationExecution, setAutomationExecution] = useState<AutomationWorkflowExecutionState | null>(null);
   const [automationStageLabel, setAutomationStageLabel] = useState("Ready to analyze");
   const [automationPlanningProgress, setAutomationPlanningProgress] = useState(0);
   const [automationSlideStates, setAutomationSlideStates] = useState<TikTokAutomationSlideState[]>([]);
@@ -527,11 +561,11 @@ function CanvasWorkspace({ initialProject, projects: initialProjects, initialWor
   const models = initialModels;
   const [nodeCreator, setNodeCreator] = useState<NodeCreatorState>(null);
   const [canvasMode, setCanvasMode] = useState<"select" | "pan">("select");
+  const [canvasSpacePressed, setCanvasSpacePressed] = useState(false);
   const [canvasAddMenuOpen, setCanvasAddMenuOpen] = useState(false);
   const [canvasMediaDragActive, setCanvasMediaDragActive] = useState(false);
   const [accountView, setAccountView] = useState<string | null>(null);
   const [historyControls, setHistoryControls] = useState({ canUndo: false, canRedo: false });
-  const initialHydration = useRef(true);
   const lastSavedRole = useRef(initialWorkspace.rolePrompt);
   const nodesRef = useRef(nodes);
   const edgesRef = useRef(edges);
@@ -552,17 +586,18 @@ function CanvasWorkspace({ initialProject, projects: initialProjects, initialWor
   const projectCacheRef = useRef(new Map<string, ProjectRecord>([[initialProject.id, initialProject]]));
   const dirtyProjectIdsRef = useRef(new Set<string>());
   const projectGraphRevisionRef = useRef<Record<string, number>>({ [initialProject.id]: 0 });
-  const viewportRef = useRef(initialProject.graph.viewport || { x: 0, y: 0, zoom: 1 });
-  const viewportSaveTimerRef = useRef<number | null>(null);
-  const dirtyTrackingProjectRef = useRef(initialProject.id);
-  const dirtyTrackingReadyRef = useRef(false);
+  const activeProjectIdRef = useRef(initialProject.id);
+  activeProjectIdRef.current = project.id;
+  const [graphCommitSignal, setGraphCommitSignal] = useState({ projectId: initialProject.id, revision: 0 });
+  const [remoteGraphRevision, setRemoteGraphRevision] = useState(0);
+  const viewportRef = useRef(readCanvasViewportSession(initialProject.id, initialProject.graph.viewport));
+  const nodeDragBaselineRef = useRef<FrameNode[] | null>(null);
   const savedProjectSignatures = useRef<Record<string, string>>({});
   if (!savedProjectSignatures.current[initialProject.id]) {
     savedProjectSignatures.current[initialProject.id] = projectSaveSignature(
       initialProject,
       initialCanvasGraph.nodes,
       initialCanvasGraph.edges,
-      initialProject.graph.viewport,
     );
   }
   const automationCameraRequestRef = useRef(0);
@@ -581,14 +616,16 @@ function CanvasWorkspace({ initialProject, projects: initialProjects, initialWor
       selectedIdRef.current = null;
       setSelectedIdState(null);
     }
-    initialHydration.current = true;
-    dirtyTrackingProjectRef.current = "";
     nodesRef.current = viewNodes;
     edgesRef.current = normalizedEdges;
     localNodesStateRef.current = viewNodes;
     localEdgesStateRef.current = normalizedEdges;
     setNodesState(viewNodes);
     setEdgesState(normalizedEdges);
+    // Remote hydration changes semantic node data and edge routing, but it is
+    // authoritative input—not a local edit. Invalidate derived topology
+    // without dirtying or saving the project back to the collaboration layer.
+    setRemoteGraphRevision((revision) => revision + 1);
     setProject((current) => current.id === project.id ? { ...current, graph: { ...graph, nodes: stableNodes, edges: normalizedEdges } } : current);
     projectCacheRef.current.set(project.id, {
       ...(projectCacheRef.current.get(project.id) || project),
@@ -603,26 +640,53 @@ function CanvasWorkspace({ initialProject, projects: initialProjects, initialWor
   const { status: collaborationStatus, ready: collaborationReady, collaborators, peerCount, mutate: mutateCollaborativeGraph, flush: flushCollaborativeGraph } = useCanvasCollaboration({ projectId: project.id, user, onRemoteGraph: applyCollaborativeGraph });
   const mutateCollaborativeGraphRef = useRef(mutateCollaborativeGraph);
   mutateCollaborativeGraphRef.current = mutateCollaborativeGraph;
+  const markGraphCommitted = useCallback(() => {
+    const projectId = activeProjectIdRef.current;
+    dirtyProjectIdsRef.current.add(projectId);
+    const revision = (projectGraphRevisionRef.current[projectId] || 0) + 1;
+    projectGraphRevisionRef.current[projectId] = revision;
+    setGraphCommitSignal({ projectId, revision });
+  }, []);
+  const setNodesLocal = useCallback<Dispatch<SetStateAction<FrameNode[]>>>((action) => {
+    const previous = localNodesStateRef.current;
+    const next = typeof action === "function" ? action(previous) : action;
+    if (next === previous) return;
+    localNodesStateRef.current = next;
+    nodesRef.current = next;
+    setNodesState(next);
+  }, []);
   const setNodes = useCallback<Dispatch<SetStateAction<FrameNode[]>>>((action) => {
     const previous = localNodesStateRef.current;
     const next = typeof action === "function" ? action(previous) : action;
+    if (next === previous) return;
     localNodesStateRef.current = next;
     nodesRef.current = next;
     mutateCollaborativeGraphRef.current(
       { nodes: stableGraphNodes(previous), edges: stableGraphEdges(localEdgesStateRef.current) },
       { nodes: stableGraphNodes(next), edges: stableGraphEdges(localEdgesStateRef.current) },
     );
+    markGraphCommitted();
     setNodesState(next);
-  }, []);
+  }, [markGraphCommitted]);
   const setEdges = useCallback<Dispatch<SetStateAction<FrameEdge[]>>>((action) => {
     const previous = localEdgesStateRef.current;
     const next = typeof action === "function" ? action(previous) : action;
+    if (next === previous) return;
     localEdgesStateRef.current = next;
     edgesRef.current = next;
     mutateCollaborativeGraphRef.current(
       { nodes: stableGraphNodes(localNodesStateRef.current), edges: stableGraphEdges(previous) },
       { nodes: stableGraphNodes(localNodesStateRef.current), edges: stableGraphEdges(next) },
     );
+    markGraphCommitted();
+    setEdgesState(next);
+  }, [markGraphCommitted]);
+  const setEdgesLocal = useCallback<Dispatch<SetStateAction<FrameEdge[]>>>((action) => {
+    const previous = localEdgesStateRef.current;
+    const next = typeof action === "function" ? action(previous) : action;
+    if (next === previous) return;
+    localEdgesStateRef.current = next;
+    edgesRef.current = next;
     setEdgesState(next);
   }, []);
   const commitGraph = useCallback((nextNodes: FrameNode[], nextEdges: FrameEdge[]) => {
@@ -636,9 +700,10 @@ function CanvasWorkspace({ initialProject, projects: initialProjects, initialWor
       { nodes: stableGraphNodes(previousNodes), edges: stableGraphEdges(previousEdges) },
       { nodes: stableGraphNodes(nextNodes), edges: stableGraphEdges(nextEdges) },
     );
+    markGraphCommitted();
     setNodesState(nextNodes);
     setEdgesState(nextEdges);
-  }, []);
+  }, [markGraphCommitted]);
   const loadProjectRecord = useCallback((projectId: string, expectedRevision?: number) => {
     const cached = projectCacheRef.current.get(projectId);
     if (cached && (!expectedRevision || cached.revision === expectedRevision || dirtyProjectIdsRef.current.has(projectId))) return Promise.resolve(cached);
@@ -658,6 +723,22 @@ function CanvasWorkspace({ initialProject, projects: initialProjects, initialWor
       .catch(() => null);
   }, []);
   useEffect(() => { writeProjectSessionCache(initialProject); }, [initialProject]);
+  useEffect(() => {
+    const editableTarget = (target: EventTarget | null) => target instanceof HTMLElement && Boolean(target.closest("input, textarea, select, [contenteditable='true']"));
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.code === "Space" && !editableTarget(event.target)) setCanvasSpacePressed(true);
+    };
+    const onKeyUp = (event: KeyboardEvent) => { if (event.code === "Space") setCanvasSpacePressed(false); };
+    const onBlur = () => setCanvasSpacePressed(false);
+    window.addEventListener("keydown", onKeyDown);
+    window.addEventListener("keyup", onKeyUp);
+    window.addEventListener("blur", onBlur);
+    return () => {
+      window.removeEventListener("keydown", onKeyDown);
+      window.removeEventListener("keyup", onKeyUp);
+      window.removeEventListener("blur", onBlur);
+    };
+  }, []);
   const activeGenerationNodeIds = useMemo(() => Array.from(new Set([...generatingNodeIds, ...backgroundGenerationNodeIds])), [backgroundGenerationNodeIds, generatingNodeIds]);
   const openProductPanel = useCallback((kind: ProductPanelKind, id?: string) => {
     if (kind === "admin" && !user.isAdmin) return;
@@ -675,9 +756,18 @@ function CanvasWorkspace({ initialProject, projects: initialProjects, initialWor
     const body = (await response.json()) as { usage?: UsageSummary };
     if (sequence === usageRefreshSequence.current && body.usage) setLiveCreditUsage(body.usage);
   }, [workspace.id]);
-  const visibleEdges = useMemo(() => {
-    const nodeById = new Map(nodes.map((node) => [node.id, node]));
-    const disconnectableEdges = edges
+  const graphTopologyVersion = `${graphCommitSignal.projectId}:${graphCommitSignal.revision}:${remoteGraphRevision}`;
+  // Node coordinates change for every pointer frame while a card is dragged.
+  // Edge visibility, port routing and automation sources do not. Keep those
+  // topology calculations behind the semantic graph revision so dragging one
+  // card never rebuilds every edge (or scans the whole graph) on each frame.
+  const disconnectableEdges = useMemo(() => {
+    // This read is the explicit invalidation boundary for semantic node data.
+    // Node coordinates use local state and intentionally do not change it.
+    void graphTopologyVersion;
+    const currentNodes = localNodesStateRef.current;
+    const nodeById = new Map(currentNodes.map((node) => [node.id, node]));
+    return edges
       .filter((edge) => {
         const target = nodeById.get(edge.target);
         if (target?.data.kind !== "videoMaster") return true;
@@ -703,24 +793,29 @@ function CanvasWorkspace({ initialProject, projects: initialProjects, initialWor
           } : {}),
         };
       });
+  }, [edges, graphTopologyVersion]);
+  const visibleEdges = useMemo(() => {
     if (!selectedId) return disconnectableEdges;
 
     const selectedPathIds = new Set<string>();
     const visitedNodeIds = new Set<string>();
     const pendingNodeIds = [selectedId];
+    const incomingByTarget = new Map<string, FrameEdge[]>();
 
     // Keep the whole incoming lineage visible, and also highlight the selected
     // node's immediate outputs so the selection reads in both directions.
     disconnectableEdges.forEach((edge) => {
       if (edge.source === selectedId) selectedPathIds.add(edge.id);
+      const incoming = incomingByTarget.get(edge.target);
+      if (incoming) incoming.push(edge);
+      else incomingByTarget.set(edge.target, [edge]);
     });
 
     while (pendingNodeIds.length) {
       const targetId = pendingNodeIds.shift()!;
       if (visitedNodeIds.has(targetId)) continue;
       visitedNodeIds.add(targetId);
-      disconnectableEdges.forEach((edge) => {
-        if (edge.target !== targetId) return;
+      (incomingByTarget.get(targetId) || []).forEach((edge) => {
         selectedPathIds.add(edge.id);
         pendingNodeIds.push(edge.source);
       });
@@ -732,10 +827,13 @@ function CanvasWorkspace({ initialProject, projects: initialProjects, initialWor
       animated: true,
       zIndex: 8,
     } : edge);
-  }, [edges, nodes, selectedId]);
+  }, [disconnectableEdges, selectedId]);
   const tiktokAutomationSources = useMemo<TikTokAutomationSourceOption[]>(
-    () => findTikTokSlideshowSources(nodes, edges),
-    [nodes, edges],
+    () => {
+      void graphTopologyVersion;
+      return findTikTokSlideshowSources(localNodesStateRef.current, localEdgesStateRef.current);
+    },
+    [graphTopologyVersion],
   );
   const selectedAutomationSourceId = tiktokAutomationSources.some((source) => source.id === automationSourceId)
     ? automationSourceId
@@ -774,11 +872,11 @@ function CanvasWorkspace({ initialProject, projects: initialProjects, initialWor
     const selectedSource = tiktokAutomationSources.find((source) => source.id === selectedAutomationSourceId);
     if (!selectedSource) return focused;
     const sourceAssetIds = new Set(selectedSource.assetIds);
-    nodes.forEach((node) => {
+    localNodesStateRef.current.forEach((node) => {
       if (node.data.kind === "scene" && node.data.assetId && sourceAssetIds.has(String(node.data.assetId))) focused.add(node.id);
     });
     return focused;
-  }, [nodes, selectedAutomationSourceId, tiktokAutomationOpen, tiktokAutomationSources]);
+  }, [selectedAutomationSourceId, tiktokAutomationOpen, tiktokAutomationSources]);
   const completedAutomationOutputNodeIds = useMemo(() => new Set(
     automationStatus === "complete"
       ? automationSlideStates.filter((slide) => slide.status === "ready" && slide.nodeId).map((slide) => slide.nodeId!)
@@ -790,26 +888,32 @@ function CanvasWorkspace({ initialProject, projects: initialProjects, initialWor
     completedAutomationOutputNodeIds.forEach((nodeId) => focused.add(nodeId));
     return focused;
   }, [automationSourceSlideNodeIds, completedAutomationOutputNodeIds, selectedAutomationSourceId, tiktokAutomationOpen]);
-  const canvasNodes = useMemo(() => nodes.map((node) => {
-    const focused = automationFocusNodeIds.has(node.id);
-    const className = [node.className, focused ? "is-automation-focus" : "", focused && node.id === selectedAutomationSourceId ? "is-automation-source-focus" : ""].filter(Boolean).join(" ");
-    return className === (node.className || "") ? node : { ...node, className };
-  }), [automationFocusNodeIds, nodes, selectedAutomationSourceId]);
-  const canvasEdges = useMemo(() => visibleEdges.map((edge) => {
-    const isSourceSlideEdge = edge.source === selectedAutomationSourceId
-      && automationSourceSlideNodeIds.has(edge.target);
-    const isCompletedAutomationOutputEdge = automationSourceSlideNodeIds.has(edge.source)
-      && completedAutomationOutputNodeIds.has(edge.target)
-      && edge.data?.automationKind === "tiktok-slideshow"
-      && edge.data.automationSourceNodeId === selectedAutomationSourceId;
-    const focused = tiktokAutomationOpen && (isSourceSlideEdge || isCompletedAutomationOutputEdge);
-    return focused ? {
-      ...edge,
-      className: [edge.className, "is-automation-focus-edge"].filter(Boolean).join(" "),
-      animated: true,
-      zIndex: Math.max(Number(edge.zIndex || 0), 7),
-    } : edge;
-  }), [automationSourceSlideNodeIds, completedAutomationOutputNodeIds, selectedAutomationSourceId, tiktokAutomationOpen, visibleEdges]);
+  const canvasNodes = useMemo(() => {
+    if (!automationFocusNodeIds.size) return nodes;
+    return nodes.map((node) => {
+      const focused = automationFocusNodeIds.has(node.id);
+      const className = [node.className, focused ? "is-automation-focus" : "", focused && node.id === selectedAutomationSourceId ? "is-automation-source-focus" : ""].filter(Boolean).join(" ");
+      return className === (node.className || "") ? node : { ...node, className };
+    });
+  }, [automationFocusNodeIds, nodes, selectedAutomationSourceId]);
+  const canvasEdges = useMemo(() => {
+    if (!tiktokAutomationOpen) return visibleEdges;
+    return visibleEdges.map((edge) => {
+      const isSourceSlideEdge = edge.source === selectedAutomationSourceId
+        && automationSourceSlideNodeIds.has(edge.target);
+      const isCompletedAutomationOutputEdge = automationSourceSlideNodeIds.has(edge.source)
+        && completedAutomationOutputNodeIds.has(edge.target)
+        && edge.data?.automationKind === "tiktok-slideshow"
+        && edge.data.automationSourceNodeId === selectedAutomationSourceId;
+      const focused = isSourceSlideEdge || isCompletedAutomationOutputEdge;
+      return focused ? {
+        ...edge,
+        className: [edge.className, "is-automation-focus-edge"].filter(Boolean).join(" "),
+        animated: true,
+        zIndex: Math.max(Number(edge.zIndex || 0), 7),
+      } : edge;
+    });
+  }, [automationSourceSlideNodeIds, completedAutomationOutputNodeIds, selectedAutomationSourceId, tiktokAutomationOpen, visibleEdges]);
 
   const snapshotGraph = useCallback((): GraphSnapshot => structuredClone({ nodes: nodesRef.current, edges: edgesRef.current }), []);
   const refreshHistoryControls = useCallback(() => setHistoryControls({
@@ -859,20 +963,6 @@ function CanvasWorkspace({ initialProject, projects: initialProjects, initialWor
 
   useEffect(() => { nodesRef.current = nodes; }, [nodes]);
   useEffect(() => { edgesRef.current = edges; }, [edges]);
-  useEffect(() => {
-    if (!dirtyTrackingReadyRef.current) {
-      dirtyTrackingReadyRef.current = true;
-      return;
-    }
-    if (dirtyTrackingProjectRef.current !== project.id) {
-      dirtyTrackingProjectRef.current = project.id;
-      dirtyProjectIdsRef.current.delete(project.id);
-      projectGraphRevisionRef.current[project.id] ||= 0;
-      return;
-    }
-    dirtyProjectIdsRef.current.add(project.id);
-    projectGraphRevisionRef.current[project.id] = (projectGraphRevisionRef.current[project.id] || 0) + 1;
-  }, [edges, nodes, project.id]);
   useEffect(() => {
     const url = new URL(window.location.href);
     if (url.searchParams.get("project") === project.id && !url.searchParams.has("workspace")) return;
@@ -1183,7 +1273,7 @@ function CanvasWorkspace({ initialProject, projects: initialProjects, initialWor
     const graphRevision = projectGraphRevisionRef.current[project.id] || 0;
     const persistedNodes = stableGraphNodes(nodesRef.current);
     const persistedEdges = stableGraphEdges(normalizeEdgePorts(edgesRef.current, persistedNodes));
-    const signature = projectSaveSignature(project, persistedNodes, persistedEdges, viewportRef.current);
+    const signature = projectSaveSignature(project, persistedNodes, persistedEdges);
     if (!force && savedProjectSignatures.current[project.id] === signature) return true;
     savedProjectSignatures.current[project.id] = signature;
     setSaving("saving");
@@ -1205,13 +1295,10 @@ function CanvasWorkspace({ initialProject, projects: initialProjects, initialWor
   }, [collaborationReady, collaborationStatus, flushCollaborativeGraph, project]);
 
   useEffect(() => {
-    if (initialHydration.current) {
-      initialHydration.current = false;
-      return;
-    }
+    if (graphCommitSignal.projectId !== project.id || graphCommitSignal.revision <= 0) return;
     const timer = window.setTimeout(() => void save(true), 180);
     return () => window.clearTimeout(timer);
-  }, [nodes, edges, save]);
+  }, [graphCommitSignal, project.id, save]);
 
   useEffect(() => {
     if (!notice) return;
@@ -1224,20 +1311,50 @@ function CanvasWorkspace({ initialProject, projects: initialProjects, initialWor
       pushHistory();
       skipEdgeHistoryUntilRef.current = Date.now() + 180;
     }
-    setNodes((current) => {
-      const next = applyNodeChanges(changes, current);
-      nodesRef.current = next;
-      return next;
-    });
+    const containsPersistentChange = changes.some((change) => change.type === "add" || change.type === "remove" || change.type === "replace");
+    const containsFinishedPosition = changes.some((change) => change.type === "position" && change.dragging === false);
+    const previousNodes = localNodesStateRef.current;
+    const nextNodes = applyNodeChanges(changes, previousNodes);
+    setNodesLocal(nextNodes);
+    if (containsPersistentChange) {
+      mutateCollaborativeGraphRef.current(
+        { nodes: stableGraphNodes(previousNodes), edges: stableGraphEdges(localEdgesStateRef.current) },
+        { nodes: stableGraphNodes(nextNodes), edges: stableGraphEdges(localEdgesStateRef.current) },
+      );
+      markGraphCommitted();
+    }
+    if (containsFinishedPosition && nodeDragBaselineRef.current) {
+      const previous = nodeDragBaselineRef.current;
+      nodeDragBaselineRef.current = null;
+      if (!graphNodePositionsChanged(previous, localNodesStateRef.current)) return;
+      mutateCollaborativeGraphRef.current(
+        { nodes: stableGraphNodes(previous), edges: stableGraphEdges(localEdgesStateRef.current) },
+        { nodes: stableGraphNodes(localNodesStateRef.current), edges: stableGraphEdges(localEdgesStateRef.current) },
+      );
+      markGraphCommitted();
+    }
+  }, [markGraphCommitted, pushHistory, setNodesLocal]);
+  const startNodeDrag = useCallback(() => {
+    pushHistory();
+    nodeDragBaselineRef.current = localNodesStateRef.current;
   }, [pushHistory]);
+  const finishNodeDrag = useCallback(() => {
+    const previous = nodeDragBaselineRef.current;
+    if (!previous) return;
+    nodeDragBaselineRef.current = null;
+    if (!graphNodePositionsChanged(previous, localNodesStateRef.current)) return;
+    mutateCollaborativeGraphRef.current(
+      { nodes: stableGraphNodes(previous), edges: stableGraphEdges(localEdgesStateRef.current) },
+      { nodes: stableGraphNodes(localNodesStateRef.current), edges: stableGraphEdges(localEdgesStateRef.current) },
+    );
+    markGraphCommitted();
+  }, [markGraphCommitted]);
   const onEdgesChange = useCallback((changes: EdgeChange[]) => {
+    const containsPersistentChange = changes.some((change) => change.type === "add" || change.type === "remove" || change.type === "replace");
     if (changes.some((change) => change.type === "remove") && Date.now() > skipEdgeHistoryUntilRef.current) pushHistory();
-    setEdges((current) => {
-      const next = applyEdgeChanges(changes, current);
-      edgesRef.current = next;
-      return next;
-    });
-  }, [pushHistory]);
+    if (containsPersistentChange) setEdges((current) => applyEdgeChanges(changes, current));
+    else setEdgesLocal((current) => applyEdgeChanges(changes, current));
+  }, [pushHistory, setEdges, setEdgesLocal]);
   const onConnect = useCallback((connection: Connection) => {
     const sourceNode = nodesRef.current.find((node) => node.id === connection.source);
     const segmentId = connection.sourceHandle?.startsWith("segment-output:") ? connection.sourceHandle.slice("segment-output:".length) : undefined;
@@ -2239,8 +2356,6 @@ function CanvasWorkspace({ initialProject, projects: initialProjects, initialWor
     const previousViewport = viewportRef.current;
     const restorePreviousProject = () => {
       const restoredProject = projectCacheRef.current.get(previousProject.id) || previousProject;
-      initialHydration.current = true;
-      dirtyTrackingProjectRef.current = "";
       setProject(restoredProject);
       setProjectNameDraft(restoredProject.name);
       setWorkspace(previousWorkspace);
@@ -2259,8 +2374,6 @@ function CanvasWorkspace({ initialProject, projects: initialProjects, initialWor
       const latestNodes = applyModelCatalogue(stableNodes, latestEdges, models);
       savedProjectSignatures.current[latest.id] = projectSaveSignature(latest, stableNodes, latestEdges);
       projectCacheRef.current.set(latest.id, latest);
-      initialHydration.current = true;
-      dirtyTrackingProjectRef.current = "";
       setProject(latest);
       setProjectNameDraft(latest.name);
       setProjects((current) => current.map((item) => item.id === latest.id ? { ...latest, summary: projectStats(latest) } : item));
@@ -2274,7 +2387,7 @@ function CanvasWorkspace({ initialProject, projects: initialProjects, initialWor
       futureRef.current = [];
       refreshHistoryControls();
       setSelectedId(null);
-      const restoredViewport = latest.graph.viewport;
+      const restoredViewport = readCanvasViewportSession(latest.id, latest.graph.viewport);
       viewportRef.current = restoredViewport || { x: 0, y: 0, zoom: 1 };
       window.setTimeout(() => {
         if (restoredViewport) {
@@ -2284,10 +2397,6 @@ function CanvasWorkspace({ initialProject, projects: initialProjects, initialWor
         void fitView({ nodes: latestNodes.slice(0, 4), padding: 0.2, duration: 0, maxZoom: 1.08 });
       }, 0);
     };
-    if (viewportSaveTimerRef.current !== null) {
-      window.clearTimeout(viewportSaveTimerRef.current);
-      viewportSaveTimerRef.current = null;
-    }
     setProjectSwitchingId(next.id);
     setProjectLibraryOpen(false);
     setWorkspaceLibraryOpen(false);
@@ -2303,7 +2412,6 @@ function CanvasWorkspace({ initialProject, projects: initialProjects, initialWor
     setProjectHydratingId(next.id);
     void save(true);
     stopAllVideoPlayback();
-    initialHydration.current = true;
     setProject(cachedTarget || next);
     setProjectNameDraft(next.name);
     if (targetWorkspace || next.workspaceId !== workspace.id) {
@@ -2796,7 +2904,7 @@ function CanvasWorkspace({ initialProject, projects: initialProjects, initialWor
     // that follow-up update cannot overwrite it with the previous graph.
     const next = selectGraphNode(nodesRef.current, nodeId);
     nodesRef.current = next;
-    setNodes(next);
+    setNodesLocal(next);
   }
 
   function focusMasterClipSource(nodeId: string, clipId: string) {
@@ -3278,7 +3386,7 @@ function CanvasWorkspace({ initialProject, projects: initialProjects, initialWor
     setNotice("Reference disconnected");
   }
 
-  function disconnectEdge(edgeId: string) {
+  const disconnectEdge = useCallback((edgeId: string) => {
     pushHistory();
     setEdges((current) => {
       const next = current.filter((edge) => edge.id !== edgeId);
@@ -3286,7 +3394,7 @@ function CanvasWorkspace({ initialProject, projects: initialProjects, initialWor
       return next;
     });
     setNotice("Connection removed");
-  }
+  }, [pushHistory, setEdges]);
 
   function downstreamGeneratorIds(nodeId: string) {
     const ordered: string[] = [];
@@ -3629,6 +3737,8 @@ function CanvasWorkspace({ initialProject, projects: initialProjects, initialWor
     setAutomationStageLabel("Waiting for the workflow worker");
     setAutomationPlanningProgress(1);
     setAutomationSlideStates([]);
+    const requestedWorkflowId = automationWorkflowId;
+    setAutomationExecution({ workflowId: requestedWorkflowId, runId: null, status: "queued", nodeRuns: [] });
     try {
       const response = await fetch("/api/automation-runs", {
         method: "POST",
@@ -3641,6 +3751,7 @@ function CanvasWorkspace({ initialProject, projects: initialProjects, initialWor
         throw new Error(queued.error || "Could not start the workflow");
       }
       setAutomationRunId(queued.runId);
+      setAutomationExecution({ workflowId: requestedWorkflowId, runId: queued.runId, status: "queued", nodeRuns: [] });
       window.dispatchEvent(new Event("scenelith:tasks-changed"));
       for (let pollIndex = 0; pollIndex < 7_200; pollIndex += 1) {
         if (pollIndex > 0) await new Promise((resolve) => window.setTimeout(resolve, 1_000));
@@ -3652,12 +3763,18 @@ function CanvasWorkspace({ initialProject, projects: initialProjects, initialWor
             progress: number;
             error?: string | null;
             output?: Record<string, { result?: { nodeIds?: string[]; failures?: Array<{ index?: number; error?: string }> } }> | null;
-            nodeRuns?: Array<{ nodeId: string; nodeType: string; status: string }>;
+            nodeRuns?: Array<{ nodeId: string; nodeType: string; status: string; attempt: number }>;
           };
           error?: string;
         };
         if (!poll.ok || !body.run) throw new Error(body.error || "Could not read workflow progress");
         const run = body.run;
+        setAutomationExecution({
+          workflowId: requestedWorkflowId,
+          runId: queued.runId,
+          status: run.status,
+          nodeRuns: (run.nodeRuns || []).map((nodeRun) => ({ nodeId: nodeRun.nodeId, status: nodeRun.status, attempt: Number(nodeRun.attempt || 1) })),
+        });
         setAutomationPlanningProgress(run.progress);
         setAutomationStageLabel(run.status === "queued" ? "Waiting for an automation slot" : run.stageLabel || "Running workflow");
         const activeNode = [...(run.nodeRuns || [])].reverse().find((nodeRun) => nodeRun.status === "running");
@@ -3686,6 +3803,9 @@ function CanvasWorkspace({ initialProject, projects: initialProjects, initialWor
       await refreshUsage();
       setAutomationRunId(null);
       setAutomationStatus("failed");
+      setAutomationExecution((current) => current?.workflowId === requestedWorkflowId
+        ? { ...current, runId: null, status: current.status === "cancelled" ? "cancelled" : "failed" }
+        : current);
       setAutomationStageLabel(error instanceof Error ? error.message : "Workflow failed");
       setNotice(error instanceof Error ? error.message : "Workflow failed");
     }
@@ -4214,6 +4334,23 @@ function CanvasWorkspace({ initialProject, projects: initialProjects, initialWor
     })
     .filter((reference, index, all) => all.findIndex((item) => item.assetId === reference.assetId) === index)
     : [];
+  const automationCanvasReferences: AutomationReferenceCandidate[] = useMemo(() => nodes
+    .filter((node) => node.data.kind !== "persona"
+      && node.data.mediaType !== "video"
+      && Boolean(node.data.assetId)
+      && Boolean(node.data.outputUrl || node.data.imageUrl))
+    .map((node, index) => {
+      const url = String(node.data.outputUrl || node.data.imageUrl || "");
+      const rawTitle = String(node.data.title || "").trim();
+      return {
+        assetId: String(node.data.assetId),
+        url,
+        thumbnailUrl: assetThumbnailUrl(url),
+        title: !rawTitle || rawTitle === "Image Generator" ? `Canvas image ${String(index + 1).padStart(2, "0")}` : rawTitle,
+        detail: node.data.generatedAt ? "Generated on this canvas" : "Image from this canvas",
+      };
+    })
+    .filter((reference, index, all) => all.findIndex((item) => item.assetId === reference.assetId) === index), [nodes]);
   const videoEditorReferenceLibrary: VideoEditorReference[] = previewNode?.data.kind === "videoMaster" ? [
     ...nodes
       .filter((node) => node.id !== previewNode.id
@@ -4273,6 +4410,103 @@ function CanvasWorkspace({ initialProject, projects: initialProjects, initialWor
   const inspectorHasVideoInput = inspectorGeneratorReferences.some((reference) => reference.role === "reference-video" || reference.role === "motion-video");
   const inspectorVideoReference = inspectorGeneratorReferences.find((reference) => reference.role === "reference-video" || reference.role === "motion-video");
   const inspectorInputVideoDuration = inspectorVideoReference && "durationSeconds" in inspectorVideoReference ? inspectorVideoReference.durationSeconds : undefined;
+  const generatorNodeActionsImpl: GeneratorNodeActions = {
+    models,
+    personas,
+    selectNode: selectCanvasNode,
+    focusMasterClipSource,
+    updateNode,
+    saveNow: (nodeId, data) => {
+      if (nodeId && data) {
+        const next = nodesRef.current.map((node) => node.id === nodeId ? { ...node, data: { ...node.data, ...data } } : node);
+        nodesRef.current = next;
+        setNodes(next);
+      }
+      window.setTimeout(() => void save(true, true), 0);
+    },
+    composePrompt: composeGeneratorPrompt,
+    composeMasterPrompt,
+    captureVideoFrame,
+    extractVideoSegment,
+    generateMasterClip: (nodeId, clipId) => void generateMasterClip(nodeId, clipId),
+    updateMasterClipModel,
+    removeMasterClip,
+    uploadMasterClips: (nodeId, files) => void uploadMasterClips(nodeId, files),
+    downloadMasterMedia,
+    generatingNodeIds: activeGenerationNodeIds,
+    preparingMasterClipIds,
+    generationConcurrency: Math.max(1, liveCreditUsage.generationConcurrency || 1),
+    queueLabel: liveCreditUsage.profileName,
+    runningAssistantNodeId,
+    activePreviewNodeId: previewNode?.id || null,
+    getReferences: nodeReferencePreviews,
+    getTextInput: connectedTextInput,
+    disconnectReference,
+    hasDownstreamGenerator,
+    runAssistant: (nodeId) => void runAssistant(nodeId),
+    openPreview: (nodeId, media) => {
+      const node = nodesRef.current.find((item) => item.id === nodeId);
+      if (node && (media?.url || node.data.outputUrl || node.data.imageUrl || node.data.kind === "videoMaster")) {
+        stopAllVideoPlayback();
+        setPreviewMode("view");
+        setPreviewMedia(media || null);
+        setPreviewNode(node);
+      }
+    },
+    openEdit: (nodeId) => {
+      const node = nodesRef.current.find((item) => item.id === nodeId);
+      if (node?.data.assetId && (node.data.outputUrl || node.data.imageUrl)) {
+        setPreviewMode("edit");
+        setPreviewMedia(null);
+        setPreviewNode(node);
+      }
+    },
+    addToIdentity: addGeneratedAssetToIdentity,
+    createIdentityFromAsset: createIdentityFromGeneratedAsset,
+    deleteNode: deleteCanvasNode,
+    generateChain: (nodeId) => void generateChain(nodeId),
+    generateNode: (nodeId) => {
+      const node = nodesRef.current.find((item) => item.id === nodeId);
+      if (node) void generate(node);
+    },
+  };
+  const generatorNodeActionsImplRef = useRef(generatorNodeActionsImpl);
+  generatorNodeActionsImplRef.current = generatorNodeActionsImpl;
+  const generatorNodeActions = useMemo<GeneratorNodeActions>(() => ({
+    models,
+    personas,
+    selectNode: (...args) => generatorNodeActionsImplRef.current.selectNode(...args),
+    focusMasterClipSource: (...args) => generatorNodeActionsImplRef.current.focusMasterClipSource(...args),
+    updateNode: (...args) => generatorNodeActionsImplRef.current.updateNode(...args),
+    saveNow: (...args) => generatorNodeActionsImplRef.current.saveNow(...args),
+    composePrompt: (...args) => generatorNodeActionsImplRef.current.composePrompt(...args),
+    composeMasterPrompt: (...args) => generatorNodeActionsImplRef.current.composeMasterPrompt(...args),
+    generateNode: (...args) => generatorNodeActionsImplRef.current.generateNode(...args),
+    generateMasterClip: (...args) => generatorNodeActionsImplRef.current.generateMasterClip(...args),
+    updateMasterClipModel: (...args) => generatorNodeActionsImplRef.current.updateMasterClipModel(...args),
+    removeMasterClip: (...args) => generatorNodeActionsImplRef.current.removeMasterClip(...args),
+    uploadMasterClips: (...args) => generatorNodeActionsImplRef.current.uploadMasterClips(...args),
+    runAssistant: (...args) => generatorNodeActionsImplRef.current.runAssistant(...args),
+    generateChain: (...args) => generatorNodeActionsImplRef.current.generateChain(...args),
+    captureVideoFrame: (...args) => generatorNodeActionsImplRef.current.captureVideoFrame(...args),
+    extractVideoSegment: (...args) => generatorNodeActionsImplRef.current.extractVideoSegment(...args),
+    openPreview: (...args) => generatorNodeActionsImplRef.current.openPreview(...args),
+    downloadMasterMedia: (...args) => generatorNodeActionsImplRef.current.downloadMasterMedia(...args),
+    openEdit: (...args) => generatorNodeActionsImplRef.current.openEdit(...args),
+    addToIdentity: (...args) => generatorNodeActionsImplRef.current.addToIdentity(...args),
+    createIdentityFromAsset: (...args) => generatorNodeActionsImplRef.current.createIdentityFromAsset(...args),
+    deleteNode: (...args) => generatorNodeActionsImplRef.current.deleteNode(...args),
+    hasDownstreamGenerator: (...args) => generatorNodeActionsImplRef.current.hasDownstreamGenerator(...args),
+    disconnectReference: (...args) => generatorNodeActionsImplRef.current.disconnectReference(...args),
+    getReferences: (...args) => generatorNodeActionsImplRef.current.getReferences(...args),
+    getTextInput: (...args) => generatorNodeActionsImplRef.current.getTextInput(...args),
+    generatingNodeIds: activeGenerationNodeIds,
+    preparingMasterClipIds,
+    generationConcurrency: Math.max(1, liveCreditUsage.generationConcurrency || 1),
+    queueLabel: liveCreditUsage.profileName,
+    runningAssistantNodeId,
+    activePreviewNodeId: previewNode?.id || null,
+  }), [activeGenerationNodeIds, liveCreditUsage.generationConcurrency, liveCreditUsage.profileName, models, personas, preparingMasterClipIds, previewNode?.id, runningAssistantNodeId]);
 
   return (
     <main className="app-shell">
@@ -4380,30 +4614,37 @@ function CanvasWorkspace({ initialProject, projects: initialProjects, initialWor
       {ProductPanelRouter && <ProductPanelRouter focus={productPanelFocus} user={user} workspace={workspace} onRequestAccountView={(view) => { setProductPanelFocus(null); setAccountView(view); }} onClose={() => setProductPanelFocus(null)} />}
 
       {tiktokAutomationOpen && <TikTokAutomationPanel
+        workspaceId={workspace.id}
         projectId={project.id}
         workflowId={automationWorkflowId}
-        setWorkflowId={(value) => { setAutomationWorkflowId(value); setAutomationStatus("idle"); setAutomationSlideStates([]); }}
+        setWorkflowId={(value) => { setAutomationWorkflowId(value); setAutomationStatus("idle"); setAutomationSlideStates([]); setAutomationExecution(null); }}
         workflowRefreshKey={automationWorkflowRefreshKey}
-        onConfigure={setAutomationEditorWorkflowId}
+        onConfigure={(workflowId) => { setTikTokAutomationOpen(true); setAutomationEditorWorkflowId(workflowId); }}
         sources={tiktokAutomationSources}
         personas={personas}
         models={models}
+        canvasReferences={automationCanvasReferences}
         status={automationStatus}
         stageLabel={automationStageLabel}
         planningProgress={automationPlanningProgress}
         slideStates={automationSlideStates}
         onSourceSelected={(value) => { setAutomationSourceId(value); setAutomationStatus("idle"); focusAutomationSource(value); }}
+        onRuntimeValuesChange={(workflowId, values) => setAutomationRuntimePreview({ workflowId, values })}
         onRun={(runtimeInputs, mode) => void runAutomationWorkflow(runtimeInputs, mode)}
         onCancel={() => void cancelAutomationWorkflow()}
-        onClose={() => setTikTokAutomationOpen(false)}
+        onClose={() => { setTikTokAutomationOpen(false); setAutomationEditorWorkflowId(null); }}
       />}
       {automationEditorWorkflowId && <AutomationWorkflowEditorOverlay
         key={automationEditorWorkflowId}
+        workspaceId={workspace.id}
         projectId={project.id}
         workflowId={automationEditorWorkflowId}
         sources={tiktokAutomationSources}
         personas={personas}
         models={models}
+        canvasReferences={automationCanvasReferences}
+        execution={automationExecution}
+        runtimeValues={automationRuntimePreview?.workflowId === automationEditorWorkflowId ? automationRuntimePreview.values : {}}
         onClose={() => setAutomationEditorWorkflowId(null)}
         onWorkflowChanged={(workflowId) => {
           setAutomationWorkflowId(workflowId);
@@ -4413,7 +4654,7 @@ function CanvasWorkspace({ initialProject, projects: initialProjects, initialWor
       />}
 
       <section
-        className={`canvas-stage canvas-mode-${canvasMode} ${canvasMediaDragActive ? "is-media-drop-active" : ""}`}
+        className={`canvas-stage canvas-mode-${canvasMode} ${canvasSpacePressed ? "is-space-panning" : ""} ${canvasMediaDragActive ? "is-media-drop-active" : ""}`}
         onPointerMove={(event) => { lastCanvasPointerRef.current = { x: event.clientX, y: event.clientY }; }}
         onPointerLeave={() => { lastCanvasPointerRef.current = null; }}
         onDragOverCapture={(event) => {
@@ -4453,14 +4694,7 @@ function CanvasWorkspace({ initialProject, projects: initialProjects, initialWor
           <button type="button" onClick={addCanvasNote}><span className="canvas-add-icon note"><StickyNote size={16} /></span><span><strong>Sticky Note</strong><small>Write freely on the canvas</small></span></button>
           <input ref={canvasMediaInputRef} className="canvas-media-input" type="file" accept=".jpg,.jpeg,.png,.mp4,.mov,.webm,.m4v,image/jpeg,image/png,video/mp4,video/quicktime,video/webm" multiple onChange={(event) => { const files = Array.from(event.currentTarget.files || []); event.currentTarget.value = ""; setCanvasAddMenuOpen(false); void importCanvasMedia(files, undefined, "drop"); }} />
         </div>}
-        <GeneratorNodeContext.Provider value={{ models, personas, selectNode: selectCanvasNode, focusMasterClipSource, updateNode, saveNow: (nodeId, data) => {
-          if (nodeId && data) {
-            const next = nodesRef.current.map((node) => node.id === nodeId ? { ...node, data: { ...node.data, ...data } } : node);
-            nodesRef.current = next;
-            setNodes(next);
-          }
-          window.setTimeout(() => void save(true, true), 0);
-        }, composePrompt: composeGeneratorPrompt, composeMasterPrompt, captureVideoFrame, extractVideoSegment, generateMasterClip: (nodeId, clipId) => void generateMasterClip(nodeId, clipId), updateMasterClipModel, removeMasterClip, uploadMasterClips: (nodeId, files) => void uploadMasterClips(nodeId, files), downloadMasterMedia, generatingNodeIds: activeGenerationNodeIds, preparingMasterClipIds, generationConcurrency: Math.max(1, liveCreditUsage.generationConcurrency || 1), queueLabel: liveCreditUsage.profileName, runningAssistantNodeId, activePreviewNodeId: previewNode?.id || null, getReferences: nodeReferencePreviews, getTextInput: connectedTextInput, disconnectReference, hasDownstreamGenerator, runAssistant: (nodeId) => void runAssistant(nodeId), openPreview: (nodeId, media) => { const node = nodesRef.current.find((item) => item.id === nodeId); if (node && (media?.url || node.data.outputUrl || node.data.imageUrl || node.data.kind === "videoMaster")) { stopAllVideoPlayback(); setPreviewMode("view"); setPreviewMedia(media || null); setPreviewNode(node); } }, openEdit: (nodeId) => { const node = nodesRef.current.find((item) => item.id === nodeId); if (node?.data.assetId && (node.data.outputUrl || node.data.imageUrl)) { setPreviewMode("edit"); setPreviewMedia(null); setPreviewNode(node); } }, addToIdentity: addGeneratedAssetToIdentity, createIdentityFromAsset: createIdentityFromGeneratedAsset, deleteNode: deleteCanvasNode, generateChain: (nodeId) => void generateChain(nodeId), generateNode: (nodeId) => { const node = nodesRef.current.find((item) => item.id === nodeId); if (node) void generate(node); } }}>
+        <GeneratorNodeContext.Provider value={generatorNodeActions}>
         <DisconnectEdgeContext.Provider value={disconnectEdge}>
         <ReactFlow
           nodes={canvasNodes}
@@ -4500,7 +4734,8 @@ function CanvasWorkspace({ initialProject, projects: initialProjects, initialWor
             setCanvasMediaDragActive(false);
             dropPersonaOnCanvas(event);
           }}
-          onNodeDragStart={() => pushHistory()}
+          onNodeDragStart={startNodeDrag}
+          onNodeDragStop={finishNodeDrag}
           onNodeClick={(_, node) => {
             setNodeHookSettingsOpen(false);
             selectCanvasNode(node.id);
@@ -4526,16 +4761,10 @@ function CanvasWorkspace({ initialProject, projects: initialProjects, initialWor
           }}
           onMoveEnd={(_, viewport) => {
             viewportRef.current = viewport;
-            dirtyProjectIdsRef.current.add(project.id);
-            projectGraphRevisionRef.current[project.id] = (projectGraphRevisionRef.current[project.id] || 0) + 1;
-            if (viewportSaveTimerRef.current !== null) window.clearTimeout(viewportSaveTimerRef.current);
-            viewportSaveTimerRef.current = window.setTimeout(() => {
-              viewportSaveTimerRef.current = null;
-              void save(true);
-            }, 800);
+            writeCanvasViewportSession(project.id, viewport);
           }}
           onlyRenderVisibleElements
-          defaultViewport={initialProject.graph.viewport || { x: 0, y: 0, zoom: 1 }}
+          defaultViewport={viewportRef.current}
           minZoom={0.15}
           maxZoom={1.8}
           nodesDraggable
@@ -4543,7 +4772,9 @@ function CanvasWorkspace({ initialProject, projects: initialProjects, initialWor
           selectionOnDrag={canvasMode === "select"}
           selectionMode={SelectionMode.Partial}
           panOnDrag={canvasMode === "pan"}
+          panActivationKeyCode="Space"
           panOnScroll
+          zoomActivationKeyCode={["Meta", "Control"]}
           proOptions={{ hideAttribution: true }}
         >
           <Controls showInteractive={false} />

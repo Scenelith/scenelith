@@ -26,16 +26,28 @@ Workflow metadata, immutable graph versions, runs, per-node attempts, events, an
 
 Creating a new workflow inserts a separate workflow ID and first draft version. Duplicating the system workflow copies its graph into a new custom workflow; it never edits the system template. Publishing changes pointers transactionally, and every queued run stores both the selected workflow ID and its exact published version ID.
 
+### System template registry and upgrades
+
+Built-in workflows are declared once in the public core registry at `src/lib/automation-workflows/system-templates.ts`. One registry entry owns the stable system key, revision, user-facing name and description, and graph factory. Repository code installs every registered template for a workspace; it does not repeat template names, keys, or graph builders.
+
+The stable key identifies a system workflow across releases. Any graph or execution-contract change requires an explicit revision increment in the same registry entry. On the next authorized workflow discovery, the server takes a per-workspace advisory lock, validates the new graph, appends one immutable published version, supersedes the previous published version, and keeps the workflow ID and run history. Display metadata is reconciled from the same registry without creating a graph version. A server running an older release never downgrades a template whose stored revision is newer.
+
+System upgrades only target records with the matching `system_key`. Duplicated and from-scratch workflows have their own IDs, names, descriptions, draft/published pointers, and version history, so registry upgrades cannot rename or rewrite a user's workflow. Adding another built-in workflow means adding one registry entry and graph factory; no repository branch, new table, or Cloud-specific copy is required.
+
+The registry, repository, migrations, and tests belong to the shared public core. Scenelith Cloud receives that exact implementation through the public-core update process and may add only private edition adapters around it. Do not reimplement or manually edit this workflow lifecycle in the Cloud repository.
+
 ## Built-in node contract
 
 Every node has a versioned type, typed input and output ports, editable configuration, and optional run-time bindings. Port compatibility is directional: a domain value can feed a generic `data` input, but generic data cannot impersonate a TikTok source, identity, validated slide plan, generated asset, or other stronger domain type.
+
+Node terminology has two deliberately separate layers. The registry `title` is the stable node type shown in the library, on the card and in the inspector, for example **AI**, **Merge paths**, or **Validate slide plans**. A graph node's `name` is the editable name of that particular step, for example **Check that every plan is usable**. The step name is the primary heading everywhere an existing graph node is shown; the stable node type is always the secondary label. Icons and calm accent colors come only from the node-type registry, so renaming a step never changes its meaning. Red is reserved for an actual failed/error state or recovery route, not ordinary logic, validation, branching, or limits.
 
 The initial registry includes:
 
 - manual trigger;
 - TikTok slideshow source;
-- reusable identity and creative settings;
-- multimodal structured AI task;
+- reusable identity, visual references, and creative settings;
+- multimodal AI task with explicit **Readable text** and **Defined data fields** output modes;
 - generic workflow input, safe data transform, explicit condition operators, bounded batch preparation, branch combination, and a slide-plan validation gate;
 - durable single-child and per-item Map subworkflows;
 - bounded public HTTP requests with deployment-local encrypted credential slots;
@@ -44,11 +56,25 @@ The initial registry includes:
 
 Collapsed groups are presentation only. Every AI request remains an ordinary atomic node in the saved graph and is visible in **All steps**.
 
+### Reading and building a flow
+
+The editor separates **what runs next** from **what information a step also needs** without hiding either one. Every saved connection is drawn as a calm solid Bézier curve between its exact source and target sockets. Curves naturally fan out from a reused output instead of stacking several right-angle paths into one ambiguous rail. Selecting a card highlights its complete upstream and downstream path while leaving the rest of the workflow readable. Main, supporting-data and error roles still remain explicit in the portable edge contract because they control execution and recovery semantics, not visual decoration.
+
+When a step has several upstream dependencies, the worker waits for every connected input it requires. Ready branches are then executed in deterministic graph order rather than being presented as simultaneous work. A downstream step can therefore consume earlier results by connection without drawing every supporting dependency across the full overview.
+
+Use **Merge paths** when several routes must become one named package before the workflow continues. The card owns a configurable list of named single-connection input sockets, so every incoming value has an explicit destination instead of sharing one ambiguous handle. In **Named object** mode, those input names become stable fields such as `brief`, `copy`, or `references`; the next step receives one object instead of an anonymous array. **Append list** keeps the same configured input order when the intended result is one collection.
+
+Use **For each item** for an explicit bounded loop. The parent receives a list, invokes one pinned child workflow for every item, preserves the item index and durable child result, enforces item and concurrency limits, and emits the collected results only after the loop has finished. The child workflow is the visible loop body, not an invisible group of nested cards. Use an ordinary **Run workflow** node when the child should run exactly once.
+
 Conditions do not evaluate JavaScript or free-form expressions. They use an explicit field path and a supported operator. Both outcomes must be connected. An error connection is valid only when the node's failure behavior is **Use error output**, and that failure behavior cannot be published without a connected error branch. Terminal nodes cannot continue downstream. Cycles, self-connections, duplicate edges, occupied single-input ports, unreachable nodes, disconnected outputs, and incompatible port types are rejected.
 
-`Limit batch` only validates and caps a collection. **Map items** is the true loop primitive: it starts one pinned child-workflow run per item, caps item count and parallelism, stores every child run, and reports item failures explicitly. Child workflows are deployment bindings rather than embedded IDs, so the same portable JSON can bind to a local workflow after import. Direct and indirect recursive workflow cycles are rejected when a binding is saved and checked again at run time. The root workflow owns the depth ceiling for its complete child tree; a child cannot relax it with its own settings.
+`Limit batch` only validates and caps a collection. **For each item** is the true loop primitive: it starts one pinned child-workflow run per item, caps item count and concurrency, stores every child run, and reports item failures explicitly. Child workflows are deployment bindings rather than embedded IDs, so the same portable JSON can bind to a local workflow after import. Direct and indirect recursive workflow cycles are rejected when a binding is saved and checked again at run time. The root workflow owns the depth ceiling for its complete child tree; a child cannot relax it with its own settings.
 
-AI response schemas use a safe JSON-Schema subset and are validated when the graph is published. The runtime validates the returned structured value again. The image generation node accepts only a `slide-plan-set` produced by **Validate slide plans**, so arbitrary AI output cannot reach an image provider without stable indexes, prompts, and reference IDs.
+The AI node has one current contract. It keeps the user task, permanent instructions, connected data and platform safety rules in separate prompt layers. Workflow variables are allowed in the task but not in permanent instructions. Connected source content is explicitly treated as data so it cannot replace higher-priority instructions. **Readable text** returns plain model text. **Defined data fields** uses a visual top-level field builder, keeps nested JSON available under technical details, asks the provider for strict structured output, and validates the value again before downstream execution.
+
+AI response schemas use a safe JSON-Schema subset and are validated when the graph is published. The image generation node accepts only a `slide-plan-set` produced by **Validate slide plans**, so arbitrary AI output cannot reach an image provider without stable indexes, prompts, and reference IDs.
+
+**Visual references** is separate from **Identity**. Identity resolves a saved person or character and its reference groups; Visual references selects ordinary product, place, pose, composition, or style images from the current content canvas or the workspace Library. The picker stores only stable asset IDs. At run time the server verifies workspace access, resolves private storage paths, rejects non-images, enforces the node limit, and passes one typed `visual-references` package through its output socket. That socket can connect to AI context, validation, or image generation only where the registry declares the typed input. A workflow may keep the selection fixed in its draft or mark it **Ask on run** so the same picker opens in the Automation panel before each execution. Portable export clears these instance-local IDs and restores Ask on run.
 
 ## Execution and recovery
 

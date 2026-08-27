@@ -5,6 +5,7 @@ import test from "node:test";
 const canvasPage = readFileSync(new URL("../src/app/canvas/page.tsx", import.meta.url), "utf8");
 const canvasApp = readFileSync(new URL("../src/components/CanvasApp.tsx", import.meta.url), "utf8");
 const theme = readFileSync(new URL("../src/app/theme.css", import.meta.url), "utf8");
+const globals = readFileSync(new URL("../src/app/globals.css", import.meta.url), "utf8");
 const database = readFileSync(new URL("../src/lib/postgres-db.ts", import.meta.url), "utf8");
 const workspaceAccess = readFileSync(new URL("../src/core/access/owner-workspace-access.ts", import.meta.url), "utf8");
 const frameNode = readFileSync(new URL("../src/components/FrameNode.tsx", import.meta.url), "utf8");
@@ -37,7 +38,9 @@ test("canvas switching uses realtime sync without prefetching duplicate full gra
   assert.doesNotMatch(canvasApp, /<strong[^>]+onClick=\{\(event\) => event\.stopPropagation\(\)\}[^>]*>\{item\.name\}<\/strong>/);
   assert.match(canvasApp, /onlyRenderVisibleElements/);
   assert.match(canvasApp, /dirtyProjectIdsRef\.current\.has\(project\.id\)/);
-  assert.match(canvasApp, /defaultViewport=\{initialProject\.graph\.viewport/);
+  assert.match(canvasApp, /defaultViewport=\{viewportRef\.current\}/);
+  assert.match(canvasApp, /canvasViewportSessionPrefix = "scenelith:canvas-viewport:v1:"/);
+  assert.match(canvasApp, /writeCanvasViewportSession\(project\.id, viewport\)/);
   assert.match(canvasApp, /fitView\(\{ nodes: latestNodes\.slice\(0, 4\)/);
   assert.match(canvasApp, /if \(!collaborationReady\) return false/);
   assert.doesNotMatch(canvasApp, /body: JSON\.stringify\(\{ revision: project\.revision, graph:/);
@@ -70,6 +73,71 @@ test("canvas shell switches immediately and cold graphs hydrate through realtime
   assert.match(canvasApp, /projectHydratingIdRef\.current === project\.id/);
 });
 
+test("main canvas keeps explicit modifier zoom and hold-Space pan controls", () => {
+  assert.match(canvasApp, /zoomActivationKeyCode=\{\["Meta", "Control"\]\}/);
+  assert.match(canvasApp, /panActivationKeyCode="Space"/);
+  assert.match(canvasApp, /panOnDrag=\{canvasMode === "pan"\}/);
+  assert.match(canvasApp, /selectionOnDrag=\{canvasMode === "select"\}/);
+  assert.match(canvasApp, /canvasSpacePressed/);
+  assert.match(globals, /\.canvas-mode-select \.react-flow__pane\.selection \{ cursor: default; \}/);
+  assert.match(globals, /\.canvas-mode-select\.is-space-panning \.react-flow__pane\.selection \{ cursor: grab; \}/);
+  assert.match(globals, /\.canvas-mode-pan \.react-flow__pane\.draggable \{ cursor: grab; \}/);
+});
+
+test("viewport movement stays local and never dirties the collaboration graph", () => {
+  const moveBody = canvasApp.slice(canvasApp.indexOf("onMoveEnd={(_, viewport) =>"), canvasApp.indexOf("defaultViewport={viewportRef.current}"));
+  assert.match(moveBody, /viewportRef\.current = viewport/);
+  assert.match(moveBody, /writeCanvasViewportSession\(project\.id, viewport\)/);
+  assert.doesNotMatch(moveBody, /dirtyProjectIdsRef/);
+  assert.doesNotMatch(moveBody, /projectGraphRevisionRef/);
+  assert.doesNotMatch(moveBody, /save\(/);
+  assert.doesNotMatch(canvasApp, /viewportSaveTimerRef/);
+});
+
+test("node dragging is local per frame and commits collaboration only once at drag end", () => {
+  const changeBody = canvasApp.slice(canvasApp.indexOf("const onNodesChange = useCallback"), canvasApp.indexOf("const onEdgesChange = useCallback"));
+  const localFrameBody = changeBody.slice(0, changeBody.indexOf("if (containsPersistentChange)"));
+  assert.match(localFrameBody, /applyNodeChanges\(changes, previousNodes\)/);
+  assert.match(localFrameBody, /setNodesLocal\(nextNodes\)/);
+  assert.doesNotMatch(localFrameBody, /mutateCollaborativeGraphRef/);
+  assert.doesNotMatch(localFrameBody, /markGraphCommitted/);
+  assert.match(changeBody, /nodeDragBaselineRef\.current = localNodesStateRef\.current/);
+  assert.match(changeBody, /graphNodePositionsChanged\(previous, localNodesStateRef\.current\)/);
+  assert.match(changeBody, /const finishNodeDrag = useCallback/);
+  assert.match(canvasApp, /onNodeDragStart=\{startNodeDrag\}/);
+  assert.match(canvasApp, /onNodeDragStop=\{finishNodeDrag\}/);
+});
+
+test("selection and node measurement stay out of the persisted graph", () => {
+  assert.match(canvasApp, /const containsPersistentChange = changes\.some\(\(change\) => change\.type === "add" \|\| change\.type === "remove" \|\| change\.type === "replace"\)/);
+  assert.match(canvasApp, /if \(containsPersistentChange\) \{/);
+  assert.match(canvasApp, /else setEdgesLocal\(\(current\) => applyEdgeChanges\(changes, current\)\)/);
+  assert.match(canvasApp, /setNodesLocal\(next\)/);
+  assert.match(frameNode, /export const FrameNodeCard = memo\(FrameNodeCardComponent\)/);
+});
+
+test("drag frames do not rebuild graph topology or automation discovery", () => {
+  const topologyBody = canvasApp.slice(
+    canvasApp.indexOf("const disconnectableEdges = useMemo"),
+    canvasApp.indexOf("const selectedAutomationSourceId"),
+  );
+  assert.match(canvasApp, /const \[remoteGraphRevision, setRemoteGraphRevision\] = useState\(0\)/);
+  assert.match(canvasApp, /setRemoteGraphRevision\(\(revision\) => revision \+ 1\)/);
+  assert.match(canvasApp, /const graphTopologyVersion = `\$\{graphCommitSignal\.projectId\}:\$\{graphCommitSignal\.revision\}:\$\{remoteGraphRevision\}`/);
+  const selectionBody = topologyBody.slice(
+    topologyBody.indexOf("const visibleEdges = useMemo"),
+    topologyBody.indexOf("const tiktokAutomationSources"),
+  );
+  assert.match(topologyBody, /const currentNodes = localNodesStateRef\.current/);
+  assert.match(topologyBody, /void graphTopologyVersion/);
+  assert.match(topologyBody, /\[edges, graphTopologyVersion\]/);
+  assert.match(selectionBody, /const incomingByTarget = new Map<string, FrameEdge\[\]>\(\)/);
+  assert.match(selectionBody, /\(incomingByTarget\.get\(targetId\) \|\| \[\]\)\.forEach/);
+  assert.match(selectionBody, /\[disconnectableEdges, selectedId\]/);
+  assert.match(topologyBody, /findTikTokSlideshowSources\(localNodesStateRef\.current, localEdgesStateRef\.current\)/);
+  assert.doesNotMatch(topologyBody, /\[nodes,/);
+});
+
 test("cached canvases remain protected until their live document has synced", () => {
   assert.match(canvasApp, /useState<string \| null>\(initialProject\.id\)/);
   assert.match(canvasApp, /ready: collaborationReady/);
@@ -79,6 +147,8 @@ test("cached canvases remain protected until their live document has synced", ()
   assert.doesNotMatch(cachedBody, /setProjectHydratingId\(null\)/);
   assert.match(switchBody, /stays[\s\S]*behind the read-only hydration guard until Yjs confirms/);
   assert.match(canvasApp, /savedGeneratedAt >= taskGeneratedAt/);
+  assert.match(globals, /\.canvas-project-loading \{[^}]*z-index:20;/);
+  assert.match(globals, /\.tool-rail \{ z-index:\s*21;/);
 });
 
 test("an old client cannot overwrite a versioned canvas graph", () => {
@@ -90,6 +160,14 @@ test("an old client cannot overwrite a versioned canvas graph", () => {
 test("canvas media avoids eager full-file downloads during graph hydration", () => {
   assert.match(frameNode, /preload="metadata"/);
   assert.match(frameNode, /preload="none"/);
+  assert.match(frameNode, /const OUTPUT_IMAGE_LOAD_ATTEMPTS = 5/);
+  assert.match(frameNode, /const OUTPUT_IMAGE_FAILURE_CACHE_LIMIT = 2_000/);
+  assert.match(frameNode, /const outputImageFailures = new Map<string, number>\(\)/);
+  assert.match(frameNode, /function rememberOutputImageFailure/);
+  assert.match(frameNode, /const canRetry = selected \|\| busy \|\| queued \|\| generatedRecently/);
+  assert.match(frameNode, /const displayedOutputUrl = outputLoadFailed\s*\? ""/);
+  assert.match(frameNode, /loading=\{selected \? "eager" : "lazy"\}/);
+  assert.doesNotMatch(frameNode, /const OUTPUT_IMAGE_LOAD_ATTEMPTS = 12/);
 });
 
 test("Library header actions have no persistent button fills", () => {

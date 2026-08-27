@@ -1,4 +1,4 @@
-import { automationNodeDefinition } from "./registry";
+import { automationNodeDefinition, automationNodeInputPorts } from "./registry";
 import { DEFAULT_AUTOMATION_WORKFLOW_SETTINGS, type AutomationNode, type AutomationWorkflowGraph, type AutomationWorkflowSettings } from "./types";
 import { topologicalAutomationNodeIds, validateAutomationWorkflowGraph } from "./validation";
 
@@ -9,7 +9,7 @@ export type AutomationExecutionContext = {
   workspaceId: string;
   projectId: string;
   runtimeInputs: Record<string, unknown>;
-  triggerPayload?: Record<string, unknown>;
+  triggerPayload?: unknown;
   workerId?: string;
   runKind?: "production" | "test" | "replay" | "trigger" | "subworkflow" | "node-preview";
   deadlineAt?: string;
@@ -27,8 +27,16 @@ export type AutomationExecutionContext = {
     reserveGeneratedAssets: (count: number, usageKey: string) => Promise<void>;
   };
   subworkflow?: {
-    run: (input: { parentNodeId: string; parentAttempt: number; slotKey: string; runtimeInputs: Record<string, unknown>; itemIndex?: number }) => Promise<{ runId: string; output: unknown; warningCount: number }>;
+    run: (input: { parentNodeId: string; parentAttempt: number; slotKey: string; payload: unknown; runtimeInputs?: Record<string, unknown>; itemIndex?: number }) => Promise<{ runId: string; output: unknown; warningCount: number }>;
   };
+};
+
+export type AutomationInputConnection = {
+  sourceNodeId: string;
+  sourceNodeName: string;
+  sourcePort: string;
+  targetPort: string;
+  value: unknown;
 };
 
 export type AutomationNodeExecution = {
@@ -38,6 +46,9 @@ export type AutomationNodeExecution = {
   attempt: number;
   context: AutomationExecutionContext;
   outputsByNode: ReadonlyMap<string, Record<string, unknown>>;
+  /** Provenance for values received through graph edges. Direct handler tests and
+   * external handler adapters may omit it; the graph runtime always supplies it. */
+  inputConnections?: Readonly<Record<string, AutomationInputConnection[]>>;
 };
 
 export type AutomationNodeHandler = (execution: AutomationNodeExecution) => Promise<Record<string, unknown>>;
@@ -111,23 +122,27 @@ function resolvedNodeConfig(node: AutomationNode, runtimeInputs: Record<string, 
   return config;
 }
 
-function nodeInputs(graph: AutomationWorkflowGraph, node: AutomationNode, outputs: Map<string, Record<string, unknown>>) {
-  const definition = automationNodeDefinition(node.type, node.version);
+function nodeInputState(graph: AutomationWorkflowGraph, node: AutomationNode, outputs: Map<string, Record<string, unknown>>) {
   const values: Record<string, unknown> = {};
-  if (!definition) return values;
-  for (const port of definition.inputs) {
+  const connectionsByPort: Record<string, AutomationInputConnection[]> = {};
+  const inputPorts = automationNodeInputPorts(node);
+  const nodeById = new Map(graph.nodes.map((candidate) => [candidate.id, candidate]));
+  for (const port of inputPorts) {
     const connections = graph.edges.filter((edge) => edge.target === node.id && edge.targetPort === port.id);
-    const connectedValues = connections
-      .map((edge) => outputs.get(edge.source)?.[edge.sourcePort])
-      .filter((value) => value !== undefined);
+    const resolvedConnections = connections.flatMap((edge) => {
+      const value = outputs.get(edge.source)?.[edge.sourcePort];
+      if (value === undefined) return [];
+      return [{ sourceNodeId: edge.source, sourceNodeName: nodeById.get(edge.source)?.name || edge.source, sourcePort: edge.sourcePort, targetPort: edge.targetPort, value }];
+    });
+    connectionsByPort[port.id] = resolvedConnections;
+    const connectedValues = resolvedConnections.map((connection) => connection.value);
     values[port.id] = port.multiple ? connectedValues : connectedValues[0];
   }
-  return values;
+  return { values, connectionsByPort };
 }
 
 function missingRequiredInput(node: AutomationNode, inputs: Record<string, unknown>, options: { nullIsMissing?: boolean } = {}) {
-  const definition = automationNodeDefinition(node.type, node.version);
-  return definition?.inputs.find((port) => port.required && (
+  return automationNodeInputPorts(node).find((port) => port.required && (
     inputs[port.id] === undefined
     || (options.nullIsMissing && inputs[port.id] === null)
     || (port.multiple && Array.isArray(inputs[port.id]) && !(inputs[port.id] as unknown[]).length)
@@ -149,7 +164,7 @@ export async function executeAutomationNodePreview(input: {
   const definition = automationNodeDefinition(node.type, node.version);
   if (!definition) throw Object.assign(new Error(`No definition is installed for ${node.type}@${node.version}`), { code: "PREVIEW_NODE_UNAVAILABLE" });
   if (definition.category === "trigger") throw Object.assign(new Error("Trigger steps receive events and cannot be executed as a preview"), { code: "PREVIEW_TRIGGER_UNSUPPORTED" });
-  const allowedInputs = new Set(definition.inputs.map((port) => port.id));
+  const allowedInputs = new Set(automationNodeInputPorts(node).map((port) => port.id));
   const unknownInputs = Object.keys(input.nodeInputs).filter((key) => !allowedInputs.has(key));
   if (unknownInputs.length) throw Object.assign(new Error(`Fixture contains unavailable input ports: ${unknownInputs.join(", ")}`), { code: "PREVIEW_INPUT_INVALID" });
   const missing = missingRequiredInput(node, input.nodeInputs, { nullIsMissing: true });
@@ -166,6 +181,7 @@ export async function executeAutomationNodePreview(input: {
       attempt: 1,
       context: { ...input.context, runKind: "node-preview" },
       outputsByNode: new Map(),
+      inputConnections: {},
     }));
     assertExecutionWithinPolicy(input.context);
     await input.observer?.nodeCompleted?.(node, output, 1);
@@ -202,7 +218,8 @@ export async function executeAutomationGraph(input: {
   for (const nodeId of topologicalAutomationNodeIds(input.graph)) {
     const node = nodeById.get(nodeId)!;
     if (outputs.has(node.id)) continue;
-    const inputs = nodeInputs(input.graph, node, outputs);
+    const inputState = nodeInputState(input.graph, node, outputs);
+    const inputs = inputState.values;
     const missing = missingRequiredInput(node, inputs);
     if (missing) {
       skipped.add(node.id);
@@ -231,6 +248,7 @@ export async function executeAutomationGraph(input: {
           attempt,
           context: executionContext,
           outputsByNode: outputs,
+          inputConnections: inputState.connectionsByPort,
         }));
         assertExecutionWithinPolicy(executionContext);
         outputs.set(node.id, output);
@@ -247,6 +265,7 @@ export async function executeAutomationGraph(input: {
         latestError = failure;
         await input.observer?.nodeFailed?.(node, failure, attempt);
         if (executionContext.signal?.aborted) throw failure;
+        if ((failure as { automationRetryable?: unknown })?.automationRetryable === false) break;
         if (attempt < maxAttempts) await abortableDelay(Math.min(8_000, 800 * 2 ** (attempt - 1)), executionContext.signal);
       }
     }
@@ -261,7 +280,17 @@ export async function executeAutomationGraph(input: {
           __warnings: [latestError instanceof Error ? latestError.message : String(latestError)],
         };
       }
-      else if (failureMode === "error-output") continuedOutput = { error: { message: latestError instanceof Error ? latestError.message : String(latestError), nodeId: node.id } };
+      else if (failureMode === "error-output") {
+        const failure = latestError as { message?: unknown; code?: unknown; safeResponse?: unknown } | null;
+        continuedOutput = {
+          error: {
+            message: latestError instanceof Error ? latestError.message : String(latestError),
+            nodeId: node.id,
+            ...(failure?.code ? { code: String(failure.code) } : {}),
+            ...(failure?.safeResponse !== undefined ? { response: failure.safeResponse } : {}),
+          },
+        };
+      }
       else throw latestError;
       const output = validatedNodeOutput(node, continuedOutput);
       outputs.set(node.id, output);
