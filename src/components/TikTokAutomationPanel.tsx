@@ -1,9 +1,10 @@
 "use client";
 
 import { FileUp, Plus, Settings2, Workflow, X } from "lucide-react";
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { generatorRatiosFor, generatorResolutionsFor, type GeneratorModelOption } from "@/components/FrameNode";
 import { InspectorSelect } from "@/components/InspectorSelect";
+import { AutomationReferencePicker, type AutomationReferenceCandidate } from "@/components/automation/AutomationReferencePicker";
 import { tiktokAutomationPlanningModels } from "@/lib/assistant-models";
 import type { AutomationCapabilities } from "@/editions/contracts/access";
 import type { PersonaRecord } from "@/lib/types";
@@ -30,7 +31,7 @@ export type TikTokAutomationPanelDemo = Readonly<{
 }>;
 
 function emptyRuntimeValue(value: unknown) {
-  return value === undefined || value === null || (typeof value === "string" && !value.trim());
+  return value === undefined || value === null || (typeof value === "string" && !value.trim()) || (Array.isArray(value) && value.length === 0);
 }
 
 function RuntimeJsonField({ value, disabled, onChange }: { value: unknown; disabled: boolean; onChange: (value: unknown) => void }) {
@@ -46,6 +47,7 @@ function RuntimeJsonField({ value, disabled, onChange }: { value: unknown; disab
 }
 
 export function TikTokAutomationPanel({
+  workspaceId,
   projectId,
   workflowId,
   setWorkflowId,
@@ -63,7 +65,10 @@ export function TikTokAutomationPanel({
   onCancel,
   onClose,
   onSourceSelected,
+  onRuntimeValuesChange,
+  canvasReferences,
 }: {
+  workspaceId: string;
   projectId: string;
   workflowId: string;
   setWorkflowId: (value: string) => void;
@@ -81,6 +86,8 @@ export function TikTokAutomationPanel({
   onCancel: () => void;
   onClose: () => void;
   onSourceSelected?: (sourceId: string) => void;
+  onRuntimeValuesChange?: (workflowId: string, values: Record<string, unknown>) => void;
+  canvasReferences: AutomationReferenceCandidate[];
 }) {
   const initialDemoInputs = demo ? [...new Map([...(demo.productionRunInputs || []), ...(demo.draftRunInputs || [])].map((field) => [field.key, field])).values()] : [];
   const [workflows, setWorkflows] = useState<AutomationWorkflowRecord[]>(() => demo?.workflows || []);
@@ -93,10 +100,18 @@ export function TikTokAutomationPanel({
   const [productionRunInputs, setProductionRunInputs] = useState<AutomationRunInputField[]>(() => demo?.productionRunInputs || []);
   const [draftRunInputs, setDraftRunInputs] = useState<AutomationRunInputField[]>(() => demo?.draftRunInputs || []);
   const [runtimeValuesByWorkflow, setRuntimeValuesByWorkflow] = useState<Record<string, Record<string, unknown>>>(() => demo ? { [demo.detail.workflow.id]: demo.runtimeValues || {} } : {});
+  const workflowIdRef = useRef(workflowId);
+  const setWorkflowIdRef = useRef(setWorkflowId);
   const busy = status === "planning" || status === "building" || status === "generating";
   const selectedWorkflow = workflows.find((workflow) => workflow.id === workflowId);
   const selectedAlertCount = openTriggerAlerts[workflowId] || 0;
-  const runtimeValues = runtimeValuesByWorkflow[workflowId] || {};
+  const runtimeValues = useMemo(() => runtimeValuesByWorkflow[workflowId] || {}, [runtimeValuesByWorkflow, workflowId]);
+  const runtimeValuesChangeRef = useRef(onRuntimeValuesChange);
+  useEffect(() => { runtimeValuesChangeRef.current = onRuntimeValuesChange; }, [onRuntimeValuesChange]);
+  useEffect(() => { runtimeValuesChangeRef.current?.(workflowId, runtimeValues); }, [runtimeValues, workflowId]);
+
+  useEffect(() => { workflowIdRef.current = workflowId; }, [workflowId]);
+  useEffect(() => { setWorkflowIdRef.current = setWorkflowId; }, [setWorkflowId]);
 
   useEffect(() => {
     if (demo) return;
@@ -111,11 +126,12 @@ export function TikTokAutomationPanel({
         if (body.capabilities) setCapabilities(body.capabilities);
         setOpenTriggerAlerts(body.openTriggerAlerts || {});
         setWorkflowError("");
-        if (!next.some((workflow) => workflow.id === workflowId) && next[0]) setWorkflowId(next[0].id);
+        const currentWorkflowId = workflowIdRef.current;
+        if (!next.some((workflow) => workflow.id === currentWorkflowId) && next[0]) setWorkflowIdRef.current(next[0].id);
       })
       .catch((error) => { if (!cancelled) setWorkflowError(error instanceof Error ? error.message : "Could not load workflows"); });
     return () => { cancelled = true; };
-  }, [demo, projectId, setWorkflowId, workflowId, workflowRefreshKey]);
+  }, [demo, projectId, workflowRefreshKey]);
 
   useEffect(() => {
     if (!workflowId || demo) return;
@@ -142,6 +158,7 @@ export function TikTokAutomationPanel({
             else if (field.valueType === "boolean") next[field.key] = false;
             else if (field.valueType === "tiktok-source") next[field.key] = field.required ? sources[0]?.id || "" : "";
             else if (field.valueType === "identity") next[field.key] = "";
+            else if (field.valueType === "visual-references") next[field.key] = [];
             else if (field.valueType === "assistant-model") next[field.key] = tiktokAutomationPlanningModels[0]?.id || "";
             else if (field.valueType === "image-model") next[field.key] = models.find((model) => model.mediaType === "image" && model.maxReferences > 0)?.id || "";
             else if (field.options?.length) next[field.key] = field.options[0].value;
@@ -281,7 +298,18 @@ export function TikTokAutomationPanel({
         {runInputs.map((field) => {
           const options = fieldOptions(field);
           const value = runtimeValues[field.key];
-          return <label key={`${workflowId}:${field.key}`}><span>{field.label}{!field.required && <em>optional</em>}</span>{field.valueType === "boolean"
+          return <label key={`${workflowId}:${field.key}`}><span>{field.label}{!field.required && <em>optional</em>}</span>{field.valueType === "visual-references"
+            ? <AutomationReferencePicker
+                workspaceId={workspaceId}
+                projectId={projectId}
+                canvasReferences={canvasReferences}
+                selectedIds={Array.isArray(value) ? value.filter((item): item is string => typeof item === "string") : []}
+                maxItems={field.selectionLimit || field.max || 8}
+                disabled={busy || !capabilities.run}
+                placement="run-panel"
+                onChange={(assetIds) => setRuntimeField(field, assetIds)}
+              />
+            : field.valueType === "boolean"
             ? <button type="button" className={`tiktok-automation-runtime-toggle ${value ? "is-on" : ""}`} disabled={busy || !capabilities.run} onClick={() => setRuntimeField(field, !value)}><i />{value ? "Enabled" : "Disabled"}</button>
             : field.valueType === "json"
               ? <RuntimeJsonField value={value} disabled={busy || !capabilities.run} onChange={(next) => setRuntimeField(field, next)} />

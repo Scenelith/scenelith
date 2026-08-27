@@ -308,7 +308,8 @@ button { color: inherit; }
 .rail-rule { height: 1px; background: #302f2d; margin: 8px 8px; }
 
 .canvas-stage { position: absolute; inset: 0; background: var(--surface-canvas); }
-.canvas-project-loading { position:absolute; inset:0; z-index:34; overflow:hidden; background:transparent; pointer-events:auto; }
+.canvas-stage .react-flow__viewport { will-change: transform; }
+.canvas-project-loading { position:absolute; inset:0; z-index:20; overflow:hidden; background:transparent; pointer-events:auto; }
 .canvas-loading-dot-field { position:absolute; inset:0; pointer-events:none; overflow:hidden; }
 .canvas-loading-dot-field i { position:absolute; inset:0; background-image:radial-gradient(circle at 0 0,rgba(114,221,183,.82) 0 1px,transparent 1.15px); background-repeat:repeat; background-size:var(--twinkle-size); background-position:var(--twinkle-position); opacity:.015; animation:canvas-loading-grid-dot var(--twinkle-duration) cubic-bezier(.45,0,.2,1) var(--twinkle-delay) infinite; will-change:opacity; }
 @keyframes canvas-loading-grid-dot { 0%,8%,38%,72%,100% { opacity:.012; } 18%,24% { opacity:var(--twinkle-peak); } 52% { opacity:.16; } 61% { opacity:.025; } 84% { opacity:.22; } 91% { opacity:.018; } }
@@ -319,9 +320,18 @@ button { color: inherit; }
 .canvas-stage.is-media-drop-active .react-flow__pane { cursor:copy; }
 .canvas-media-input { display:none; }
 @keyframes canvas-media-drop-in { from { opacity:0; transform:scale(.992); } }
-.react-flow__pane { cursor: crosshair; }
-.canvas-mode-pan .react-flow__pane { cursor: grab; }
-.canvas-mode-pan .react-flow__pane:active { cursor: grabbing; }
+.canvas-mode-select .react-flow__pane,
+.canvas-mode-select .react-flow__pane.draggable,
+.canvas-mode-select .react-flow__pane.selection { cursor: default; }
+.canvas-mode-select.is-space-panning .react-flow__pane,
+.canvas-mode-select.is-space-panning .react-flow__pane.draggable,
+.canvas-mode-select.is-space-panning .react-flow__pane.selection { cursor: grab; }
+.canvas-mode-select .react-flow__pane.dragging,
+.canvas-mode-select.is-space-panning .react-flow__pane.dragging { cursor: grabbing; }
+.canvas-mode-pan .react-flow__pane,
+.canvas-mode-pan .react-flow__pane.draggable { cursor: grab; }
+.canvas-mode-pan .react-flow__pane:active,
+.canvas-mode-pan .react-flow__pane.dragging { cursor: grabbing; }
 .canvas-floating-tools { width: 46px; padding: 6px; position: absolute; z-index: 18; left: 16px; top: 50%; display: flex; flex-direction: column; align-items: center; gap: 3px; transform: translateY(-50%); border: 1px solid rgba(255,255,255,.09); border-radius: 24px; background: rgba(25,26,27,.94); box-shadow: inset 0 1px rgba(255,255,255,.045); backdrop-filter: blur(18px); }
 .canvas-floating-tools button { width: 34px; height: 34px; padding: 0; display: grid; place-items: center; border: 0; border-radius: 50%; background: transparent; color: #aeb1b2; cursor: pointer; transition: color .14s ease, background .14s ease, transform .14s ease; }
 .canvas-floating-tools button:hover:not(:disabled) { background: #30302e; color: #f4f3ee; transform: scale(1.04); }

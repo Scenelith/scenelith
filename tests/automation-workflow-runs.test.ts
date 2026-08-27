@@ -154,7 +154,7 @@ function mapGraph(): AutomationWorkflowGraph {
   return { schemaVersion: 1, settings: { ...DEFAULT_AUTOMATION_WORKFLOW_SETTINGS, timeoutSeconds: 120, maxSubworkflowDepth: 3 }, groups: [], nodes: [
     { id: "manual", type: "core.manual-trigger", version: 1, name: "Run", description: "", position: { x: 0, y: 0 }, groupId: null, config: {}, bindings: {}, disabled: false },
     { id: "workflow-input", type: "input.workflow-data", version: 1, name: "Items", description: "", position: { x: 200, y: 0 }, groupId: null, config: {}, bindings: { value: { mode: "ask-on-run", required: true } }, disabled: false },
-    { id: "map", type: "logic.map-subworkflow", version: 1, name: "Map", description: "", position: { x: 400, y: 0 }, groupId: null, config: { subworkflowSlot: "item-workflow", childInputKey: "workflow-input.value", childInputs: {}, maxItems: 10, concurrency: 2, itemFailure: "keep-successful", failureMode: "stop" }, bindings: {}, disabled: false },
+    { id: "map", type: "logic.map-subworkflow", version: 1, name: "Map", description: "", position: { x: 400, y: 0 }, groupId: null, config: { subworkflowSlot: "item-workflow", childInputs: {}, maxItems: 10, concurrency: 2, itemFailure: "keep-successful", failureMode: "stop" }, bindings: {}, disabled: false },
     { id: "finish", type: "output.finish", version: 1, name: "Finish", description: "", position: { x: 600, y: 0 }, groupId: null, config: { outcome: "completed", message: "mapped" }, bindings: {}, disabled: false },
   ], edges: [
     { id: "a", source: "manual", sourcePort: "run", target: "workflow-input", targetPort: "run" },
@@ -167,7 +167,7 @@ function nestedGraph(slot: string): AutomationWorkflowGraph {
   return { schemaVersion: 1, settings: { ...DEFAULT_AUTOMATION_WORKFLOW_SETTINGS, timeoutSeconds: 120 }, groups: [], nodes: [
     { id: "manual", type: "core.manual-trigger", version: 1, name: "Run", description: "", position: { x: 0, y: 0 }, groupId: null, config: {}, bindings: {}, disabled: false },
     { id: "workflow-input", type: "input.workflow-data", version: 1, name: "Input", description: "", position: { x: 200, y: 0 }, groupId: null, config: {}, bindings: { value: { mode: "ask-on-run", required: true } }, disabled: false },
-    { id: "child", type: "logic.run-subworkflow", version: 1, name: "Child", description: "", position: { x: 400, y: 0 }, groupId: null, config: { subworkflowSlot: slot, childInputKey: "workflow-input.value", childInputs: {}, failureMode: "stop" }, bindings: {}, disabled: false },
+    { id: "child", type: "logic.run-subworkflow", version: 1, name: "Child", description: "", position: { x: 400, y: 0 }, groupId: null, config: { subworkflowSlot: slot, childInputs: {}, failureMode: "stop" }, bindings: {}, disabled: false },
     { id: "finish", type: "output.finish", version: 1, name: "Finish", description: "", position: { x: 600, y: 0 }, groupId: null, config: { outcome: "completed", message: "done" }, bindings: {}, disabled: false },
   ], edges: [
     { id: "a", source: "manual", sourcePort: "run", target: "workflow-input", targetPort: "run" },
@@ -244,21 +244,14 @@ test("run preflight blocks an unbound credential before any node executes", asyn
   assert.equal(Number((await db.prepare("SELECT COUNT(*) AS count FROM automation_runs WHERE workflow_id = ?").get(workflow!.workflow.id) as { count: number }).count), 0);
 });
 
-test("run preflight validates child workflow inputs before queuing the parent", async () => {
+test("run preflight blocks a missing child workflow connection before queuing the parent", async () => {
   const owner = await seedOwner();
-  const child = await repository.createAutomationWorkflow({ userId: owner.userId, projectId: owner.projectId, name: "Input contract child" });
-  await repository.saveAutomationWorkflowDraft({ userId: owner.userId, workflowId: child!.workflow.id, baseDraftVersionId: child!.draft!.id, graph: childGraph() });
-  await repository.publishAutomationWorkflow(owner.userId, child!.workflow.id);
   const parentGraph = mapGraph();
-  const map = parentGraph.nodes.find((node) => node.id === "map")!;
-  delete map.config.subworkflowSlot;
-  map.config.childInputKey = "missing-node.value";
   const parent = await repository.createAutomationWorkflow({ userId: owner.userId, projectId: owner.projectId, name: "Invalid child mapping" });
   await repository.saveAutomationWorkflowDraft({ userId: owner.userId, workflowId: parent!.workflow.id, baseDraftVersionId: parent!.draft!.id, graph: parentGraph });
-  await credentials.bindAutomationSubworkflow({ userId: owner.userId, workflowId: parent!.workflow.id, workspaceId: owner.workspaceId, slotKey: "item-workflow", targetWorkflowId: child!.workflow.id });
   const result = await runs.enqueueAutomationWorkflowRun({ userId: owner.userId, projectId: owner.projectId, workflowId: parent!.workflow.id, runtimeInputs: { "workflow-input.value": [{ id: 1 }] }, mode: "test" });
   assert.equal(result.status, 409);
-  assert.match("error" in result ? result.error : "", /does not satisfy workflow slot/);
+  assert.match("error" in result ? result.error : "", /Connect workflow slot/);
   assert.equal(Number((await db.prepare("SELECT COUNT(*) AS count FROM automation_runs WHERE workflow_id = ?").get(parent!.workflow.id) as { count: number }).count), 0);
 });
 

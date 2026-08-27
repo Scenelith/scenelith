@@ -10,6 +10,8 @@ export type CanvasCollaborationStatus = "connecting" | "synced" | "offline" | "e
 export type CanvasCollaborator = { clientId: number; userId: string; name: string; color: string };
 
 function collaborationWebsocketUrl() {
+  const configuredUrl = process.env.NEXT_PUBLIC_COLLABORATION_URL?.trim();
+  if (configuredUrl) return configuredUrl.replace(/\/+$/, "");
   const protocol = window.location.protocol === "https:" ? "wss:" : "ws:";
   return `${protocol}//${window.location.host}/collaboration`;
 }

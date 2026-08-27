@@ -2,7 +2,7 @@
 
 /* eslint-disable @next/next/no-img-element */
 
-import { createContext, useContext, useEffect, useLayoutEffect, useMemo, useRef, useState, useSyncExternalStore, type CSSProperties, type Dispatch, type DragEvent as ReactDragEvent, type PointerEvent as ReactPointerEvent, type ReactNode, type SetStateAction } from "react";
+import { createContext, memo, useContext, useEffect, useLayoutEffect, useMemo, useRef, useState, useSyncExternalStore, type CSSProperties, type Dispatch, type DragEvent as ReactDragEvent, type PointerEvent as ReactPointerEvent, type ReactNode, type SetStateAction } from "react";
 import { createPortal } from "react-dom";
 import { Handle, NodeToolbar, Position, useUpdateNodeInternals, type NodeProps } from "@xyflow/react";
 import { ArrowRightLeft, Check, ChevronDown, Clapperboard, Copy, Download, Expand, Eye, EyeOff, FileText, ImageIcon, Images, MousePointer2, Pause, Play, Plus, Quote, Settings2, Sparkles, StickyNote, Trash2, Upload, UserRound, Video, Volume2, VolumeX, WandSparkles, Workflow, X } from "lucide-react";
@@ -1229,7 +1229,23 @@ function readImageRatio(url: string, ratios: string[]) {
   });
 }
 
-const OUTPUT_IMAGE_LOAD_ATTEMPTS = 12;
+const OUTPUT_IMAGE_LOAD_ATTEMPTS = 5;
+const OUTPUT_IMAGE_RETRY_WINDOW_MS = 2 * 60 * 1000;
+const OUTPUT_IMAGE_FAILURE_CACHE_LIMIT = 2_000;
+const outputImageFailures = new Map<string, number>();
+
+function rememberOutputImageFailure(url: string, attempts: number) {
+  // The cache intentionally outlives individual node mounts so virtualized
+  // nodes do not restart failed requests whenever they leave and re-enter the
+  // viewport. Keep it bounded for long-lived canvases that visit many assets.
+  outputImageFailures.delete(url);
+  outputImageFailures.set(url, attempts);
+  while (outputImageFailures.size > OUTPUT_IMAGE_FAILURE_CACHE_LIMIT) {
+    const oldestUrl = outputImageFailures.keys().next().value;
+    if (typeof oldestUrl !== "string") break;
+    outputImageFailures.delete(oldestUrl);
+  }
+}
 
 function outputImageUrlForAttempt(url: string, attempt: number) {
   const thumbnailUrl = assetThumbnailUrl(url);
@@ -1303,7 +1319,7 @@ export function VideoMasterGenerationControls({ clipId, openMenu, setOpenMenu, m
   </div>;
 }
 
-export function FrameNodeCard({ id, data, selected }: NodeProps<FrameNode>) {
+function FrameNodeCardComponent({ id, data, selected }: NodeProps<FrameNode>) {
   const generator = useContext(GeneratorNodeContext);
   const previewOwnsPlayback = generator?.activePreviewNodeId === id;
   const videoMasterPlaybackOwnerId = `video-master:${id}`;
@@ -1823,14 +1839,18 @@ export function FrameNodeCard({ id, data, selected }: NodeProps<FrameNode>) {
     const busy = generator.generatingNodeIds.includes(id);
     const queued = data.status === "queued";
     const failed = data.status === "failed";
-    const outputRetryAttempt = outputRetry.sourceUrl === outputUrl ? outputRetry.attempt : 0;
+    const outputRetryAttempt = outputRetry.sourceUrl === outputUrl
+      ? outputRetry.attempt
+      : Math.min(OUTPUT_IMAGE_LOAD_ATTEMPTS, outputImageFailures.get(outputUrl) || 0);
     const outputIsLoaded = outputMediaType === "video" || !outputUrl || loadedOutput.sourceUrl === outputUrl;
     const outputLoadFailed = outputMediaType === "image" && Boolean(outputUrl) && !outputIsLoaded && outputRetryAttempt >= OUTPUT_IMAGE_LOAD_ATTEMPTS;
-    const displayedOutputUrl = outputMediaType === "video"
-      ? outputUrl
-      : outputUrl
-        ? loadedOutput.sourceUrl === outputUrl ? loadedOutput.renderUrl : outputImageUrlForAttempt(outputUrl, outputRetryAttempt)
-        : "";
+    const displayedOutputUrl = outputLoadFailed
+      ? ""
+      : outputMediaType === "video"
+        ? outputUrl
+        : outputUrl
+          ? loadedOutput.sourceUrl === outputUrl ? loadedOutput.renderUrl : outputImageUrlForAttempt(outputUrl, outputRetryAttempt)
+          : "";
     const readyOutputUrl = outputIsLoaded ? outputUrl : "";
     const activeGeneration = busy || queued;
     const showCanvasGenerationProgress = activeGeneration && !previewOwnsPlayback;
@@ -1840,19 +1860,25 @@ export function FrameNodeCard({ id, data, selected }: NodeProps<FrameNode>) {
         window.clearTimeout(outputRetryTimerRef.current);
         outputRetryTimerRef.current = null;
       }
+      outputImageFailures.delete(outputUrl);
       setLoadedOutput({ sourceUrl: outputUrl, renderUrl: outputImageUrlForAttempt(outputUrl, outputRetryAttempt) });
       setOutputRetry({ sourceUrl: "", attempt: 0 });
     };
     const retryOutputLoad = () => {
       if (!outputUrl || outputRetryTimerRef.current !== null) return;
-      if (outputRetryAttempt >= OUTPUT_IMAGE_LOAD_ATTEMPTS - 1) {
+      const generatedRecently = Date.now() - new Date(String(data.generatedAt || 0)).getTime() <= OUTPUT_IMAGE_RETRY_WINDOW_MS;
+      const canRetry = selected || busy || queued || generatedRecently;
+      if (!canRetry || outputRetryAttempt >= OUTPUT_IMAGE_LOAD_ATTEMPTS - 1) {
+        rememberOutputImageFailure(outputUrl, OUTPUT_IMAGE_LOAD_ATTEMPTS);
         setOutputRetry({ sourceUrl: outputUrl, attempt: OUTPUT_IMAGE_LOAD_ATTEMPTS });
         return;
       }
+      const nextAttempt = outputRetryAttempt + 1;
+      rememberOutputImageFailure(outputUrl, nextAttempt);
       outputRetryTimerRef.current = window.setTimeout(() => {
-        setOutputRetry({ sourceUrl: outputUrl, attempt: outputRetryAttempt + 1 });
+        setOutputRetry({ sourceUrl: outputUrl, attempt: nextAttempt });
         outputRetryTimerRef.current = null;
-      }, Math.min(5000, 750 * (outputRetryAttempt + 1)));
+      }, Math.min(3000, 750 * nextAttempt));
     };
     const selectGeneratedOutput = (index: number) => {
       const output = generatedOutputs[index];
@@ -2076,7 +2102,7 @@ export function FrameNodeCard({ id, data, selected }: NodeProps<FrameNode>) {
       </NodeToolbar>
       <header className="generator-node-title"><span><GeneratorNodeIcon size={15} />{outputMediaType === "video" ? "Video Generator" : "Image Generator"}</span></header>
       <div className={`generator-media-stage ${displayedOutputUrl ? "has-output" : ""} ${generatedOutputs.length ? "has-history" : ""} ${busy && !previewOwnsPlayback ? "is-generating" : ""} ${queued && !previewOwnsPlayback ? "is-queued" : ""} ${failed || outputLoadFailed ? "is-failed" : ""}`} style={{ aspectRatio: ratioCss, "--prompt-max-height": `${promptMaxHeight}px` } as CSSProperties}>
-        {outputMediaType === "video" && outputUrl ? <CanvasVideoPlayer src={outputUrl} variant="generator" selectionActive={Boolean(selected)} onDoubleClick={() => generator.openPreview(id)} /> : displayedOutputUrl ? <img key={`${outputUrl}:${outputRetryAttempt}`} className="generator-output-image" src={displayedOutputUrl} alt="Generated output" draggable={false} loading="eager" fetchPriority={selected ? "high" : "auto"} decoding="async" onLoad={outputIsLoaded ? undefined : markOutputLoaded} onError={outputIsLoaded ? undefined : retryOutputLoad} onPointerDown={(event) => event.stopPropagation()} onDoubleClick={(event) => { event.stopPropagation(); if (readyOutputUrl) generator.openPreview(id); }} /> : null}
+        {outputMediaType === "video" && outputUrl ? <CanvasVideoPlayer src={outputUrl} variant="generator" selectionActive={Boolean(selected)} onDoubleClick={() => generator.openPreview(id)} /> : displayedOutputUrl ? <img key={`${outputUrl}:${outputRetryAttempt}`} className="generator-output-image" src={displayedOutputUrl} alt="Generated output" draggable={false} loading={selected ? "eager" : "lazy"} fetchPriority={selected ? "high" : "auto"} decoding="async" onLoad={outputIsLoaded ? undefined : markOutputLoaded} onError={outputIsLoaded ? undefined : retryOutputLoad} onPointerDown={(event) => event.stopPropagation()} onDoubleClick={(event) => { event.stopPropagation(); if (readyOutputUrl) generator.openPreview(id); }} /> : null}
         {displayedOutputUrl && <div className="generator-output-vignette" />}
         {showCanvasGenerationProgress && <>
           <svg className="generator-running-outline" aria-hidden="true">
@@ -2959,3 +2985,6 @@ export function FrameNodeCard({ id, data, selected }: NodeProps<FrameNode>) {
     </article>
   );
 }
+
+export const FrameNodeCard = memo(FrameNodeCardComponent);
+FrameNodeCard.displayName = "FrameNodeCard";

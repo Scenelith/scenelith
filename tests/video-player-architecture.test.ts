@@ -154,7 +154,7 @@ test("canvas focus cannot revoke a newer nested playback command", () => {
   const selection = canvasApp.slice(canvasApp.indexOf("function selectCanvasNode"), canvasApp.indexOf("function focusMasterClipSource"));
   assert.match(selection, /const selectedNodes = nodesRef\.current\.filter\(\(node\) => node\.selected\)/);
   assert.match(selection, /setSelectedId\(nodeId\);[\s\S]*?if \(alreadyExclusivelySelected\) return;/);
-  assert.match(selection, /const next = selectGraphNode\(nodesRef\.current, nodeId\);[\s\S]*?nodesRef\.current = next;[\s\S]*?setNodes\(next\);/);
+  assert.match(selection, /const next = selectGraphNode\(nodesRef\.current, nodeId\);[\s\S]*?nodesRef\.current = next;[\s\S]*?setNodesLocal\(next\);/);
   assert.doesNotMatch(selection, /stopAllVideoPlayback/);
   assert.match(canvasApp, /onPaneClick=\{\(\) => \{\s*stopAllVideoPlayback\(\);\s*setSelectedId\(null\)/);
 });
@@ -629,7 +629,7 @@ test("the fullscreen Video Master keeps node actions, scene references and outpu
 
 test("saved image outputs hydrate quietly without replaying the generation overlay", () => {
   assert.match(frameNode, /const activeGeneration = busy \|\| queued/);
-  assert.match(frameNode, /className="generator-output-image"[^>]+loading="eager"[^>]+fetchPriority=\{selected \? "high" : "auto"\}/);
+  assert.match(frameNode, /className="generator-output-image"[^>]+loading=\{selected \? "eager" : "lazy"\}[^>]+fetchPriority=\{selected \? "high" : "auto"\}/);
   assert.match(frameNode, /onLoad=\{outputIsLoaded \? undefined : markOutputLoaded\}/);
   assert.doesNotMatch(frameNode, /generator-output-preload/);
   assert.doesNotMatch(frameNode, /generatingLabel="Loading final image…"/);

@@ -13,21 +13,27 @@ test("automation packages are integrity checked and remove instance-bound resour
   const graph = createDefaultTikTokWorkflowGraph();
   const source = graph.nodes.find((node) => node.id === "tiktok-source")!;
   const identity = graph.nodes.find((node) => node.id === "identity")!;
+  const references = graph.nodes.find((node) => node.id === "visual-references")!;
   source.config.source = "private-source-node-id";
   source.bindings.source = { mode: "fixed", value: "private-source-node-id", required: true };
   identity.config.identity = "private-persona-id";
   identity.config.optional = false;
   identity.bindings.identity = { mode: "fixed", value: "private-persona-id", required: true };
+  references.config.references = ["private-reference-asset-id"];
+  references.bindings.references = { mode: "fixed", value: ["private-reference-asset-id"], required: false };
 
   const portable = createAutomationPackage({ name: "Shared creator flow", description: "Portable automation", graph });
   assert.equal(portable.format, AUTOMATION_PACKAGE_FORMAT);
   const serialized = JSON.stringify(portable);
-  assert.doesNotMatch(serialized, /private-source-node-id|private-persona-id/);
+  assert.doesNotMatch(serialized, /private-source-node-id|private-persona-id|private-reference-asset-id/);
   assert.deepEqual(portable.graph.nodes.find((node) => node.id === "tiktok-source")?.bindings.source, {
     mode: "ask-on-run", label: "Source slideshow", required: true,
   });
   assert.deepEqual(portable.graph.nodes.find((node) => node.id === "identity")?.bindings.identity, {
-    mode: "ask-on-run", label: "Identity", required: true,
+    mode: "ask-on-run", label: "Person or character", required: true,
+  });
+  assert.deepEqual(portable.graph.nodes.find((node) => node.id === "visual-references")?.bindings.references, {
+    mode: "ask-on-run", label: "Reference images", required: false,
   });
   assert.deepEqual(parseAutomationPackage(JSON.parse(serialized)), portable);
 });

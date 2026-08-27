@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import { after, before, test } from "node:test";
+import { DEFAULT_TIKTOK_AUTOMATION_TEMPLATE } from "../src/lib/automation-workflows/system-templates";
 
 let db: typeof import("./postgres-test-db")["db"];
 let closeRelationalPool: typeof import("./postgres-test-db")["closeRelationalPool"];
@@ -39,6 +40,9 @@ test("workspace receives one current system workflow", async () => {
   assert.equal(first?.length, 1);
   assert.equal(second?.length, 1);
   assert.equal(first?.[0].status, "system");
+  assert.equal(first?.[0].systemKey, DEFAULT_TIKTOK_AUTOMATION_TEMPLATE.key);
+  assert.equal(first?.[0].name, DEFAULT_TIKTOK_AUTOMATION_TEMPLATE.name);
+  assert.equal(first?.[0].description, DEFAULT_TIKTOK_AUTOMATION_TEMPLATE.description);
   const detail = await repository.getAutomationWorkflow(owner.userId, first![0].id);
   assert.equal(detail?.published?.validation.valid, true);
   assert.equal(detail?.draft, null);
@@ -48,14 +52,28 @@ test("system template upgrades transactionally without replacing the workflow id
   const owner = await seedOwner();
   const [before] = (await repository.listAutomationWorkflows(owner.userId, owner.projectId))!;
   const beforeDetail = await repository.getAutomationWorkflow(owner.userId, before.id);
-  await db.prepare("UPDATE automation_workflows SET system_revision = 0 WHERE id = ?").run(before.id);
+  await db.prepare("UPDATE automation_workflows SET system_revision = 0, name = 'Stale name', description = 'Stale description' WHERE id = ?").run(before.id);
   const [after] = (await repository.listAutomationWorkflows(owner.userId, owner.projectId))!;
   const afterDetail = await repository.getAutomationWorkflow(owner.userId, after.id);
   assert.equal(after.id, before.id);
+  assert.equal(after.name, DEFAULT_TIKTOK_AUTOMATION_TEMPLATE.name);
+  assert.equal(after.description, DEFAULT_TIKTOK_AUTOMATION_TEMPLATE.description);
   assert.notEqual(afterDetail?.published?.id, beforeDetail?.published?.id);
   const current = await db.prepare("SELECT status, COUNT(*) AS count FROM automation_workflow_versions WHERE workflow_id = ? GROUP BY status ORDER BY status")
     .all(before.id) as Array<{ status: string; count: number }>;
   assert.deepEqual(current, [{ status: "published", count: 1 }, { status: "superseded", count: 1 }]);
+});
+
+test("system metadata is reconciled without rewriting the published graph", async () => {
+  const owner = await seedOwner();
+  const [before] = (await repository.listAutomationWorkflows(owner.userId, owner.projectId))!;
+  const beforeDetail = await repository.getAutomationWorkflow(owner.userId, before.id);
+  await db.prepare("UPDATE automation_workflows SET name = 'Wrong label', description = 'Wrong description' WHERE id = ?").run(before.id);
+  const [after] = (await repository.listAutomationWorkflows(owner.userId, owner.projectId))!;
+  const afterDetail = await repository.getAutomationWorkflow(owner.userId, after.id);
+  assert.equal(after.name, DEFAULT_TIKTOK_AUTOMATION_TEMPLATE.name);
+  assert.equal(after.description, DEFAULT_TIKTOK_AUTOMATION_TEMPLATE.description);
+  assert.equal(afterDetail?.published?.id, beforeDetail?.published?.id);
 });
 
 test("custom workflows keep immutable draft history and publish explicitly", async () => {
@@ -101,11 +119,14 @@ test("a canvas can store and switch between multiple independently published wor
   });
   await repository.publishAutomationWorkflow(owner.userId, first!.workflow.id);
   await repository.publishAutomationWorkflow(owner.userId, second!.workflow.id);
+  await repository.ensureSystemAutomationWorkflows(owner.workspaceId, owner.userId);
   const listed = (await repository.listAutomationWorkflows(owner.userId, owner.projectId))!;
   assert.equal(listed.length, 3);
   assert.deepEqual(new Set(listed.map((workflow) => workflow.id)), new Set([system.id, first!.workflow.id, second!.workflow.id]));
   assert.equal(listed.find((workflow) => workflow.id === first!.workflow.id)?.status, "published");
   assert.equal(listed.find((workflow) => workflow.id === second!.workflow.id)?.status, "published");
+  assert.equal(listed.find((workflow) => workflow.id === first!.workflow.id)?.name, "Product campaign");
+  assert.equal(listed.find((workflow) => workflow.id === second!.workflow.id)?.name, "Creator campaign");
   const firstDetail = await repository.getAutomationWorkflow(owner.userId, first!.workflow.id);
   const secondDetail = await repository.getAutomationWorkflow(owner.userId, second!.workflow.id);
   assert.notEqual(firstDetail?.published?.id, secondDetail?.published?.id);

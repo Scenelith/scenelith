@@ -560,7 +560,7 @@ async function failClaimedRun(run: Pick<RunRow, "id">, error: unknown) {
   }
 }
 
-async function executeBoundSubworkflow(parent: RunRow, input: { parentNodeId: string; parentAttempt: number; slotKey: string; runtimeInputs: Record<string, unknown>; itemIndex?: number }) {
+async function executeBoundSubworkflow(parent: RunRow, input: { parentNodeId: string; parentAttempt: number; slotKey: string; payload: unknown; runtimeInputs?: Record<string, unknown>; itemIndex?: number }) {
   await assertRunActive(parent.id);
   const deployment = jsonValue<AutomationDeploymentSnapshot>(parent.deployment_json || {}) || { version: 1, workflows: {} };
   const pinned = deployment.workflows?.[parent.workflow_id]?.subworkflows?.[input.slotKey];
@@ -576,13 +576,16 @@ async function executeBoundSubworkflow(parent: RunRow, input: { parentNodeId: st
         WHERE binding.workflow_id = ? AND binding.workspace_id = ? AND binding.slot_key = ? AND binding.binding_type = 'subworkflow'`)
       .get(parent.workflow_id, parent.workspace_id, input.slotKey) as { workflow_id: string; published_version_id: string; graph_json: unknown } | undefined;
   if (!target) throw Object.assign(new Error(`Workflow slot “${input.slotKey}” is not connected to a published workflow`), { code: "SUBWORKFLOW_BINDING_MISSING" });
-  const inputJson = JSON.stringify(input.runtimeInputs);
+  const runtimeInputs = input.runtimeInputs || {};
+  const inputJson = JSON.stringify(runtimeInputs);
+  const payloadJson = JSON.stringify(input.payload ?? null);
   // Resuming a parent after a worker interruption must not run successful Map
   // items twice. Exact child version and exact input are both part of identity.
   const completedExisting = await db.prepare(`SELECT * FROM automation_runs WHERE parent_run_id = ? AND parent_node_id = ?
     AND item_index IS NOT DISTINCT FROM ? AND workflow_id = ? AND workflow_version_id = ? AND input_json = ?::jsonb
+    AND trigger_payload_json IS NOT DISTINCT FROM ?::jsonb
     AND status IN ('completed','completed_with_warnings') ORDER BY completed_at DESC LIMIT 1`)
-    .get(parent.id, input.parentNodeId, input.itemIndex ?? null, target.workflow_id, target.published_version_id, inputJson) as RunRow | undefined;
+    .get(parent.id, input.parentNodeId, input.itemIndex ?? null, target.workflow_id, target.published_version_id, inputJson, payloadJson) as RunRow | undefined;
   if (completedExisting) {
     await appendEvent(parent.id, "subworkflow.reused", { childRunId: completedExisting.id, parentNodeId: input.parentNodeId, itemIndex: input.itemIndex ?? null });
     return { runId: completedExisting.id, output: jsonValue(completedExisting.output_json), warningCount: Number(completedExisting.warning_count || 0) };
@@ -595,12 +598,12 @@ async function executeBoundSubworkflow(parent: RunRow, input: { parentNodeId: st
       const id = randomUUID(); const now = new Date().toISOString();
       await db.prepare(`INSERT INTO automation_runs
         (id, workflow_id, workflow_version_id, workspace_id, project_id, user_id, status, run_kind, admission_key, overlap_policy, max_concurrent_runs, parent_run_id, parent_node_id, root_run_id, replay_of_run_id,
-         item_index, execution_depth, stage_label, progress, input_json, output_json, policy_json, deployment_json, charged_credits, warning_count, reused_node_count,
+         item_index, execution_depth, stage_label, progress, input_json, trigger_payload_json, output_json, policy_json, deployment_json, charged_credits, warning_count, reused_node_count,
          attempts, max_attempts, available_at, started_at, deadline_at, created_at, updated_at, completed_at)
-        VALUES (?, ?, ?, ?, ?, ?, ?, 'subworkflow', ?, ?, ?, ?, ?, ?, ?, ?, ?, 'Reused successful child run', 100, ?, ?, ?, ?, 0, ?, 1, 1, 1, ?, ?, ?, ?, ?, ?)`)
+        VALUES (?, ?, ?, ?, ?, ?, ?, 'subworkflow', ?, ?, ?, ?, ?, ?, ?, ?, ?, 'Reused successful child run', 100, ?, ?, ?, ?, ?, 0, ?, 1, 1, 1, ?, ?, ?, ?, ?, ?)`)
         .run(id, prior.workflow_id, prior.workflow_version_id, parent.workspace_id, parent.project_id, parent.user_id, prior.status,
           parent.admission_key, parent.overlap_policy, parent.max_concurrent_runs, parent.id, input.parentNodeId, parent.root_run_id || parent.id, prior.id,
-          input.itemIndex ?? null, parent.execution_depth + 1, inputJson, prior.output_json, prior.policy_json, JSON.stringify(deployment), prior.warning_count, now, now, parent.deadline_at, now, now, now);
+          input.itemIndex ?? null, parent.execution_depth + 1, inputJson, payloadJson, prior.output_json, prior.policy_json, JSON.stringify(deployment), prior.warning_count, now, now, parent.deadline_at, now, now, now);
       await appendEvent(id, "run.reused", { sourceRunId: prior.id, parentRunId: parent.id, itemIndex: input.itemIndex ?? null });
       return { runId: id, output: jsonValue(prior.output_json), warningCount: Number(prior.warning_count || 0) };
     }
@@ -617,7 +620,11 @@ async function executeBoundSubworkflow(parent: RunRow, input: { parentNodeId: st
   const graph = jsonValue<AutomationWorkflowVersion["graph"]>(target.graph_json);
   const validation = validateAutomationWorkflowGraph(graph);
   if (!validation.valid) throw Object.assign(new Error("The bound child workflow is no longer valid"), { code: "SUBWORKFLOW_INVALID" });
-  const inputValidation = validateAutomationRunInputs(graph, input.runtimeInputs);
+  const validationInputs = { ...runtimeInputs };
+  for (const node of graph.nodes.filter((candidate) => candidate.type === "input.workflow-data")) {
+    if (node.bindings.value?.mode === "ask-on-run") validationInputs[`${node.id}.value`] = input.payload;
+  }
+  const inputValidation = validateAutomationRunInputs(graph, validationInputs);
   if (!inputValidation.valid) throw Object.assign(new Error(inputValidation.issues.map((entry) => entry.message).join(" ")), { code: "SUBWORKFLOW_INPUT_INVALID" });
   const rootRunId = parent.root_run_id || parent.id;
   const rootPolicyRow = rootRunId === parent.id
@@ -633,11 +640,11 @@ async function executeBoundSubworkflow(parent: RunRow, input: { parentNodeId: st
   const deadlineAt = new Date(Math.min(Date.parse(parent.deadline_at || new Date(Date.now() + policy.timeoutSeconds * 1_000).toISOString()), Date.now() + policy.timeoutSeconds * 1_000)).toISOString();
   await db.prepare(`INSERT INTO automation_runs
     (id, workflow_id, workflow_version_id, workspace_id, project_id, user_id, status, run_kind, admission_key, overlap_policy, max_concurrent_runs, parent_run_id, parent_node_id, root_run_id, item_index,
-     execution_depth, stage_label, progress, input_json, policy_json, deployment_json, attempts, max_attempts, available_at, locked_at, worker_id, started_at, deadline_at, created_at, updated_at)
-    VALUES (?, ?, ?, ?, ?, ?, 'running', 'subworkflow', ?, ?, ?, ?, ?, ?, ?, ?, 'Running child workflow', 1, ?, ?, ?, 1, 1, ?, ?, ?, ?, ?, ?, ?)`)
+     execution_depth, stage_label, progress, input_json, trigger_payload_json, policy_json, deployment_json, attempts, max_attempts, available_at, locked_at, worker_id, started_at, deadline_at, created_at, updated_at)
+    VALUES (?, ?, ?, ?, ?, ?, 'running', 'subworkflow', ?, ?, ?, ?, ?, ?, ?, ?, 'Running child workflow', 1, ?, ?, ?, ?, 1, 1, ?, ?, ?, ?, ?, ?, ?)`)
     .run(id, target.workflow_id, target.published_version_id, parent.workspace_id, parent.project_id, parent.user_id,
       parent.admission_key, parent.overlap_policy, parent.max_concurrent_runs, parent.id, input.parentNodeId, parent.root_run_id || parent.id,
-      input.itemIndex ?? null, depth, inputJson, JSON.stringify(policy), JSON.stringify(deployment), now, now, workerId, now, deadlineAt, now, now);
+      input.itemIndex ?? null, depth, inputJson, payloadJson, JSON.stringify(policy), JSON.stringify(deployment), now, now, workerId, now, deadlineAt, now, now);
   await appendEvent(id, "run.started", { runKind: "subworkflow", parentRunId: parent.id, parentNodeId: input.parentNodeId, parentAttempt: input.parentAttempt, itemIndex: input.itemIndex ?? null });
   const child = await db.prepare("SELECT * FROM automation_runs WHERE id = ?").get(id) as RunRow;
   await processRun(child);
@@ -796,7 +803,7 @@ async function processRun(run: RunRow) {
         workspaceId: run.workspace_id,
         projectId: run.project_id,
         runtimeInputs,
-        triggerPayload: run.trigger_payload_json ? jsonValue<Record<string, unknown>>(run.trigger_payload_json) : undefined,
+        triggerPayload: run.trigger_payload_json ? jsonValue<unknown>(run.trigger_payload_json) : undefined,
         workerId,
         runKind: run.run_kind,
         deadlineAt: run.deadline_at || undefined,

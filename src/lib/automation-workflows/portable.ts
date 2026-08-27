@@ -111,7 +111,7 @@ function portableGraph(source: AutomationWorkflowGraph) {
         delete node.bindings[field.id];
         continue;
       }
-      if (field.runtimeValueType !== "tiktok-source" && field.runtimeValueType !== "identity") continue;
+      if (field.runtimeValueType !== "tiktok-source" && field.runtimeValueType !== "identity" && field.runtimeValueType !== "visual-references") continue;
       const binding = node.bindings[field.id];
       delete node.config[field.id];
       node.bindings[field.id] = {

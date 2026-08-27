@@ -24,6 +24,7 @@ test("database projection hydrates the shell without opening a live Yjs document
 test("long-running canvas actions commit through the current synced document", () => {
   const hook = source("src/lib/use-canvas-collaboration.ts");
   const canvas = source("src/components/CanvasApp.tsx");
+  assert.match(hook, /process\.env\.NEXT_PUBLIC_COLLABORATION_URL/);
   assert.match(hook, /const syncedProjectIdRef = useRef/);
   assert.match(hook, /syncedProjectIdRef\.current = input\.projectId/);
   assert.match(hook, /syncedProjectIdRef\.current !== input\.projectId/);

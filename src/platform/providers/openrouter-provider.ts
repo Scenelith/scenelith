@@ -4,6 +4,7 @@ import {
   generateAssistantPrompt,
   generateHookVariants,
   requestOpenRouter,
+  requestOpenRouterText,
 } from "@/lib/openrouter";
 
 export const openRouterIntelligenceProvider = {
@@ -13,4 +14,5 @@ export const openRouterIntelligenceProvider = {
   extractHookFromImage,
   generateHookVariants,
   requestStructured: requestOpenRouter,
+  requestText: requestOpenRouterText,
 } as const;

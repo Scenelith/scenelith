@@ -1,4 +1,4 @@
-import { automationNodeDefinition, automationPortTypesCompatible } from "./registry";
+import { automationMergeInputs, automationNodeDefinition, automationNodeInputPorts, automationPortTypesCompatible } from "./registry";
 import { automationJsonSchemaDefinitionIssues } from "./json-schema";
 import {
   automationWorkflowGraphSchema,
@@ -15,7 +15,7 @@ function issue(code: string, message: string, location: { nodeId?: string; edgeI
 }
 
 function emptySetting(value: unknown) {
-  return value === undefined || value === null || (typeof value === "string" && !value.trim());
+  return value === undefined || value === null || (typeof value === "string" && !value.trim()) || (Array.isArray(value) && value.length === 0);
 }
 
 const embeddedCredential = /(?:\bsk-(?:or-v1-)?[A-Za-z0-9_-]{16,}|\bBearer\s+[A-Za-z0-9._~+/-]{16,}|\bAKIA[A-Z0-9]{16}\b)/i;
@@ -41,7 +41,7 @@ function runtimeValueType(field: AutomationNodeFieldDefinition): AutomationRunIn
 
 export function validateAutomationConnection(
   graph: AutomationWorkflowGraph,
-  connection: Pick<AutomationWorkflowGraph["edges"][number], "source" | "sourcePort" | "target" | "targetPort"> & { id?: string },
+  connection: Pick<AutomationWorkflowGraph["edges"][number], "source" | "sourcePort" | "target" | "targetPort" | "role"> & { id?: string },
 ): AutomationValidationResult {
   const issues: AutomationValidationIssue[] = [];
   const source = graph.nodes.find((node) => node.id === connection.source);
@@ -51,13 +51,17 @@ export function validateAutomationConnection(
   if (source.disabled || target.disabled) issues.push(issue("CONNECTED_DISABLED_NODE", "Enable both steps before connecting them."));
   const sourcePort = automationNodeDefinition(source.type, source.version)?.outputs.find((port) => port.id === connection.sourcePort);
   const sourceDefinition = automationNodeDefinition(source.type, source.version);
-  const targetPort = automationNodeDefinition(target.type, target.version)?.inputs.find((port) => port.id === connection.targetPort);
+  const targetPort = automationNodeInputPorts(target).find((port) => port.id === connection.targetPort);
   if (sourceDefinition?.terminal) issues.push(issue("TERMINAL_CONTINUES", `“${source.name}” is a final step and cannot lead to another step.`, { nodeId: source.id }));
   if (!sourcePort) issues.push(issue("UNKNOWN_SOURCE_PORT", `“${source.name}” has no output named “${connection.sourcePort}”.`, { nodeId: source.id }));
+  if (sourcePort?.connectable === false) issues.push(issue("INTERNAL_OUTPUT_CONNECTED", `“${sourcePort.label}” is an internal run receipt and cannot connect to another step.`, { nodeId: source.id }));
   if (!targetPort) issues.push(issue("UNKNOWN_TARGET_PORT", `“${target.name}” has no input named “${connection.targetPort}”.`, { nodeId: target.id }));
   if (sourcePort && targetPort && !automationPortTypesCompatible(sourcePort.type, targetPort.type)) {
     issues.push(issue("INCOMPATIBLE_PORTS", `${sourcePort.label} (${sourcePort.type}) cannot connect to ${targetPort.label} (${targetPort.type}).`));
   }
+  const role = connection.role || (sourcePort?.type === "error" ? "error" : "flow");
+  if (sourcePort?.type === "error" && role !== "error") issues.push(issue("ERROR_ROUTE_ROLE", "An error output must use an Error recovery route."));
+  if (sourcePort?.type !== "error" && role === "error") issues.push(issue("ERROR_ROUTE_ROLE", "Only an error output can create an Error recovery route."));
   const otherEdges = graph.edges.filter((edge) => !connection.id || edge.id !== connection.id);
   if (otherEdges.some((edge) => edge.source === connection.source && edge.sourcePort === connection.sourcePort && edge.target === connection.target && edge.targetPort === connection.targetPort)) {
     issues.push(issue("DUPLICATE_CONNECTION", "These two ports are already connected."));
@@ -128,14 +132,17 @@ export function validateAutomationWorkflowGraph(value: unknown): AutomationValid
       continue;
     }
     const sourceDefinition = automationNodeDefinition(source.type, source.version);
-    const targetDefinition = automationNodeDefinition(target.type, target.version);
     const sourcePort = sourceDefinition?.outputs.find((port) => port.id === edge.sourcePort);
-    const targetPort = targetDefinition?.inputs.find((port) => port.id === edge.targetPort);
+    const targetPort = automationNodeInputPorts(target).find((port) => port.id === edge.targetPort);
     if (!sourcePort) issues.push(issue("UNKNOWN_SOURCE_PORT", `“${source.name}” has no output named “${edge.sourcePort}”.`, { edgeId: edge.id, nodeId: source.id }));
+    if (sourcePort?.connectable === false) issues.push(issue("INTERNAL_OUTPUT_CONNECTED", `“${sourcePort.label}” is an internal run receipt and cannot connect to another step.`, { edgeId: edge.id, nodeId: source.id }));
     if (!targetPort) issues.push(issue("UNKNOWN_TARGET_PORT", `“${target.name}” has no input named “${edge.targetPort}”.`, { edgeId: edge.id, nodeId: target.id }));
     if (sourcePort && targetPort && !automationPortTypesCompatible(sourcePort.type, targetPort.type)) {
       issues.push(issue("INCOMPATIBLE_PORTS", `${sourcePort.label} (${sourcePort.type}) cannot connect to ${targetPort.label} (${targetPort.type}).`, { edgeId: edge.id }));
     }
+    const role = edge.role || (sourcePort?.type === "error" ? "error" : "flow");
+    if (sourcePort?.type === "error" && role !== "error") issues.push(issue("ERROR_ROUTE_ROLE", `“${sourcePort.label}” must use an Error recovery route.`, { edgeId: edge.id, nodeId: source.id }));
+    if (sourcePort?.type !== "error" && role === "error") issues.push(issue("ERROR_ROUTE_ROLE", `“${sourcePort?.label || edge.sourcePort}” is normal data and cannot use an Error recovery route.`, { edgeId: edge.id, nodeId: source.id }));
     const incoming = incomingByNode.get(target.id) || [];
     incoming.push(edge);
     incomingByNode.set(target.id, incoming);
@@ -143,6 +150,15 @@ export function validateAutomationWorkflowGraph(value: unknown): AutomationValid
     outgoing.push(edge);
     outgoingByNode.set(source.id, outgoing);
   }
+
+  const effectiveEdgeRole = (edge: AutomationWorkflowGraph["edges"][number]) => {
+    if (edge.role) return edge.role;
+    const source = nodeById.get(edge.source);
+    const output = source
+      ? automationNodeDefinition(source.type, source.version)?.outputs.find((port) => port.id === edge.sourcePort)
+      : null;
+    return output?.type === "error" ? "error" : "flow";
+  };
 
   for (const node of graph.nodes.filter((item) => !item.disabled)) {
     const definition = automationNodeDefinition(node.type, node.version);
@@ -187,24 +203,75 @@ export function validateAutomationWorkflowGraph(value: unknown): AutomationValid
           issues.push(issue("SETTING_OUT_OF_RANGE", `“${field.label}” must be between ${field.min ?? "−∞"} and ${field.max ?? "∞"}.`, { nodeId: node.id }));
         }
       }
-      if (field.kind === "json" && (typeof value !== "object" || value === null)) issues.push(issue("INVALID_SETTING_TYPE", `“${field.label}” must be valid JSON.`, { nodeId: node.id }));
+      if ((field.kind === "json" || field.kind === "schema") && (typeof value !== "object" || value === null)) issues.push(issue("INVALID_SETTING_TYPE", `“${field.label}” must be valid JSON.`, { nodeId: node.id }));
+      if (field.kind === "references") {
+        const ids = Array.isArray(value) ? value.map((entry) => typeof entry === "string" ? entry.trim() : "") : [];
+        if (!Array.isArray(value) || ids.some((id) => !id)) issues.push(issue("INVALID_SETTING_TYPE", `“${field.label}” must contain valid image references.`, { nodeId: node.id }));
+        else if (new Set(ids).size !== ids.length) issues.push(issue("DUPLICATE_REFERENCE", `“${field.label}” contains the same image more than once.`, { nodeId: node.id }));
+        else if (field.max !== undefined && ids.length > field.max) issues.push(issue("TOO_MANY_REFERENCES", `“${field.label}” can contain at most ${field.max} images.`, { nodeId: node.id }));
+      }
       if (field.options?.length && !field.options.some((option) => option.value === String(value))) {
         issues.push(issue("INVALID_SETTING_OPTION", `“${field.label}” has an unsupported value.`, { nodeId: node.id }));
+      }
+    }
+    const effectiveSetting = (fieldId: string) => node.bindings[fieldId]?.mode === "fixed" && node.bindings[fieldId].value !== undefined
+      ? node.bindings[fieldId].value
+      : node.config[fieldId] ?? definition.fields.find((field) => field.id === fieldId)?.defaultValue;
+    if (node.type === "logic.merge") {
+      const rawInputs = effectiveSetting("inputs");
+      const inputs = automationMergeInputs({ ...node, config: { ...node.config, inputs: rawInputs } });
+      if (!Array.isArray(rawInputs) || inputs.length < 2) {
+        issues.push(issue("MERGE_INPUT_COUNT", `“${node.name}” needs at least two named inputs. Add one socket for every path the merge must wait for.`, { nodeId: node.id }));
+      } else if (rawInputs.length > 24) {
+        issues.push(issue("MERGE_INPUT_COUNT", `“${node.name}” can have at most 24 named inputs.`, { nodeId: node.id }));
+      }
+      if (Array.isArray(rawInputs) && inputs.length !== rawInputs.length) {
+        issues.push(issue("INVALID_MERGE_INPUT", `“${node.name}” has an incomplete input. Every Merge input needs a stable id and name.`, { nodeId: node.id }));
+      }
+      const ids = new Set<string>();
+      const names = new Set<string>();
+      for (const input of inputs) {
+        if (!/^[a-z][a-z0-9-]{0,63}$/.test(input.id)) issues.push(issue("INVALID_MERGE_INPUT", `“${node.name}” has an invalid input id “${input.id}”.`, { nodeId: node.id }));
+        if (!/^[a-zA-Z_][a-zA-Z0-9_-]{0,63}$/.test(input.name)) issues.push(issue("INVALID_MERGE_INPUT", `“${node.name}” input “${input.name}” must start with a letter or underscore and use only letters, numbers, underscores or hyphens.`, { nodeId: node.id }));
+        if (ids.has(input.id)) issues.push(issue("DUPLICATE_MERGE_INPUT", `“${node.name}” uses input id “${input.id}” more than once.`, { nodeId: node.id }));
+        if (names.has(input.name)) issues.push(issue("DUPLICATE_MERGE_INPUT", `“${node.name}” uses input name “${input.name}” more than once.`, { nodeId: node.id }));
+        ids.add(input.id); names.add(input.name);
       }
     }
     if (node.type === "ai.structured-task") {
       const effective = (fieldId: string) => node.bindings[fieldId]?.mode === "fixed" && node.bindings[fieldId].value !== undefined
         ? node.bindings[fieldId].value
         : node.config[fieldId] ?? definition.fields.find((field) => field.id === fieldId)?.defaultValue;
-      const schemaIssues = automationJsonSchemaDefinitionIssues(effective("responseSchema"), "Response schema", effective("strictSchema") === true);
-      for (const message of schemaIssues.slice(0, 12)) issues.push(issue("INVALID_RESPONSE_SCHEMA", `“${node.name}”: ${message}.`, { nodeId: node.id }));
+      const structured = effective("outputMode") === "structured";
+      if (structured) {
+        const schema = effective("responseSchema");
+        const schemaIssues = automationJsonSchemaDefinitionIssues(schema, "Response schema", true);
+        for (const message of schemaIssues.slice(0, 12)) issues.push(issue("INVALID_RESPONSE_SCHEMA", `“${node.name}”: ${message}.`, { nodeId: node.id }));
+        const properties = schema && typeof schema === "object" && !Array.isArray(schema)
+          ? (schema as { properties?: unknown }).properties
+          : null;
+        if (!properties || typeof properties !== "object" || Array.isArray(properties) || !Object.keys(properties as Record<string, unknown>).length) {
+          issues.push(issue("EMPTY_RESPONSE_SCHEMA", `“${node.name}” must define at least one answer field in Defined data fields mode.`, { nodeId: node.id }));
+        }
+      }
+      if (/{{[\s\S]*?}}/.test(String(effective("systemPrompt") || ""))) {
+        issues.push(issue("VARIABLE_IN_PERMANENT_INSTRUCTIONS", `“${node.name}” cannot use workflow variables in Permanent instructions. Put variables in What should the AI do? instead.`, { nodeId: node.id }));
+      }
+    }
+    if (node.type === "integration.http-request") {
+      const rawUrl = String(effectiveSetting("url") || "").trim();
+      if (rawUrl && !rawUrl.includes("{{")) {
+        try {
+          const url = new URL(rawUrl);
+          if (!["http:", "https:"].includes(url.protocol) || !url.hostname || url.username || url.password) throw new Error("unsafe");
+        } catch {
+          issues.push(issue("INVALID_HTTP_URL", `“${node.name}” needs a complete public HTTP or HTTPS address without credentials in the URL.`, { nodeId: node.id }));
+        }
+      }
     }
     if (containsStoredCredential(node.config, node.type === "integration.http-request")) {
       issues.push(issue("SECRET_IN_WORKFLOW", `“${node.name}” appears to contain a stored credential. Move it to a deployment credential slot.`, { nodeId: node.id }));
     }
-    const effectiveSetting = (fieldId: string) => node.bindings[fieldId]?.mode === "fixed" && node.bindings[fieldId].value !== undefined
-      ? node.bindings[fieldId].value
-      : node.config[fieldId] ?? definition.fields.find((field) => field.id === fieldId)?.defaultValue;
     const credentialSlot = String(effectiveSetting("credentialSlot") || "").trim();
     const subworkflowSlot = String(effectiveSetting("subworkflowSlot") || "").trim();
     for (const slot of [credentialSlot, subworkflowSlot].filter(Boolean)) {
@@ -228,7 +295,14 @@ export function validateAutomationWorkflowGraph(value: unknown): AutomationValid
       } else if (!current) deploymentSlots.set(subworkflowSlot, { type: "subworkflow", nodeId: node.id });
     }
     const incoming = incomingByNode.get(node.id) || [];
-    for (const port of definition.inputs) {
+    if (definition.category !== "trigger" && incoming.length && !incoming.some((edge) => effectiveEdgeRole(edge) !== "data")) {
+      issues.push(issue(
+        "MISSING_FLOW_ROUTE",
+        `“${node.name}” is connected only as supporting data. Mark one incoming connection as Main execution route so the step remains visible and runnable.`,
+        { nodeId: node.id },
+      ));
+    }
+    for (const port of automationNodeInputPorts(node)) {
       const connected = incoming.filter((edge) => edge.targetPort === port.id);
       const minimum = Math.max(port.required ? 1 : 0, port.minConnections || 0);
       if (connected.length < minimum) issues.push(issue("MISSING_REQUIRED_INPUT", `“${node.name}” needs at least ${minimum} ${port.label} connection${minimum === 1 ? "" : "s"}.`, { nodeId: node.id }));
@@ -337,6 +411,9 @@ export function automationRunInputFields(graph: AutomationWorkflowGraph): Automa
         options: field?.options,
         min: field?.min,
         max: field?.max,
+        selectionLimit: field?.kind === "references"
+          ? Math.min(field.max ?? 32, Math.max(1, Number(node.config.maxItems ?? field.max ?? 32)))
+          : undefined,
         value: binding.value ?? node.config[bindingId] ?? field?.defaultValue,
       });
     }
@@ -371,6 +448,12 @@ export function validateAutomationRunInputs(graph: AutomationWorkflowGraph, valu
       }
     }
     if (field.valueType === "json" && (typeof value !== "object" || value === null)) issues.push(issue("INVALID_RUN_INPUT", `${field.label} must be valid JSON.`, { nodeId: field.nodeId }));
+    if (field.valueType === "visual-references") {
+      const ids = Array.isArray(value) ? value.map((entry) => typeof entry === "string" ? entry.trim() : "") : [];
+      if (!Array.isArray(value) || ids.some((id) => !id)) issues.push(issue("INVALID_RUN_INPUT", `${field.label} must contain valid image references.`, { nodeId: field.nodeId }));
+      else if (new Set(ids).size !== ids.length) issues.push(issue("INVALID_RUN_INPUT", `${field.label} contains the same image more than once.`, { nodeId: field.nodeId }));
+      else if (field.selectionLimit !== undefined && ids.length > field.selectionLimit) issues.push(issue("INVALID_RUN_INPUT", `${field.label} can contain at most ${field.selectionLimit} images.`, { nodeId: field.nodeId }));
+    }
     if (["string", "tiktok-source", "identity", "assistant-model", "image-model", "aspect-ratio", "resolution"].includes(field.valueType) && typeof value !== "string") {
       issues.push(issue("INVALID_RUN_INPUT", `${field.label} must be text.`, { nodeId: field.nodeId }));
     }

@@ -31,10 +31,10 @@ export function InspectorSelect({ value, options, label, onChange, disabled = fa
     const closeOnEscape = (event: KeyboardEvent) => {
       if (event.key === "Escape") setOpen(false);
     };
-    window.addEventListener("pointerdown", closeOutside);
+    window.addEventListener("pointerdown", closeOutside, true);
     window.addEventListener("keydown", closeOnEscape);
     return () => {
-      window.removeEventListener("pointerdown", closeOutside);
+      window.removeEventListener("pointerdown", closeOutside, true);
       window.removeEventListener("keydown", closeOnEscape);
     };
   }, [open]);
