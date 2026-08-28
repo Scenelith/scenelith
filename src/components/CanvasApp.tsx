@@ -4614,23 +4614,27 @@ function CanvasWorkspace({ initialProject, projects: initialProjects, initialWor
       {ProductPanelRouter && <ProductPanelRouter focus={productPanelFocus} user={user} workspace={workspace} onRequestAccountView={(view) => { setProductPanelFocus(null); setAccountView(view); }} onClose={() => setProductPanelFocus(null)} />}
 
       {tiktokAutomationOpen && <TikTokAutomationPanel
-        workspaceId={workspace.id}
         projectId={project.id}
         workflowId={automationWorkflowId}
-        setWorkflowId={(value) => { setAutomationWorkflowId(value); setAutomationStatus("idle"); setAutomationSlideStates([]); setAutomationExecution(null); }}
+        setWorkflowId={(value) => { setAutomationWorkflowId(value); setAutomationRuntimePreview(null); setAutomationStatus("idle"); setAutomationSlideStates([]); setAutomationExecution(null); }}
         workflowRefreshKey={automationWorkflowRefreshKey}
         onConfigure={(workflowId) => { setTikTokAutomationOpen(true); setAutomationEditorWorkflowId(workflowId); }}
         sources={tiktokAutomationSources}
         personas={personas}
         models={models}
-        canvasReferences={automationCanvasReferences}
         status={automationStatus}
         stageLabel={automationStageLabel}
         planningProgress={automationPlanningProgress}
         slideStates={automationSlideStates}
         onSourceSelected={(value) => { setAutomationSourceId(value); setAutomationStatus("idle"); focusAutomationSource(value); }}
-        onRuntimeValuesChange={(workflowId, values) => setAutomationRuntimePreview({ workflowId, values })}
-        onRun={(runtimeInputs, mode) => void runAutomationWorkflow(runtimeInputs, mode)}
+        onRuntimeValuesChange={(workflowId, values) => setAutomationRuntimePreview((current) => ({
+          workflowId,
+          values: current?.workflowId === workflowId ? { ...current.values, ...values } : values,
+        }))}
+        onRun={(runtimeInputs, mode) => void runAutomationWorkflow({
+          ...runtimeInputs,
+          ...(automationRuntimePreview?.workflowId === automationWorkflowId ? automationRuntimePreview.values : {}),
+        }, mode)}
         onCancel={() => void cancelAutomationWorkflow()}
         onClose={() => { setTikTokAutomationOpen(false); setAutomationEditorWorkflowId(null); }}
       />}
@@ -4645,6 +4649,10 @@ function CanvasWorkspace({ initialProject, projects: initialProjects, initialWor
         canvasReferences={automationCanvasReferences}
         execution={automationExecution}
         runtimeValues={automationRuntimePreview?.workflowId === automationEditorWorkflowId ? automationRuntimePreview.values : {}}
+        onRuntimeValueChange={(workflowId, key, value) => setAutomationRuntimePreview((current) => ({
+          workflowId,
+          values: { ...(current?.workflowId === workflowId ? current.values : {}), [key]: value },
+        }))}
         onClose={() => setAutomationEditorWorkflowId(null)}
         onWorkflowChanged={(workflowId) => {
           setAutomationWorkflowId(workflowId);

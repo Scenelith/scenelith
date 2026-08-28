@@ -10,6 +10,8 @@ const workflowDetailRouteSource = readFileSync(new URL("../src/app/api/automatio
 const workflowRunsSource = readFileSync(new URL("../src/lib/automation-workflows/runs.ts", import.meta.url), "utf8");
 const workflowEditorSource = readFileSync(new URL("../src/components/automation/AutomationWorkflowEditorOverlay.tsx", import.meta.url), "utf8");
 const referencePickerSource = readFileSync(new URL("../src/components/automation/AutomationReferencePicker.tsx", import.meta.url), "utf8");
+const referenceMenuShellSource = readFileSync(new URL("../src/components/ReferenceMenuShell.tsx", import.meta.url), "utf8");
+const frameNodeSource = readFileSync(new URL("../src/components/FrameNode.tsx", import.meta.url), "utf8");
 const defaultWorkflowSource = readFileSync(new URL("../src/lib/automation-workflows/default-tiktok.ts", import.meta.url), "utf8");
 const registrySource = readFileSync(new URL("../src/lib/automation-workflows/registry.ts", import.meta.url), "utf8");
 const workflowTypesSource = readFileSync(new URL("../src/lib/automation-workflows/types.ts", import.meta.url), "utf8");
@@ -28,14 +30,16 @@ test("canvas run submission does not inject legacy built-in node ids", () => {
 
 test("automation panel renders the selected workflow input contract", () => {
   assert.doesNotMatch(panelSource, /builtInInputKeys/);
-  assert.match(panelSource, /runInputs\.map/);
+  assert.match(panelSource, /visibleRunInputs\.map/);
   assert.match(panelSource, /runtimeValuesByWorkflow/);
   assert.match(panelSource, /selectedWorkflow\?\.publishedVersionId/);
 });
 
-test("visual references use one reusable picker for the current canvas and the workspace library", () => {
-  assert.match(referencePickerSource, /This canvas/);
+test("visual references are configured on their node from canvas, Library or Identities", () => {
+  assert.match(referencePickerSource, />Canvas</);
   assert.match(referencePickerSource, /Library/);
+  assert.match(referencePickerSource, /Identities/);
+  assert.match(referencePickerSource, /identityReferences/);
   assert.match(referencePickerSource, /fetch\(`\/api\/assets\?\$\{query\.toString\(\)\}`/);
   assert.match(referencePickerSource, /workspaceId/);
   assert.match(referencePickerSource, /assetId/);
@@ -43,8 +47,18 @@ test("visual references use one reusable picker for the current canvas and the w
   assert.match(referencePickerSource, /Use \{draftIds\.length/);
   assert.match(referencePickerSource, /Clear/);
   assert.doesNotMatch(referencePickerSource, /storagePath|storage_path|apiKey|secret/i);
-  assert.match(panelSource, /<AutomationReferencePicker/);
+  assert.doesNotMatch(panelSource, /<AutomationReferencePicker/);
+  assert.match(panelSource, /field\.valueType !== "visual-references"/);
+  assert.match(panelSource, /nodeManagedInputKeys/);
   assert.match(workflowEditorSource, /<AutomationReferencePicker/);
+  assert.match(workflowEditorSource, /placement="node"/);
+  assert.match(referencePickerSource, /<ReferenceMenuShell/);
+  assert.match(referencePickerSource, /automation-reference-node-menu/);
+  assert.match(frameNodeSource, /<ReferenceMenuShell/);
+  assert.match(referenceMenuShellSource, /generator-reference-menu nodrag nopan nowheel/);
+  assert.doesNotMatch(referencePickerSource, /automation-reference-drawer is-node/);
+  assert.match(workflowEditorSource, /onRuntimeValueChange/);
+  assert.match(canvasSource, /automationRuntimePreview\.values/);
 });
 
 test("automation workflow discovery is not restarted by an unstable parent callback", () => {

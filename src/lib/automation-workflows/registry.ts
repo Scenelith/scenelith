@@ -216,7 +216,7 @@ const rawDefinitions: Array<Omit<AutomationNodeDefinition, "help">> = [
     ],
   },
   {
-    type: "input.visual-references", version: 1, title: "Visual references", description: "Brings chosen canvas or Library images into the workflow as reusable visual context.", example: "Choose composition, product, place, pose or style images for later AI and image steps.", category: "input", icon: "references", accent: "mint",
+    type: "input.visual-references", version: 1, title: "Visual references", description: "Brings chosen Canvas, Library or Identity images into the workflow as reusable visual context.", example: "Choose composition, product, place, pose or style images for later AI and image steps.", category: "input", icon: "references", accent: "mint",
     inputs: [{ id: "run", label: "Run", type: "run-context", required: true }],
     outputs: [{ id: "references", label: "References", type: "visual-references" }],
     fields: [

@@ -2,10 +2,11 @@
 
 /* eslint-disable @next/next/no-img-element */
 
-import { Check, Images, Library, LoaderCircle, Search, X } from "lucide-react";
+import { Check, Images, Library, LoaderCircle, Search, UserRound, X } from "lucide-react";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
-import type { LibraryMediaAsset } from "@/lib/types";
+import { ReferenceMenuShell } from "@/components/ReferenceMenuShell";
+import type { LibraryMediaAsset, PersonaRecord } from "@/lib/types";
 
 export type AutomationReferenceCandidate = {
   assetId: string;
@@ -15,7 +16,7 @@ export type AutomationReferenceCandidate = {
   detail: string;
 };
 
-type ReferenceTab = "canvas" | "library";
+type ReferenceTab = "canvas" | "library" | "identities";
 
 function uniqueCandidates(candidates: AutomationReferenceCandidate[]) {
   return candidates.filter((candidate, index, all) => all.findIndex((item) => item.assetId === candidate.assetId) === index);
@@ -25,6 +26,7 @@ export function AutomationReferencePicker({
   workspaceId,
   projectId,
   canvasReferences,
+  personas = [],
   selectedIds,
   maxItems,
   disabled,
@@ -34,10 +36,11 @@ export function AutomationReferencePicker({
   workspaceId: string;
   projectId: string;
   canvasReferences: AutomationReferenceCandidate[];
+  personas?: PersonaRecord[];
   selectedIds: string[];
   maxItems: number;
   disabled?: boolean;
-  placement: "run-panel" | "editor";
+  placement: "run-panel" | "editor" | "node";
   onChange: (assetIds: string[]) => void;
 }) {
   const [open, setOpen] = useState(false);
@@ -49,6 +52,7 @@ export function AutomationReferencePicker({
   const [error, setError] = useState("");
   const [draftIds, setDraftIds] = useState<string[]>(selectedIds);
   const libraryRequestRef = useRef(0);
+  const fieldRef = useRef<HTMLDivElement>(null);
   const selected = useMemo(() => new Set(draftIds), [draftIds]);
   const limit = Math.min(32, Math.max(1, maxItems || 8));
 
@@ -90,6 +94,20 @@ export function AutomationReferencePicker({
     };
   }, [open, projectId, search, tab, workspaceId]);
 
+  useEffect(() => {
+    if (!open || placement !== "node") return;
+    const closeOutside = (event: PointerEvent) => {
+      if (event.target instanceof globalThis.Node && !fieldRef.current?.contains(event.target)) setOpen(false);
+    };
+    const closeOnEscape = (event: KeyboardEvent) => { if (event.key === "Escape") setOpen(false); };
+    document.addEventListener("pointerdown", closeOutside);
+    window.addEventListener("keydown", closeOnEscape);
+    return () => {
+      document.removeEventListener("pointerdown", closeOutside);
+      window.removeEventListener("keydown", closeOnEscape);
+    };
+  }, [open, placement]);
+
   const loadMore = async () => {
     if (!nextCursor || loading) return;
     setLoading(true);
@@ -115,7 +133,19 @@ export function AutomationReferencePicker({
     }
   };
 
-  const candidates = tab === "canvas" ? canvasReferences : libraryAssets;
+  const identityReferences = useMemo(() => personas.flatMap((persona) => persona.assets.map((asset) => {
+    const siblings = persona.assets.filter((candidate) => candidate.role === asset.role);
+    const roleIndex = siblings.findIndex((candidate) => candidate.id === asset.id) + 1;
+    const roleLabel = asset.role === "reference" ? "Identity" : asset.role === "before" ? "Before" : "After";
+    return {
+      assetId: asset.id,
+      url: asset.url,
+      thumbnailUrl: asset.thumbnailUrl,
+      title: `${persona.name} · ${roleLabel} ${String(roleIndex).padStart(2, "0")}`,
+      detail: `${persona.name} · ${roleLabel.toLowerCase()} reference`,
+    } satisfies AutomationReferenceCandidate;
+  })), [personas]);
+  const candidates = tab === "canvas" ? canvasReferences : tab === "library" ? libraryAssets : identityReferences;
   const toggle = (assetId: string) => {
     setError("");
     if (selected.has(assetId)) {
@@ -135,33 +165,58 @@ export function AutomationReferencePicker({
     setError("");
     setOpen(true);
   };
+  const togglePicker = () => { if (open) setOpen(false); else openPicker(); };
   const apply = () => { onChange(draftIds); setOpen(false); };
 
-  return <div className="automation-reference-field">
-    <button type="button" className="automation-reference-trigger" disabled={disabled} onClick={openPicker}>
+  const compact = placement === "node";
+  const sourceTabs = <nav className="automation-reference-tabs" aria-label="Reference source">
+    <button type="button" className={tab === "canvas" ? "is-active" : ""} onClick={() => { setTab("canvas"); setError(""); }}><Images size={14} /><span>Canvas</span><b>{canvasReferences.length}</b></button>
+    <button type="button" className={tab === "library" ? "is-active" : ""} onClick={() => { setTab("library"); setError(""); }}><Library size={14} /><span>Library</span></button>
+    <button type="button" className={tab === "identities" ? "is-active" : ""} onClick={() => { setTab("identities"); setError(""); }}><UserRound size={14} /><span>Identities</span><b>{identityReferences.length}</b></button>
+  </nav>;
+  const choices = <>
+    {sourceTabs}
+    {tab === "library" && <label className="automation-reference-search"><Search size={14} /><input value={search} onChange={(event) => setSearch(event.target.value)} placeholder="Search images and canvases…" /></label>}
+    <div className="automation-reference-grid">
+      {candidates.map((candidate) => <button type="button" key={candidate.assetId} className={selected.has(candidate.assetId) ? "is-selected" : ""} aria-pressed={selected.has(candidate.assetId)} onClick={() => toggle(candidate.assetId)}>
+        <span><img src={candidate.thumbnailUrl || candidate.url} alt="" loading="lazy" decoding="async" />{selected.has(candidate.assetId) && <i><Check size={12} /></i>}</span>
+        <b title={candidate.title}>{candidate.title}</b><small>{candidate.detail}</small>
+      </button>)}
+      {loading && !candidates.length && <div className="automation-reference-empty"><LoaderCircle size={19} className="is-spinning" /><b>Loading images…</b></div>}
+      {!loading && !candidates.length && <div className="automation-reference-empty">{tab === "identities" ? <UserRound size={20} /> : <Images size={20} />}<b>{tab === "canvas" ? "No image assets on this canvas" : tab === "library" ? "No Library images found" : "No identity references yet"}</b><small>{tab === "canvas" ? "Generated and imported images with saved assets appear here." : tab === "library" ? "Try another search or add images to the Library." : "Add a person or character in Identities, then return here."}</small></div>}
+    </div>
+    {tab === "library" && nextCursor && <button type="button" className="automation-reference-more" disabled={loading} onClick={() => void loadMore()}>{loading ? "Loading…" : "Load more"}</button>}
+  </>;
+  const footer = <footer className="automation-reference-footer"><span>{error || `${Math.max(0, limit - draftIds.length)} slots available`}</span><div>{draftIds.length > 0 && <button type="button" className="is-clear" onClick={() => { setDraftIds([]); setError(""); }}>Clear</button>}<button type="button" onClick={apply}>Use {draftIds.length || "no"} reference{draftIds.length === 1 ? "" : "s"}</button></div></footer>;
+
+  return <div ref={fieldRef} className={`automation-reference-field ${compact ? "is-node" : ""}`} onPointerDown={(event) => event.stopPropagation()} onClick={(event) => event.stopPropagation()} onWheel={(event) => event.stopPropagation()}>
+    <button
+      type="button"
+      className="automation-reference-trigger"
+      disabled={disabled}
+      aria-expanded={open}
+      onPointerDown={compact ? (event) => { event.preventDefault(); event.stopPropagation(); togglePicker(); } : undefined}
+      onClick={(event) => { event.preventDefault(); event.stopPropagation(); if (!compact || event.detail === 0) togglePicker(); }}
+    >
       <Images size={15} />
-      <span><b>{selectedIds.length ? `${selectedIds.length} selected` : "Choose reference images"}</b><small>From this canvas or the workspace Library</small></span>
+      <span><b>{selectedIds.length ? `${selectedIds.length} reference${selectedIds.length === 1 ? "" : "s"}` : compact ? "Add references" : "Choose reference images"}</b><small>{compact ? "Canvas · Library · Identities" : "From the canvas, Library or Identities"}</small></span>
       <em>{selectedIds.length}/{limit}</em>
     </button>
-    {open && typeof document !== "undefined" && createPortal(<>
+    {open && compact && <ReferenceMenuShell
+      attachedLabel={`${draftIds.length} ATTACHED`}
+      capacityTitle="Visual references"
+      capacityDescription={`Choose up to ${limit} images from Canvas, Library or Identities`}
+      className="automation-reference-node-menu"
+      footer={footer}
+    >
+      {choices}
+    </ReferenceMenuShell>}
+    {open && !compact && typeof document !== "undefined" && createPortal(<>
       <button type="button" className="automation-reference-dismiss" aria-label="Close reference picker" onClick={() => setOpen(false)} />
       <section className={`automation-reference-drawer is-${placement}`} role="dialog" aria-modal="false" aria-label="Choose visual references" onPointerDown={(event) => event.stopPropagation()} onWheel={(event) => event.stopPropagation()}>
         <header><span><b>Visual references</b><small>Choose only the images this workflow needs</small></span><em>{draftIds.length}/{limit}</em><button type="button" aria-label="Close" onClick={() => setOpen(false)}><X size={16} /></button></header>
-        <nav aria-label="Reference source">
-          <button type="button" className={tab === "canvas" ? "is-active" : ""} onClick={() => { setTab("canvas"); setError(""); }}><Images size={14} /><span>This canvas</span><b>{canvasReferences.length}</b></button>
-          <button type="button" className={tab === "library" ? "is-active" : ""} onClick={() => { setTab("library"); setError(""); }}><Library size={14} /><span>Library</span></button>
-        </nav>
-        {tab === "library" && <label className="automation-reference-search"><Search size={14} /><input value={search} onChange={(event) => setSearch(event.target.value)} placeholder="Search images and canvases…" /></label>}
-        <div className="automation-reference-grid">
-          {candidates.map((candidate) => <button type="button" key={candidate.assetId} className={selected.has(candidate.assetId) ? "is-selected" : ""} aria-pressed={selected.has(candidate.assetId)} onClick={() => toggle(candidate.assetId)}>
-            <span><img src={candidate.thumbnailUrl || candidate.url} alt="" loading="lazy" decoding="async" />{selected.has(candidate.assetId) && <i><Check size={12} /></i>}</span>
-            <b title={candidate.title}>{candidate.title}</b><small>{candidate.detail}</small>
-          </button>)}
-          {loading && !candidates.length && <div className="automation-reference-empty"><LoaderCircle size={19} className="is-spinning" /><b>Loading images…</b></div>}
-          {!loading && !candidates.length && <div className="automation-reference-empty"><Images size={20} /><b>{tab === "canvas" ? "No image assets on this canvas" : "No Library images found"}</b><small>{tab === "canvas" ? "Generated and imported images with saved assets appear here." : "Try another search or add images to the Library."}</small></div>}
-        </div>
-        {tab === "library" && nextCursor && <button type="button" className="automation-reference-more" disabled={loading} onClick={() => void loadMore()}>{loading ? "Loading…" : "Load more"}</button>}
-        <footer><span>{error || `${Math.max(0, limit - draftIds.length)} slots available`}</span><div>{draftIds.length > 0 && <button type="button" className="is-clear" onClick={() => { setDraftIds([]); setError(""); }}>Clear</button>}<button type="button" onClick={apply}>Use {draftIds.length || "no"} reference{draftIds.length === 1 ? "" : "s"}</button></div></footer>
+        {choices}
+        {footer}
       </section>
     </>, document.body)}
   </div>;

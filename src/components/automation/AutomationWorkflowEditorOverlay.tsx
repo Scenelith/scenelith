@@ -99,6 +99,16 @@ type FlowNodeData = {
   supportingOutputName: string | null;
   executionStatus: AutomationWorkflowNodeExecutionStatus;
   previewInactive: boolean;
+  referenceControl: {
+    workspaceId: string;
+    projectId: string;
+    canvasReferences: AutomationReferenceCandidate[];
+    personas: PersonaRecord[];
+    selectedIds: string[];
+    maxItems: number;
+    disabled: boolean;
+    onChange: (assetIds: string[]) => void;
+  } | null;
   [key: string]: unknown;
 };
 
@@ -230,6 +240,19 @@ function AutomationNodeCard({ data, selected }: NodeProps<Node<FlowNodeData>>) {
     <span className="automation-flow-node-kicker"><AutomationNodeIcon definition={definition} size={13} /><em>{String(data.stepIndex).padStart(2, "0")}</em><b>{definition.title}</b>{data.executionStatus === "running" ? <i className="automation-flow-node-run-state is-running" title="Running now">Running</i> : data.executionStatus === "completed" ? <i className="automation-flow-node-run-state is-completed" title="Completed"><Check size={12} />Done</i> : data.executionStatus === "failed" ? <i className="automation-flow-node-run-state is-failed" title="Stopped on this step"><CircleAlert size={12} />Stopped</i> : data.executionStatus === "skipped" ? <i className="automation-flow-node-run-state is-skipped" title="Skipped">Skipped</i> : null}</span>
     <strong>{node.name}</strong>
     <p>{node.description || definition.description}</p>
+    {data.referenceControl && <div className="automation-flow-node-references nodrag nopan nowheel">
+      <AutomationReferencePicker
+        workspaceId={data.referenceControl.workspaceId}
+        projectId={data.referenceControl.projectId}
+        canvasReferences={data.referenceControl.canvasReferences}
+        personas={data.referenceControl.personas}
+        selectedIds={data.referenceControl.selectedIds}
+        maxItems={data.referenceControl.maxItems}
+        disabled={data.referenceControl.disabled}
+        placement="node"
+        onChange={data.referenceControl.onChange}
+      />
+    </div>}
     <span className="automation-flow-node-io" aria-hidden="true">
       <i title={inputPorts.map((port) => port.label).join(", ")}>{inputPorts.length ? `Gets: ${portSummary(inputPorts, "")}` : "Starts here"}</i>
       <i title={connectableOutputs.map((port) => port.label).join(", ")}>{connectableOutputs.length ? `Sends: ${portSummary(connectableOutputs, "")}` : "Ends here"}</i>
@@ -443,7 +466,22 @@ function AutomationNodeConnections({ graph, node, onSelect }: { graph: Automatio
   </section>;
 }
 
-function displayGraph(graph: AutomationWorkflowGraph, readOnly: boolean, selectedNodeId: string | null, execution: AutomationWorkflowExecutionState | null = null, runtimeValues: Record<string, unknown> = {}) {
+function displayGraph(
+  graph: AutomationWorkflowGraph,
+  readOnly: boolean,
+  selectedNodeId: string | null,
+  execution: AutomationWorkflowExecutionState | null = null,
+  runtimeValues: Record<string, unknown> = {},
+  referenceContext?: {
+    workspaceId: string;
+    projectId: string;
+    canvasReferences: AutomationReferenceCandidate[];
+    personas: PersonaRecord[];
+    canRun: boolean;
+    onRuntimeValueChange?: (key: string, value: unknown) => void;
+    onFixedReferencesChange: (nodeId: string, assetIds: string[]) => void;
+  },
+) {
   const pathPreview = previewAutomationPaths(graph, runtimeValues);
   const orderedIds = topologicalAutomationNodeIds(graph);
   const completeOrder = [...orderedIds, ...graph.nodes.filter((node) => !orderedIds.includes(node.id)).map((node) => node.id)];
@@ -487,6 +525,29 @@ function displayGraph(graph: AutomationWorkflowGraph, readOnly: boolean, selecte
           })(),
           executionStatus: executionStatus(node.id),
           previewInactive: !pathPreview.activeNodeIds.has(node.id),
+          referenceControl: (() => {
+            if (node.type !== "input.visual-references" || !referenceContext) return null;
+            const binding = node.bindings.references;
+            const askOnRun = binding?.mode === "ask-on-run";
+            const runtimeKey = `${node.id}.references`;
+            const rawValue = askOnRun
+              ? runtimeValues[runtimeKey] ?? binding?.value ?? node.config.references
+              : binding?.mode === "fixed" && binding.value !== undefined ? binding.value : node.config.references;
+            const selectedIds = Array.isArray(rawValue) ? rawValue.filter((item): item is string => typeof item === "string") : [];
+            const maxItems = Math.min(32, Math.max(1, Number(node.config.maxItems || 8)));
+            return {
+              workspaceId: referenceContext.workspaceId,
+              projectId: referenceContext.projectId,
+              canvasReferences: referenceContext.canvasReferences,
+              personas: referenceContext.personas,
+              selectedIds,
+              maxItems,
+              disabled: askOnRun ? !referenceContext.canRun || !referenceContext.onRuntimeValueChange : readOnly,
+              onChange: askOnRun
+                ? (assetIds: string[]) => referenceContext.onRuntimeValueChange?.(runtimeKey, assetIds)
+                : (assetIds: string[]) => referenceContext.onFixedReferencesChange(node.id, assetIds),
+            };
+          })(),
         },
       })),
       ...(graph.annotations || []).map((annotation) => ({ id: `annotation:${annotation.id}`, type: "automationNote", position: annotation.position, draggable: true, selectable: true, data: { kind: "annotation" as const, annotation, readOnly } })),
@@ -951,7 +1012,7 @@ function MergeInputsEditor({ node, graph, disabled, onChange }: {
   </section>;
 }
 
-export function AutomationWorkflowEditorOverlay({ workspaceId, projectId, workflowId, sources, personas, models, canvasReferences, execution = null, runtimeValues = {}, onClose, onWorkflowChanged }: {
+export function AutomationWorkflowEditorOverlay({ workspaceId, projectId, workflowId, sources, personas, models, canvasReferences, execution = null, runtimeValues = {}, onRuntimeValueChange, onClose, onWorkflowChanged }: {
   workspaceId: string;
   projectId: string;
   workflowId: string;
@@ -961,6 +1022,7 @@ export function AutomationWorkflowEditorOverlay({ workspaceId, projectId, workfl
   canvasReferences: AutomationReferenceCandidate[];
   execution?: AutomationWorkflowExecutionState | null;
   runtimeValues?: Record<string, unknown>;
+  onRuntimeValueChange?: (workflowId: string, key: string, value: unknown) => void;
   onClose: () => void;
   onWorkflowChanged?: (workflowId: string) => void;
 }) {
@@ -1108,9 +1170,40 @@ export function AutomationWorkflowEditorOverlay({ workspaceId, projectId, workfl
 
   useEffect(() => { const timer = window.setTimeout(() => void refreshBindings(), 0); return () => window.clearTimeout(timer); }, [refreshBindings]);
 
+  const mutateGraph = useCallback((mutator: (current: AutomationWorkflowGraph) => AutomationWorkflowGraph) => {
+    if (readOnly) return;
+    setGraph((current) => current ? mutator(structuredClone(current)) : current);
+    setDirty(true);
+  }, [readOnly]);
+
+  const updateFixedNodeReferences = useCallback((nodeId: string, assetIds: string[]) => {
+    mutateGraph((current) => ({
+      ...current,
+      nodes: current.nodes.map((node) => {
+        if (node.id !== nodeId) return node;
+        const binding = node.bindings.references;
+        return {
+          ...node,
+          config: { ...node.config, references: assetIds },
+          bindings: binding?.mode === "fixed"
+            ? { ...node.bindings, references: { ...binding, value: assetIds } }
+            : { ...node.bindings },
+        };
+      }),
+    }));
+  }, [mutateGraph]);
+
   const focusedNodeId = selectedId && graph?.nodes.some((node) => node.id === selectedId) ? selectedId : null;
   const visibleExecution = execution?.workflowId === workflowId ? execution : null;
-  const display = useMemo(() => graph ? displayGraph(graph, Boolean(readOnly), focusedNodeId, visibleExecution, runtimeValues) : { nodes: [], edges: [] }, [focusedNodeId, graph, readOnly, runtimeValues, visibleExecution]);
+  const display = useMemo(() => graph ? displayGraph(graph, Boolean(readOnly), focusedNodeId, visibleExecution, runtimeValues, {
+    workspaceId,
+    projectId,
+    canvasReferences,
+    personas,
+    canRun: capabilities.run,
+    onRuntimeValueChange: onRuntimeValueChange ? (key, value) => onRuntimeValueChange(workflowId, key, value) : undefined,
+    onFixedReferencesChange: updateFixedNodeReferences,
+  }) : { nodes: [], edges: [] }, [canvasReferences, capabilities.run, focusedNodeId, graph, onRuntimeValueChange, personas, projectId, readOnly, runtimeValues, updateFixedNodeReferences, visibleExecution, workflowId, workspaceId]);
   const automationLayoutKey = useMemo(() => graph ? JSON.stringify({
     nodes: graph.nodes.map((node) => [node.id, node.position.x, node.position.y]),
     annotations: (graph.annotations || []).map((annotation) => [annotation.id, annotation.position.x, annotation.position.y, annotation.size.width, annotation.size.height]),
@@ -1164,12 +1257,6 @@ export function AutomationWorkflowEditorOverlay({ workspaceId, projectId, workfl
     if (field.runtimeValueType === "aspect-ratio") return generatorRatiosFor(selectedModel, String(boundValue("resolution") || ""), true).map((value) => ({ value, label: value }));
     return field.options || [];
   }
-
-  const mutateGraph = useCallback((mutator: (current: AutomationWorkflowGraph) => AutomationWorkflowGraph) => {
-    if (readOnly) return;
-    setGraph((current) => current ? mutator(structuredClone(current)) : current);
-    setDirty(true);
-  }, [readOnly]);
 
   const arrangeCurrentView = useCallback(() => {
     setGraph((current) => current ? arrangeWorkflowView(current) : current);
@@ -1516,6 +1603,7 @@ export function AutomationWorkflowEditorOverlay({ workspaceId, projectId, workfl
         workspaceId={workspaceId}
         projectId={projectId}
         canvasReferences={canvasReferences}
+        personas={personas}
         selectedIds={selectedReferenceIds}
         maxItems={Number(selectedNode?.config.maxItems || field.max || 8)}
         disabled={Boolean(readOnly || selectedNode?.bindings[field.id]?.mode === "ask-on-run")}
@@ -1642,7 +1730,10 @@ export function AutomationWorkflowEditorOverlay({ workspaceId, projectId, workfl
               }}
               onNodesChange={onFlowNodesChange}
               onNodeDrag={(_, flowNode) => magnetizeFlowNode(flowNode)}
-              onNodeClick={(_, node) => { setSelectedId(node.id); setPreviewDefinitionKey(null); setInspectorView("settings"); setMobileInspectorOpen(true); }}
+              onNodeClick={(event, node) => {
+                if (event.target instanceof Element && event.target.closest(".automation-reference-field")) return;
+                setSelectedId(node.id); setPreviewDefinitionKey(null); setInspectorView("settings"); setMobileInspectorOpen(true);
+              }}
               onEdgeClick={(_, edge) => { setSelectedId(`edge:${edge.id}`); setPreviewDefinitionKey(null); setInspectorView("guide"); setMobileInspectorOpen(true); }}
               onNodeDragStop={(_, flowNode) => finishFlowNodeDrag(flowNode)}
               onConnect={onConnect}
@@ -1673,7 +1764,7 @@ export function AutomationWorkflowEditorOverlay({ workspaceId, projectId, workfl
               <nav className="automation-inspector-tabs" aria-label="Step panel">
                 <button type="button" className={inspectorView === "guide" ? "is-active" : ""} aria-pressed={inspectorView === "guide"} onClick={() => setInspectorView("guide")}><BookOpen size={14} /><span><b>Guide</b><small>Purpose and examples</small></span></button>
                 <button type="button" className={inspectorView === "settings" ? "is-active" : ""} aria-pressed={inspectorView === "settings"} onClick={() => setInspectorView("settings")}><Settings2 size={14} /><span><b>Settings</b><small>{readOnly ? "Current values" : "Configure this step"}</small></span></button>
-                <button type="button" className={inspectorView === "execution" ? "is-active" : ""} aria-pressed={inspectorView === "execution"} onClick={() => setInspectorView("execution")}><Activity size={14} /><span><b>Execution</b><small>{execution?.runId ? "Inputs, outputs and errors" : "No run selected"}</small></span></button>
+                <button type="button" className={inspectorView === "execution" ? "is-active" : ""} aria-pressed={inspectorView === "execution"} onClick={() => setInspectorView("execution")}><Activity size={14} /><span><b>Execution</b><small>{execution?.runId ? "Inputs · outputs · errors" : "No run selected"}</small></span></button>
               </nav>
               <div className="automation-inspector-scroll">
                 {inspectorView === "guide" ? <>
