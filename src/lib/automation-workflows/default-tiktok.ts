@@ -1,5 +1,6 @@
 import { DEFAULT_AUTOMATION_WORKFLOW_SETTINGS, type AutomationAnnotation, type AutomationEdge, type AutomationEdgeRole, type AutomationGroup, type AutomationNode, type AutomationWorkflowGraph } from "./types";
-import { AUTOMATION_IDENTITY_REFERENCE_INSTRUCTION, AUTOMATION_NO_TEXT_AVOID_INSTRUCTION, AUTOMATION_SOURCE_REFERENCE_INSTRUCTION, imageGenerationPromptJsonSchema } from "../generation-prompt-contract";
+import { AUTOMATION_IDENTITY_REFERENCE_INSTRUCTION, AUTOMATION_NO_TEXT_AVOID_INSTRUCTION, AUTOMATION_SOURCE_REFERENCE_INSTRUCTION } from "../generation-prompt-contract";
+import { automationSlidePlanCollectionJsonSchema } from "./slide-plan-contract";
 
 const defaultPlanningModel = "google/gemini-3.7-flash";
 
@@ -112,16 +113,7 @@ const referenceAssignmentsSchema = strictObject({
     references: list(strictObject({ assetId: text, title: text, role: referenceRole, instruction: text })),
   })),
 });
-const slidePlansSchema = strictObject({
-  slides: list(strictObject({
-    index: integer,
-    role: text,
-    prompt: imageGenerationPromptJsonSchema,
-    referenceAssetIds: strings,
-    text: strictObject({ strategy: textStrategy, sourceText: text, overlayText: text, instruction: text }),
-    confidence,
-  })),
-});
+const slidePlansSchema = automationSlidePlanCollectionJsonSchema;
 const seriesReviewSchema = strictObject({
   passed: { type: "boolean" },
   summary: text,
@@ -235,8 +227,7 @@ export function createDefaultTikTokWorkflowGraph(): AutomationWorkflowGraph {
       config: { template: { choice: "{{ inputs.0 }}", adaptation: { mode: "identity", instruction: "Keep the source concept, hook, sequence and scene intent. Adapt the person or character using the selected identity without inventing a different campaign concept." } } },
     }),
     node({
-      id: "select-adaptation", type: "logic.transform", name: "Continue with the selected adaptation", description: "Pass the one active adaptation contract forward without asking AI to reconstruct the choice.", groupId: "group-adapt", position: { x: 1420, y: 472 },
-      config: { template: { value: "{{ inputs.0 }}" } },
+      id: "select-adaptation", type: "logic.select-one", name: "Continue with the selected adaptation", description: "Pass the one active adaptation contract forward without asking AI to reconstruct the choice.", groupId: "group-adapt", position: { x: 1420, y: 472 },
     }),
     node({
       id: "wardrobe-choice", type: "logic.condition", name: "Change the wardrobe or subjects?", description: "Route the brief through Change or Preserve using the run choice.", groupId: "group-adapt", position: { x: 1090, y: 824 },
@@ -251,8 +242,7 @@ export function createDefaultTikTokWorkflowGraph(): AutomationWorkflowGraph {
       config: { template: { choice: "{{ inputs.0 }}", wardrobe: { mode: "preserve", instruction: "Preserve the exact wardrobe, clothing, accessories, visible subjects and styling from each slide's source image. Identity references must not contribute or replace wardrobe." } } },
     }),
     node({
-      id: "select-wardrobe", type: "logic.transform", name: "Continue with the selected wardrobe rule", description: "Pass the one active wardrobe contract forward unchanged.", groupId: "group-adapt", position: { x: 1750, y: 824 },
-      config: { template: { value: "{{ inputs.0 }}" } },
+      id: "select-wardrobe", type: "logic.select-one", name: "Continue with the selected wardrobe rule", description: "Pass the one active wardrobe contract forward unchanged.", groupId: "group-adapt", position: { x: 1750, y: 824 },
     }),
     node({
       id: "location-choice", type: "logic.condition", name: "Change the location?", description: "Route the brief through Change or Preserve using the run choice.", groupId: "group-adapt", position: { x: 1090, y: 1176 },
@@ -267,8 +257,7 @@ export function createDefaultTikTokWorkflowGraph(): AutomationWorkflowGraph {
       config: { template: { choice: "{{ inputs.0 }}", location: { mode: "preserve", instruction: "Preserve the exact location, background, environment, room layout and visible setting details from each slide's source image. Identity references must not contribute or replace location." } } },
     }),
     node({
-      id: "select-location", type: "logic.transform", name: "Continue with the selected location rule", description: "Pass the one active location contract forward unchanged.", groupId: "group-adapt", position: { x: 1750, y: 1176 },
-      config: { template: { value: "{{ inputs.0 }}" } },
+      id: "select-location", type: "logic.select-one", name: "Continue with the selected location rule", description: "Pass the one active location contract forward unchanged.", groupId: "group-adapt", position: { x: 1750, y: 1176 },
     }),
     node({
       id: "assemble-choices", type: "logic.merge", name: "Lock the run choices", description: "Keep the raw settings and each selected route in one authoritative package that every later check can compare against.", groupId: "group-adapt", position: { x: 2080, y: 1000 },
@@ -338,8 +327,7 @@ export function createDefaultTikTokWorkflowGraph(): AutomationWorkflowGraph {
       responseSchema: copySequenceSchema,
     }),
     node({
-      id: "select-copy", type: "logic.transform", name: "Continue with the selected text", description: "Pass the result from the one active text route to planning.", groupId: "group-adapt", position: { x: 3070, y: 296 },
-      config: { template: { selected: "{{ inputs.0 }}" } },
+      id: "select-copy", type: "logic.select-one", name: "Continue with the selected text", description: "Pass the result from the one active text route to planning.", groupId: "group-adapt", position: { x: 3070, y: 296 },
     }),
     aiNode({
       id: "bind-references", name: "Match references to slides", description: "Choose only the saved identity images each slide actually needs.", groupId: "group-adapt", position: { x: 2740, y: 648 },
@@ -390,8 +378,8 @@ export function createDefaultTikTokWorkflowGraph(): AutomationWorkflowGraph {
       config: { path: "review.passed", operator: "equals", compareValue: true },
     }),
     node({
-      id: "use-approved-plans", type: "logic.transform", name: "Use the approved plans", description: "Keep already approved plans byte-for-byte instead of asking AI to rewrite them again.", groupId: "group-review", position: { x: 5380, y: 120 },
-      config: { template: { value: "{{ inputs.0.plans }}" } },
+      id: "use-approved-plans", type: "logic.select-path", name: "Use the approved plans", description: "Keep already approved plans byte-for-byte instead of asking AI to rewrite them again.", groupId: "group-review", position: { x: 5380, y: 120 },
+      config: { path: "plans" },
     }),
     aiNode({
       id: "repair-slides", name: "Fix only problem slides", description: "Correct failed plans against the original contract and leave approved slides unchanged.", groupId: "group-review", position: { x: 5380, y: 472 },
@@ -401,8 +389,7 @@ export function createDefaultTikTokWorkflowGraph(): AutomationWorkflowGraph {
       maxAttempts: 2,
     }),
     node({
-      id: "select-final-plans", type: "logic.transform", name: "Continue with one final plan set", description: "Join the mutually exclusive approved and repaired paths without dropping any plan fields.", groupId: "group-review", position: { x: 5710, y: 296 },
-      config: { template: { selected: "{{ inputs.0 }}" } },
+      id: "select-final-plans", type: "logic.select-one", name: "Continue with one final plan set", description: "Join the mutually exclusive approved and repaired paths without dropping any plan fields.", groupId: "group-review", position: { x: 5710, y: 296 },
     }),
     node({
       id: "validate-slide-plans", type: "logic.validate-slide-plans", name: "Check every immutable requirement", description: "Stop before creating images if any choice, text rule, slide, reference role or generation field was lost.", position: { x: 6040, y: 296 },

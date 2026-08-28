@@ -5,9 +5,34 @@ import { buildAutomationGenerationPrompt, coreAutomationNodeHandlers } from "../
 import { createDefaultTikTokWorkflowGraph } from "../src/lib/automation-workflows/default-tiktok";
 import { AUTOMATION_IDENTITY_REFERENCE_INSTRUCTION, AUTOMATION_NO_TEXT_AVOID_INSTRUCTION, AUTOMATION_SOURCE_REFERENCE_INSTRUCTION } from "../src/lib/generation-prompt-contract";
 import { validateAutomationStructuredValue } from "../src/lib/automation-workflows/json-schema";
+import { parseAutomationSlidePlanSet } from "../src/lib/automation-workflows/slide-plan-contract";
 import type { AutomationWorkflowGraph } from "../src/lib/automation-workflows/types";
 
 const context = { runId: "run", userId: "user", workspaceId: "workspace", projectId: "project", runtimeInputs: { "source.source": "canvas-source" } };
+
+function checkedPlanSet() {
+  return {
+    schemaVersion: 2 as const,
+    contract: null,
+    decisions: null,
+    slides: [{
+      index: 1,
+      role: "scene",
+      prompt: {
+        title: "Slide 1",
+        task: "Create slide 1.",
+        reference_plan: [{ token: "@Source_composition_1_1", title: "Source composition 1", role: "source composition", instruction: AUTOMATION_SOURCE_REFERENCE_INSTRUCTION }],
+        subject: { identity: "", appearance: [], pose: "source pose", expression: "natural" },
+        scene: { environment: "source", composition: "source", lighting: "source", camera: "source" },
+        preserve: ["Preserve the source composition."],
+        change: [], avoid: [], output: { format: "image", style: "source" },
+      },
+      referenceAssetIds: [],
+      text: { strategy: "keep" as const, sourceText: "", overlayText: "", instruction: "Keep the source without adding text." },
+      confidence: 1,
+    }],
+  };
+}
 
 function linearGraph(aiConfig: Record<string, unknown> = {}): AutomationWorkflowGraph {
   return {
@@ -59,7 +84,7 @@ test("runtime resolves ask-on-run values and carries typed outputs in dependency
     "core.manual-trigger@1": async () => { calls.push("run"); return { run: { id: "run" } }; },
     "input.tiktok-source@1": async ({ config }) => { calls.push("source"); return { source: { id: config.source } }; },
     "ai.structured-task@2": async ({ inputs }) => { calls.push("plan"); return { result: inputs.primary }; },
-    "logic.validate-slide-plans@1": async ({ inputs }) => { calls.push("validate"); return { plans: inputs.data }; },
+    "logic.validate-slide-plans@1": async () => { calls.push("validate"); return { plans: checkedPlanSet() }; },
     "generation.image@1": async ({ inputs }) => { calls.push("generate"); return { assets: inputs.plans }; },
     "output.add-to-canvas@1": async ({ inputs }) => { calls.push("output"); return { result: inputs.source }; },
   };
@@ -92,7 +117,7 @@ test("runtime resumes from durable completed node outputs", async () => {
   const initialOutputs = new Map<string, Record<string, unknown>>([
     ["run", { run: { id: "saved-run" } }],
     ["source", { source: { id: "saved-source" } }],
-    ["validate", { plans: { slides: [] } }],
+    ["validate", { plans: checkedPlanSet() }],
     ["generate", { assets: { items: [] } }],
   ]);
   const result = await executeAutomationGraph({
@@ -142,7 +167,7 @@ test("runtime exposes the retry attempt so handlers can switch to a fallback", a
         if (attempt === 1) throw new Error("retry");
         return { result: {} };
       },
-      "logic.validate-slide-plans@1": async ({ inputs }) => ({ plans: inputs.data }),
+      "logic.validate-slide-plans@1": async () => ({ plans: checkedPlanSet() }),
       "generation.image@1": async () => ({ assets: {} }),
       "output.add-to-canvas@1": async () => ({ result: {} }),
     },
@@ -200,7 +225,7 @@ test("automation generation uses the same structured JSON contract as Canvas Ass
         avoid: ["Do not copy identity from the source composition."],
         output: { format: "9:16 image", style: "candid phone photo" },
       },
-      referenceIds: ["person"],
+      referenceAssetIds: ["person"],
       text: { strategy: "rewrite", sourceText: "Last year", overlayText: "Day one", instruction: "Erase old typography and render only Day one." },
       confidence: 1,
     },
@@ -218,6 +243,56 @@ test("automation generation uses the same structured JSON contract as Canvas Ass
   assert.equal(result.references[1].label, "@Identity_reference_1_2");
 });
 
+test("slide-plan boundary rejects every legacy wrapper, alias and plain-prompt shape", () => {
+  const slide = {
+    index: 1,
+    role: "hook",
+    prompt: {
+      title: "Opening",
+      task: "Recreate the opening portrait.",
+      reference_plan: [{ token: "@Source_composition_1_1", title: "Source composition 1", role: "source composition", instruction: AUTOMATION_SOURCE_REFERENCE_INSTRUCTION }],
+      subject: { identity: "", appearance: [], pose: "source pose", expression: "relaxed" },
+      scene: { environment: "source hallway", composition: "source framing", lighting: "ambient", camera: "phone" },
+      preserve: ["Preserve the source composition."],
+      change: [],
+      avoid: [],
+      output: { format: "9:16 image", style: "candid phone photo" },
+    },
+    referenceAssetIds: [],
+    text: { strategy: "keep", sourceText: "", overlayText: "", instruction: "Keep the source without adding text." },
+    confidence: 1,
+  };
+  const checked = { schemaVersion: 2, contract: null, decisions: null, slides: [slide] };
+  assert.deepEqual(parseAutomationSlidePlanSet(checked), checked);
+  assert.throws(() => parseAutomationSlidePlanSet({ selected: checked }), /one supported slide-plan contract/);
+  assert.throws(() => parseAutomationSlidePlanSet({ value: checked }), /one supported slide-plan contract/);
+  assert.throws(() => parseAutomationSlidePlanSet({ ...checked, slides: [{ ...slide, referenceAssetIds: undefined, referenceIds: [] }] }), /referenceAssetIds is required|referenceIds is not allowed/);
+  assert.throws(() => parseAutomationSlidePlanSet({ ...checked, slides: [{ ...slide, prompt: "Recreate the opening portrait." }] }), /prompt must be an object/);
+});
+
+test("continue-one-path passes one result unchanged and rejects ambiguous joins", async () => {
+  const handler = coreAutomationNodeHandlers()["logic.select-one@1"];
+  const execution = {
+    node: { id: "select", type: "logic.select-one", version: 1, name: "Continue one path", description: "", position: { x: 0, y: 0 }, groupId: null, config: {}, bindings: {}, disabled: false },
+    config: {}, attempt: 1, context, outputsByNode: new Map<string, Record<string, unknown>>(),
+  };
+  const exact = { slides: [{ index: 1, referenceAssetIds: ["person"] }] };
+  assert.deepEqual(await handler({ ...execution, inputs: { data: [exact] } }), { result: exact });
+  await assert.rejects(handler({ ...execution, inputs: { data: [] } }), /exactly one completed input/);
+  await assert.rejects(handler({ ...execution, inputs: { data: [exact, exact] } }), /exactly one completed input/);
+});
+
+test("select-information returns the exact nested value and never guesses another path", async () => {
+  const handler = coreAutomationNodeHandlers()["logic.select-path@1"];
+  const execution = {
+    node: { id: "select", type: "logic.select-path", version: 1, name: "Select information", description: "", position: { x: 0, y: 0 }, groupId: null, config: {}, bindings: {}, disabled: false },
+    attempt: 1, context, outputsByNode: new Map<string, Record<string, unknown>>(),
+  };
+  const plans = { slides: [{ index: 1, referenceAssetIds: [] }] };
+  assert.deepEqual(await handler({ ...execution, config: { path: "review.plans" }, inputs: { data: { review: { plans }, selected: "legacy" } } }), { result: plans });
+  await assert.rejects(handler({ ...execution, config: { path: "review.missing" }, inputs: { data: { review: { plans }, selected: "legacy" } } }), /could not find/);
+});
+
 test("slide validator carries immutable choices, exact text and reference roles into generation", async () => {
   const wardrobeInstruction = "Create a visibly new wardrobe on every applicable slide.";
   const locationInstruction = "Preserve the exact source location and room layout.";
@@ -227,12 +302,12 @@ test("slide validator carries immutable choices, exact text and reference roles 
     sourceAnalysis: { slides: [{ index: 1, visibleText: "last year..." }] },
     choices: {
       settings: { mode: "identity", newOutfit: true, newLocation: false, textStrategy: "remove" },
-      adaptation: { value: { adaptation: { mode: "identity", instruction: adaptationInstruction } } },
-      wardrobe: { value: { wardrobe: { mode: "change", instruction: wardrobeInstruction } } },
-      location: { value: { location: { mode: "preserve", instruction: locationInstruction } } },
+      adaptation: { adaptation: { mode: "identity", instruction: adaptationInstruction } },
+      wardrobe: { wardrobe: { mode: "change", instruction: wardrobeInstruction } },
+      location: { location: { mode: "preserve", instruction: locationInstruction } },
     },
     brief: { decisions: { newOutfit: true, newLocation: false, textStrategy: "remove" } },
-    copy: { selected: { slides: [{ index: 1, sourceText: "last year...", overlayText: "", strategy: "remove", instruction: textInstruction, copyFunction: "hook" }] } },
+    copy: { slides: [{ index: 1, sourceText: "last year...", overlayText: "", strategy: "remove", instruction: textInstruction, copyFunction: "hook" }] },
     references: { slides: [{ index: 1, references: [{ assetId: "person", title: "Maya identity", role: "identity", instruction: AUTOMATION_IDENTITY_REFERENCE_INSTRUCTION }] }] },
   };
   const plans = { slides: [{
@@ -274,6 +349,13 @@ test("slide validator carries immutable choices, exact text and reference roles 
   assert.ok(slide.prompt.change.includes(textInstruction));
   assert.ok(slide.prompt.avoid.some((value) => /No captions/i.test(value)));
   assert.deepEqual(slide.prompt.reference_plan[1], { token: "@Maya_identity_2", title: "Maya identity", role: "identity", instruction: AUTOMATION_IDENTITY_REFERENCE_INSTRUCTION });
+  const reparsedForGeneration = parseAutomationSlidePlanSet(result.plans);
+  assert.deepEqual(reparsedForGeneration.slides[0], plans.slides[0], "generation must consume the exact checked slide-plan format without renaming fields");
+  const generationInput = buildAutomationGenerationPrompt(reparsedForGeneration.slides[0], [
+    { assetId: "source", path: "source.png", mimeType: "image/png", role: "reference-image", label: "Source composition 1" },
+    { assetId: "person", path: "person.png", mimeType: "image/png", role: "reference-image", label: "Maya identity" },
+  ]);
+  assert.deepEqual(JSON.parse(generationInput.prompt), plans.slides[0].prompt, "serialized provider payload must equal the model-authored prompt byte-for-byte by value");
   await assert.rejects(validate({
     node: { id: "validate", type: "logic.validate-slide-plans", version: 1, name: "Validate", description: "", position: { x: 0, y: 0 }, groupId: null, config: {}, bindings: {}, disabled: false },
     config: { maxSlides: 40 },
@@ -290,12 +372,12 @@ test("slide validator rejects identity references assigned to wardrobe", async (
     sourceAnalysis: { slides: [{ index: 1, visibleText: "" }] },
     choices: {
       settings: { mode: "identity", newOutfit: false, newLocation: false, textStrategy: "keep" },
-      adaptation: { value: { adaptation: { mode: "identity", instruction: "Keep the concept." } } },
-      wardrobe: { value: { wardrobe: { mode: "preserve", instruction: "Preserve wardrobe." } } },
-      location: { value: { location: { mode: "preserve", instruction: "Preserve location." } } },
+      adaptation: { adaptation: { mode: "identity", instruction: "Keep the concept." } },
+      wardrobe: { wardrobe: { mode: "preserve", instruction: "Preserve wardrobe." } },
+      location: { location: { mode: "preserve", instruction: "Preserve location." } },
     },
     brief: { decisions: { newOutfit: false, newLocation: false, textStrategy: "keep" } },
-    copy: { selected: { slides: [{ index: 1, sourceText: "", overlayText: "", strategy: "keep", instruction: "Keep no on-screen text.", copyFunction: "visual" }] } },
+    copy: { slides: [{ index: 1, sourceText: "", overlayText: "", strategy: "keep", instruction: "Keep no on-screen text.", copyFunction: "visual" }] },
     references: { slides: [{ index: 1, references: [{ assetId: "person", title: "Maya", role: "outfit", instruction: "Copy the outfit." }] }] },
   };
   const slide = {
@@ -395,6 +477,19 @@ test("runtime rejects handler output keys outside the versioned node contract", 
   }), (error: unknown) => (error as { code?: string }).code === "NODE_OUTPUT_CONTRACT");
 });
 
+test("runtime rejects a legacy slide-plan shape at the typed validator output boundary", async () => {
+  await assert.rejects(executeAutomationGraph({
+    graph: linearGraph(),
+    context,
+    handlers: {
+      "core.manual-trigger@1": async () => ({ run: {} }),
+      "input.tiktok-source@1": async () => ({ source: {} }),
+      "ai.structured-task@2": async () => ({ result: { slides: [] } }),
+      "logic.validate-slide-plans@1": async () => ({ plans: { selected: checkedPlanSet() } }),
+    },
+  }), (error: unknown) => (error as { code?: string }).code === "NODE_OUTPUT_CONTRACT" && /one supported slide-plan contract/.test(String((error as Error).message)));
+});
+
 test("runtime cannot report success when no terminal branch produced output", async () => {
   await assert.rejects(executeAutomationGraph({
     graph: linearGraph(),
@@ -416,7 +511,7 @@ test("failure policies persist a continued node output for safe worker resume", 
       "core.manual-trigger@1": async () => ({ run: {} }),
       "input.tiktok-source@1": async () => ({ source: {} }),
       "ai.structured-task@2": async () => { throw new Error("provider failed"); },
-      "logic.validate-slide-plans@1": async ({ inputs }) => ({ plans: inputs.data }),
+      "logic.validate-slide-plans@1": async () => ({ plans: checkedPlanSet() }),
       "generation.image@1": async () => ({ assets: { items: [] } }),
       "output.add-to-canvas@1": async () => ({ result: { ok: true } }),
     },
@@ -486,7 +581,7 @@ test("continue-empty uses the actual node output contract", async () => {
       "core.manual-trigger@1": async () => ({ run: {} }),
       "input.tiktok-source@1": async () => ({ source: {} }),
       "integration.http-request@1": async () => { throw new Error("remote API failed"); },
-      "logic.validate-slide-plans@1": async ({ inputs }) => ({ plans: inputs.data }),
+      "logic.validate-slide-plans@1": async () => ({ plans: checkedPlanSet() }),
       "generation.image@1": async () => ({ assets: { items: [] } }),
       "output.add-to-canvas@1": async () => ({ result: { ok: true } }),
     },
