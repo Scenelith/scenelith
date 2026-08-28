@@ -14,6 +14,7 @@ const defaultWorkflowSource = readFileSync(new URL("../src/lib/automation-workfl
 const registrySource = readFileSync(new URL("../src/lib/automation-workflows/registry.ts", import.meta.url), "utf8");
 const workflowTypesSource = readFileSync(new URL("../src/lib/automation-workflows/types.ts", import.meta.url), "utf8");
 const themeSource = readFileSync(new URL("../src/app/theme.css", import.meta.url), "utf8");
+const globalsSource = readFileSync(new URL("../src/app/globals.css", import.meta.url), "utf8");
 
 test("canvas run submission does not inject legacy built-in node ids", () => {
   for (const legacyKey of [
@@ -183,9 +184,14 @@ test("automation steps separate a plain-language guide from configuration and de
   assert.match(canvasSource, /execution=\{automationExecution\}/);
   assert.match(canvasSource, /setAutomationExecution\(\{[\s\S]*nodeRuns: \(run\.nodeRuns \|\| \[\]\)\.map/);
   assert.match(themeSource, /is-execution-running/);
-  assert.match(workflowEditorSource, /LoaderCircle className="spin"/);
+  assert.match(themeSource, /\.automation-flow-node\.is-execution-running \{ border-color:var\(--color-border-strong\); box-shadow:none; \}/);
+  assert.match(workflowEditorSource, /generator-running-outline automation-flow-node-running-outline/);
+  assert.match(workflowEditorSource, /<rect className="generator-running-runner"[^>]*pathLength="100"/);
+  assert.match(globalsSource, /\.generator-running-runner \{[^}]*animation:generator-border-runner 1\.85s linear infinite/s);
+  assert.doesNotMatch(workflowEditorSource, /LoaderCircle className="spin"/);
   assert.match(workflowEditorSource, /function AutomationExecutionEdge/);
-  assert.match(workflowEditorSource, /<animateMotion path=\{path\}/);
+  assert.doesNotMatch(workflowEditorSource, /animateMotion|automation-execution-particle/);
+  assert.doesNotMatch(themeSource, /automation-execution-particle/);
   assert.match(workflowEditorSource, /edgeTypes=\{edgeTypes\}/);
   assert.match(workflowEditorSource, /Collapse workflow editor/);
   assert.match(workflowEditorSource, /PanelRightClose/);
