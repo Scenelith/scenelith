@@ -54,7 +54,21 @@ export function previewAutomationPaths(graph: AutomationWorkflowGraph, runtimeIn
         newLocation: config.newLocation !== false,
         textStrategy: String(config.textStrategy || "rewrite"),
         creativeBrief: String(config.creativeBrief || ""),
+        creativeDirectionPolicy: String(config.creativeDirectionPolicy || "override-explicit"),
       });
+      continue;
+    }
+    if (node.type === "logic.resolve-creative-direction") {
+      const connectedSettings = inputPorts.find((port) => port.id === "settings");
+      const settingsEdges = connectedSettings ? incomingByPort.get(connectedSettings.id) || [] : [];
+      const selected = settingsEdges[0] ? edgeValue(settingsEdges[0].source, settingsEdges[0].sourcePort) : undefined;
+      if (selected && selected !== unknownPreviewValue && typeof selected === "object" && !Array.isArray(selected)
+        && !String((selected as Record<string, unknown>).creativeBrief || "").trim()) {
+        outputs.set(`${node.id}:resolved`, selected);
+      } else {
+        outputs.set(`${node.id}:resolved`, unknownPreviewValue);
+        outputs.set(`${node.id}:conflict`, unknownPreviewValue);
+      }
       continue;
     }
     if (node.type === "logic.condition") {

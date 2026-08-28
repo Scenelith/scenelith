@@ -68,10 +68,10 @@ const helpByType: Record<string, AutomationNodeHelp> = {
   },
   "input.creative-settings": {
     whenToUse: "Use this to collect creative decisions that should be easy to change between runs without editing the workflow graph.",
-    setup: ["Connect the run trigger.", "Choose which values stay fixed and which should be Asked on run.", "Write optional creative direction in ordinary language.", "Pass Settings into the AI step that interprets the brief or plans the new content."],
-    exampleFlow: { before: "Start workflow", after: "Interpret creative brief", explanation: "The user chooses what may change; the next AI step turns those choices into an explicit creative contract." },
-    tips: ["Ask only for decisions the operator can understand.", "Keep permanent brand rules inside the AI step rather than asking for them every run."],
-    technicalNotes: ["Produces a structured data object.", "Each runtime-bindable field can be fixed or exposed as a typed run input."],
+    setup: ["Connect the run trigger.", "Choose which values stay fixed and which should be Asked on run.", "Choose whether explicit creative direction may override the switches or must agree with them.", "Write optional creative direction in ordinary language.", "Pass Settings into a direction parser and Resolve creative direction before routing any branches."],
+    exampleFlow: { before: "Start workflow", after: "Parse and resolve creative direction", explanation: "The user chooses defaults and an explicit conflict policy; later visible steps may resolve an unambiguous written instruction without hiding the branch decision." },
+    tips: ["Ask only for decisions the operator can understand.", "Never let free text silently override switches without an explicit policy.", "Keep permanent brand rules inside the AI step rather than asking for them every run."],
+    technicalNotes: ["Produces a structured data object including the selected creative-direction policy.", "Each runtime-bindable field can be fixed or exposed as a typed run input."],
   },
   "input.workflow-data": {
     whenToUse: "Use this when another workflow, a schedule or an event should supply structured information automatically.",
@@ -121,6 +121,13 @@ const helpByType: Record<string, AutomationNodeHelp> = {
     exampleFlow: { before: "Review result", after: "Generate images or Repair plan", explanation: "Approved data follows the yes path. Everything else follows the no path, so no outcome is hidden." },
     tips: ["Name the card after the decision, for example Is the plan approved?", "Always connect or intentionally finish both paths."],
     technicalNotes: ["Evaluates one deterministic predicate and passes the original incoming value unchanged.", "Contains is case-sensitive for text and checks exact items in a list. Empty lists and objects should use the explicit empty rules rather than the yes / true rule."],
+  },
+  "logic.resolve-creative-direction": {
+    whenToUse: "Use this after an AI step has extracted explicit choice requests and ordinary creative requirements from a person's free-form direction.",
+    setup: ["Connect the original Creative choices output to Selected choices.", "Connect the structured extraction to Parsed direction.", "Connect the source analysis so slide-scoped requirements can be checked against real indexes.", "Route Resolved choices into the branch conditions.", "Connect Conflict to a deliberate failed output that shows the person exactly what must be clarified."],
+    exampleFlow: { before: "Creative choices plus parsed direction", after: "Wardrobe, location, adaptation and text routes", explanation: "Explicit written requests may update the switches only under the selected policy; ambiguity and contradictions take a visible error path." },
+    tips: ["Do not connect raw prose directly to this step; first extract strict fields with an AI node.", "Use Explicit direction may override when natural-language control is desired.", "Use Require agreement when the visible switches must remain authoritative."],
+    technicalNotes: ["This step is deterministic and never asks a model to resolve a conflict.", "Multiple different requests for one choice, parser-reported ambiguity, invalid slide indexes and policy conflicts all use the Conflict output.", "Every accepted non-routing requirement receives a stable ID and remains inside the resolved contract."],
   },
   "logic.limit-batch": {
     whenToUse: "Use this immediately before a costly repeated operation to prevent an unexpectedly large list from consuming time or credits.",
@@ -233,6 +240,7 @@ const rawDefinitions: Array<Omit<AutomationNodeDefinition, "help">> = [
       { id: "newLocation", label: "Allow a new location", description: "Disable this when the setting and background must stay close to the source.", kind: "boolean", defaultValue: true, runtimeBindable: true, runtimeValueType: "boolean" },
       { id: "textStrategy", label: "What to do with on-screen text", description: "Keep the original wording, rewrite it for the new concept, or remove it.", kind: "select", defaultValue: "rewrite", runtimeBindable: true, runtimeValueType: "string", options: [{ value: "keep", label: "Keep the original text" }, { value: "rewrite", label: "Rewrite for the new version" }, { value: "remove", label: "Remove on-screen text" }] },
       { id: "creativeBrief", label: "Extra creative direction", description: "Optional. Add the audience, offer, tone or anything the new version must include.", placeholder: "Example: Make it feel like a casual home transformation for women 25–35…", kind: "textarea", defaultValue: "", runtimeBindable: true, runtimeValueType: "string" },
+      { id: "creativeDirectionPolicy", label: "How comments affect the choices", description: "Allow only explicit, unambiguous written requests to update the switches, or stop when the comment disagrees with them.", kind: "select", defaultValue: "override-explicit", runtimeBindable: true, runtimeValueType: "string", options: [{ value: "override-explicit", label: "Explicit comments may update choices" }, { value: "require-agreement", label: "Comments must agree with choices" }] },
     ],
   },
   {
@@ -317,6 +325,19 @@ const rawDefinitions: Array<Omit<AutomationNodeDefinition, "help">> = [
       ] },
       { id: "compareValue", label: "Compare with", placeholder: "Example: approved, 10, or true", kind: "value", defaultValue: null, description: "Type ordinary text, a number, true, false, or leave it empty.", visibleWhen: { fieldId: "operator", values: ["equals", "not-equals", "contains", "greater-than", "less-than"] } },
     ],
+  },
+  {
+    type: "logic.resolve-creative-direction", version: 1, title: "Resolve creative direction", description: "Applies explicit written choices under a visible policy and rejects contradictions before any creative branch runs.", example: "A comment saying keep the same room switches Location to Preserve only when comment overrides are enabled.", category: "logic", icon: "resolve-direction", accent: "amber", retrySafe: true,
+    inputs: [
+      { id: "settings", label: "Selected choices", type: "data", required: true },
+      { id: "direction", label: "Parsed direction", type: "data", required: true },
+      { id: "source", label: "Source analysis", type: "data", required: true },
+    ],
+    outputs: [
+      { id: "resolved", label: "Resolved choices", type: "data", required: true },
+      { id: "conflict", label: "Conflict", type: "error", required: true },
+    ],
+    fields: [],
   },
   {
     type: "logic.limit-batch", version: 1, title: "Limit the amount", description: "Stops an unexpectedly large list before it reaches expensive or slow steps.", example: "Allow no more than 20 slide plans to continue to image generation.", category: "logic", icon: "limit", accent: "neutral", retrySafe: true,

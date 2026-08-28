@@ -61,6 +61,7 @@ import {
   StickyNote,
   Trash2,
   UserRound,
+  WandSparkles,
   Workflow,
   X,
 } from "lucide-react";
@@ -198,6 +199,7 @@ const automationNodeIcons = {
   "select-one": Route,
   "select-path": ListFilter,
   condition: GitBranch,
+  "resolve-direction": WandSparkles,
   limit: Gauge,
   merge: Merge,
   workflow: Workflow,

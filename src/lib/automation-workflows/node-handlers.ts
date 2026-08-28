@@ -178,7 +178,164 @@ async function creativeSettings(execution: AutomationNodeExecution) {
     newLocation: execution.config.newLocation !== false,
     textStrategy: String(execution.config.textStrategy || "rewrite"),
     creativeBrief: String(execution.config.creativeBrief || ""),
+    creativeDirectionPolicy: String(execution.config.creativeDirectionPolicy || "override-explicit"),
   } };
+}
+
+const creativeChoiceValues = {
+  mode: new Set(["concept", "identity"]),
+  newOutfit: new Set(["change", "preserve"]),
+  newLocation: new Set(["change", "preserve"]),
+  textStrategy: new Set(["keep", "rewrite", "remove"]),
+} as const;
+
+const creativeChoiceLabels = {
+  mode: "Adaptation mode",
+  newOutfit: "Wardrobe or subjects",
+  newLocation: "Location or setting",
+  textStrategy: "On-screen text",
+} as const;
+
+type CreativeChoiceField = keyof typeof creativeChoiceValues;
+
+function creativeChoiceSelectedValue(settings: Record<string, unknown>, field: CreativeChoiceField) {
+  if (field === "newOutfit" || field === "newLocation") return settings[field] === false ? "preserve" : "change";
+  return String(settings[field] || (field === "mode" ? "concept" : "rewrite"));
+}
+
+function applyCreativeChoice(settings: Record<string, unknown>, field: CreativeChoiceField, value: string) {
+  if (field === "newOutfit" || field === "newLocation") settings[field] = value === "change";
+  else settings[field] = value;
+}
+
+function creativeDirectionConflict(
+  settings: Record<string, unknown>,
+  direction: Record<string, unknown>,
+  conflicts: Array<Record<string, unknown>>,
+) {
+  const details = conflicts.map((conflict) => String(conflict.message || conflict.description || "Clarify the creative direction")).filter(Boolean);
+  return {
+    conflict: {
+      code: "CREATIVE_DIRECTION_CONFLICT",
+      message: `Creative direction needs clarification: ${details.join("; ")}`,
+      conflicts,
+      selectedChoices: settings,
+      parsedDirection: direction,
+    },
+  };
+}
+
+async function resolveCreativeDirection(execution: AutomationNodeExecution) {
+  const settings = recordValue(execution.inputs.settings);
+  const direction = recordValue(execution.inputs.direction);
+  const source = recordValue(execution.inputs.source);
+  const policy = String(settings.creativeDirectionPolicy || "override-explicit");
+  const rawBrief = String(settings.creativeBrief || "").trim();
+  const conflicts: Array<Record<string, unknown>> = [];
+
+  if (policy !== "override-explicit" && policy !== "require-agreement") {
+    conflicts.push({ field: "creativeDirectionPolicy", message: "Choose how comments should affect the visible choices" });
+  }
+
+  const parsedAmbiguities = Array.isArray(direction.ambiguities) ? direction.ambiguities : [];
+  for (const item of parsedAmbiguities) {
+    const ambiguity = recordValue(item);
+    const description = String(ambiguity.description || "").trim();
+    if (description) conflicts.push({ field: "creativeBrief", kind: "ambiguous", description, evidence: ambiguity.evidence || [] });
+  }
+
+  const groupedRequests = new Map<CreativeChoiceField, Map<string, string[]>>();
+  const normalizedRequests: Array<{ field: CreativeChoiceField; value: string; evidence: string }> = [];
+  const parsedRequests = Array.isArray(direction.choiceRequests) ? direction.choiceRequests : [];
+  for (const item of parsedRequests) {
+    const request = recordValue(item);
+    const field = String(request.field || "") as CreativeChoiceField;
+    const value = String(request.value || "");
+    const evidence = String(request.evidence || "").trim();
+    if (!(field in creativeChoiceValues) || !creativeChoiceValues[field].has(value as never) || !evidence) {
+      conflicts.push({ field: field || "creativeBrief", kind: "invalid-request", message: "One extracted choice request is incomplete or unsupported", request });
+      continue;
+    }
+    normalizedRequests.push({ field, value, evidence });
+    const values = groupedRequests.get(field) || new Map<string, string[]>();
+    values.set(value, [...(values.get(value) || []), evidence]);
+    groupedRequests.set(field, values);
+  }
+
+  for (const [field, values] of groupedRequests) {
+    if (values.size > 1) {
+      conflicts.push({
+        field,
+        kind: "contradiction",
+        message: `${creativeChoiceLabels[field]} is requested in conflicting ways (${[...values.keys()].join(" and ")})`,
+        requests: [...values.entries()].map(([value, evidence]) => ({ value, evidence })),
+      });
+    }
+  }
+
+  const sourceSlides = Array.isArray(source.slides) ? source.slides : [];
+  const sourceIndexes = new Set(sourceSlides.map((item, position) => Number(recordValue(item).index || position + 1)));
+  const allowedCategories = new Set(["audience", "offer", "tone", "visual", "copy", "subject", "product", "pacing", "other"]);
+  const allowedPlacements = new Set(["preserve", "change", "avoid"]);
+  const requirements: Array<{ id: string; instruction: string; evidence: string; category: string; placement: string; slideIndexes: number[] }> = [];
+  const parsedRequirements = Array.isArray(direction.requirements) ? direction.requirements : [];
+  for (const [index, item] of parsedRequirements.entries()) {
+    const requirement = recordValue(item);
+    const instruction = String(requirement.instruction || "").trim();
+    const evidence = String(requirement.evidence || "").trim();
+    const category = String(requirement.category || "");
+    const placement = String(requirement.placement || "");
+    const slideIndexes = Array.isArray(requirement.slideIndexes)
+      ? [...new Set(requirement.slideIndexes.map(Number).filter((value) => Number.isSafeInteger(value) && value > 0))]
+      : [];
+    const invalidIndexes = slideIndexes.filter((slideIndex) => !sourceIndexes.has(slideIndex));
+    if (!instruction || !evidence || !allowedCategories.has(category) || !allowedPlacements.has(placement)) {
+      conflicts.push({ field: "creativeBrief", kind: "invalid-requirement", message: `Creative requirement ${index + 1} is incomplete`, requirement });
+      continue;
+    }
+    if (invalidIndexes.length) {
+      conflicts.push({ field: "creativeBrief", kind: "invalid-slide", message: `Creative requirement ${index + 1} refers to unavailable slide ${invalidIndexes.join(", ")}`, requirement });
+      continue;
+    }
+    requirements.push({ id: `creative-direction-${index + 1}`, instruction, evidence, category, placement, slideIndexes });
+  }
+
+  const resolved = structuredClone(settings);
+  const appliedOverrides: Array<{ field: CreativeChoiceField; previous: string; next: string; evidence: string[] }> = [];
+  for (const [field, values] of groupedRequests) {
+    if (values.size !== 1) continue;
+    const [requested, evidence] = [...values.entries()][0];
+    const selected = creativeChoiceSelectedValue(settings, field);
+    if (selected === requested) continue;
+    if (policy === "require-agreement") {
+      conflicts.push({
+        field,
+        kind: "choice-conflict",
+        message: `${creativeChoiceLabels[field]} is set to ${selected}, while the comment explicitly requests ${requested}`,
+        selected,
+        requested,
+        evidence,
+      });
+      continue;
+    }
+    applyCreativeChoice(resolved, field, requested);
+    appliedOverrides.push({ field, previous: selected, next: requested, evidence });
+  }
+
+  if (conflicts.length) return creativeDirectionConflict(settings, direction, conflicts);
+  return {
+    resolved: {
+      ...resolved,
+      creativeBrief: rawBrief,
+      direction: {
+        raw: rawBrief,
+        summary: String(direction.summary || "").trim(),
+        requirements,
+        choiceRequests: normalizedRequests,
+        appliedOverrides,
+      },
+    },
+  };
 }
 
 async function workflowData(execution: AutomationNodeExecution) {
@@ -590,10 +747,33 @@ async function validateSlidePlans(execution: AutomationNodeExecution) {
   if (typeof settings.newOutfit !== "boolean" || typeof settings.newLocation !== "boolean") throw new Error("The original contract lost its wardrobe or location choice");
   const textStrategy = textStrategyValue(settings.textStrategy);
   const decisions = { newOutfit: settings.newOutfit, newLocation: settings.newLocation, textStrategy };
-  const briefDecisions = recordValue(recordValue(contract.brief).decisions);
+  const brief = recordValue(contract.brief);
+  const briefDecisions = recordValue(brief.decisions);
   if (briefDecisions.newOutfit !== decisions.newOutfit || briefDecisions.newLocation !== decisions.newLocation || briefDecisions.textStrategy !== decisions.textStrategy) {
     throw new Error("The creative brief changed an immutable run choice");
   }
+  const direction = recordValue(settings.direction);
+  const directionRequirements = Array.isArray(direction.requirements) ? direction.requirements : [];
+  const briefRequirements = Array.isArray(brief.requirements) ? brief.requirements : [];
+  if (!isDeepStrictEqual(briefRequirements, directionRequirements)) {
+    throw new Error("The creative brief lost or changed an accepted written requirement");
+  }
+  const requirementIds = new Set<string>();
+  const writtenRequirements = directionRequirements.map((item, position) => {
+    const requirement = recordValue(item);
+    const id = String(requirement.id || "").trim();
+    const instruction = String(requirement.instruction || "").trim();
+    const placement = String(requirement.placement || "");
+    const slideIndexes = Array.isArray(requirement.slideIndexes) ? requirement.slideIndexes.map(Number) : [];
+    if (!id || !instruction || !["preserve", "change", "avoid"].includes(placement)) {
+      throw new Error(`Creative direction requirement ${position + 1} is incomplete`);
+    }
+    if (requirementIds.has(id)) throw new Error(`Creative direction requirement id ${id} is duplicated`);
+    requirementIds.add(id);
+    const unknownIndex = slideIndexes.find((index) => !sourceSlides.some((slide, sourcePosition) => Number(slide.index || sourcePosition + 1) === index));
+    if (unknownIndex !== undefined) throw new Error(`Creative direction requirement ${id} refers to unavailable slide ${unknownIndex}`);
+    return { id, instruction, placement, slideIndexes };
+  });
   const copySlides = Array.isArray(recordValue(contract.copy).slides)
     ? recordValue(contract.copy).slides as unknown[]
     : [];
@@ -681,6 +861,12 @@ async function validateSlidePlans(execution: AutomationNodeExecution) {
     if (!wardrobeArray.includes(wardrobeInstruction)) throw new Error(`Slide ${slide.index} model omitted the exact wardrobe instruction`);
     if (!locationArray.includes(locationInstruction)) throw new Error(`Slide ${slide.index} model omitted the exact location instruction`);
     if (!textArray.includes(textInstruction)) throw new Error(`Slide ${slide.index} model omitted the exact on-screen text instruction`);
+    for (const requirement of writtenRequirements.filter((item) => !item.slideIndexes.length || item.slideIndexes.includes(slide.index))) {
+      const destination = requirement.placement === "preserve" ? slide.prompt.preserve : requirement.placement === "avoid" ? slide.prompt.avoid : slide.prompt.change;
+      if (!destination.includes(requirement.instruction)) {
+        throw new Error(`Slide ${slide.index} omitted creative direction requirement ${requirement.id} from prompt.${requirement.placement}`);
+      }
+    }
     if (textStrategy === "remove" && !slide.prompt.avoid.includes(AUTOMATION_NO_TEXT_AVOID_INSTRUCTION)) throw new Error(`Slide ${slide.index} model omitted the no-text avoid rule`);
     return slide;
   });
@@ -1035,6 +1221,7 @@ export function coreAutomationNodeHandlers(): AutomationNodeHandlers {
     "logic.retry-gate@1": retryGate,
     "logic.select-path@1": selectPath,
     "logic.condition@1": condition,
+    "logic.resolve-creative-direction@1": resolveCreativeDirection,
     "logic.merge@1": merge,
     "logic.limit-batch@1": limitBatch,
     "logic.run-subworkflow@1": runSubworkflow,

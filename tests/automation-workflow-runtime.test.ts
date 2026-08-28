@@ -294,21 +294,57 @@ test("select-information returns the exact nested value and never guesses anothe
   await assert.rejects(handler({ ...execution, config: { path: "review.missing" }, inputs: { data: { review: { plans }, selected: "legacy" } } }), /could not find/);
 });
 
+test("creative direction switches only explicit choices and rejects ambiguity deterministically", async () => {
+  const handler = coreAutomationNodeHandlers()["logic.resolve-creative-direction@1"];
+  const execution = {
+    node: { id: "resolve", type: "logic.resolve-creative-direction", version: 1, name: "Resolve creative direction", description: "", position: { x: 0, y: 0 }, groupId: null, config: {}, bindings: {}, disabled: false },
+    config: {}, attempt: 1, context, outputsByNode: new Map<string, Record<string, unknown>>(),
+  };
+  const settings = { mode: "concept", newOutfit: false, newLocation: true, textStrategy: "rewrite", creativeBrief: "Keep the same room, remove text and make it warm.", creativeDirectionPolicy: "override-explicit" };
+  const direction = {
+    summary: "Preserve the room, remove text and use a warm tone.",
+    requirements: [{ instruction: "Use a warm, candid tone.", evidence: "make it warm", category: "tone", placement: "change", slideIndexes: [] }],
+    choiceRequests: [
+      { field: "newLocation", value: "preserve", evidence: "Keep the same room" },
+      { field: "textStrategy", value: "remove", evidence: "remove text" },
+    ],
+    ambiguities: [],
+  };
+  const result = await handler({ ...execution, inputs: { settings, direction, source: { slides: [{ index: 1 }, { index: 2 }] } } });
+  const resolved = result.resolved as Record<string, unknown>;
+  assert.equal(resolved.newLocation, false);
+  assert.equal(resolved.textStrategy, "remove");
+  assert.equal(resolved.newOutfit, false, "unmentioned choices must remain unchanged");
+  assert.deepEqual((resolved.direction as { requirements: unknown[] }).requirements, [{ id: "creative-direction-1", instruction: "Use a warm, candid tone.", evidence: "make it warm", category: "tone", placement: "change", slideIndexes: [] }]);
+
+  const agreement = await handler({ ...execution, inputs: { settings: { ...settings, creativeDirectionPolicy: "require-agreement" }, direction, source: { slides: [{ index: 1 }, { index: 2 }] } } });
+  assert.equal((agreement.conflict as { code: string }).code, "CREATIVE_DIRECTION_CONFLICT");
+  assert.match(String((agreement.conflict as { message: string }).message), /Location or setting is set to change/);
+
+  const contradictory = await handler({ ...execution, inputs: { settings, direction: { ...direction, choiceRequests: [
+    { field: "newLocation", value: "preserve", evidence: "Keep the same room" },
+    { field: "newLocation", value: "change", evidence: "Move outside" },
+  ] }, source: { slides: [{ index: 1 }, { index: 2 }] } } });
+  assert.match(String((contradictory.conflict as { message: string }).message), /conflicting ways/);
+});
+
 test("slide validator carries immutable choices, exact text and reference roles into generation", async () => {
   const wardrobeInstruction = "Create a visibly new wardrobe on every applicable slide.";
   const locationInstruction = "Preserve the exact source location and room layout.";
   const adaptationPreserveInstruction = "Keep the source concept.";
   const adaptationChangeInstruction = "Change the person.";
   const textInstruction = "Remove and erase every existing word; do not render replacement text.";
+  const writtenInstruction = "Use a warm, candid tone suitable for women 25–35.";
+  const writtenRequirement = { id: "creative-direction-1", instruction: writtenInstruction, evidence: "make it warm for women 25–35", category: "tone", placement: "change", slideIndexes: [] };
   const contract = {
     sourceAnalysis: { slides: [{ index: 1, visibleText: "last year..." }] },
     choices: {
-      settings: { mode: "identity", newOutfit: true, newLocation: false, textStrategy: "remove" },
+      settings: { mode: "identity", newOutfit: true, newLocation: false, textStrategy: "remove", direction: { requirements: [writtenRequirement] } },
       adaptation: { adaptation: { mode: "identity", preserveInstruction: adaptationPreserveInstruction, changeInstruction: adaptationChangeInstruction } },
       wardrobe: { wardrobe: { mode: "change", instruction: wardrobeInstruction } },
       location: { location: { mode: "preserve", instruction: locationInstruction } },
     },
-    brief: { decisions: { newOutfit: true, newLocation: false, textStrategy: "remove" } },
+    brief: { requirements: [writtenRequirement], decisions: { newOutfit: true, newLocation: false, textStrategy: "remove" } },
     copy: { slides: [{ index: 1, sourceText: "last year...", overlayText: "", strategy: "remove", instruction: textInstruction, copyFunction: "hook" }] },
     references: { slides: [{ index: 1, references: [{ assetId: "person", title: "Maya identity", role: "identity", instruction: AUTOMATION_IDENTITY_REFERENCE_INSTRUCTION }] }] },
   };
@@ -325,7 +361,7 @@ test("slide validator carries immutable choices, exact text and reference roles 
       subject: { identity: "Maya", appearance: ["visibly new outfit"], pose: "source pose", expression: "relaxed" },
       scene: { environment: "source hallway", composition: "source framing", lighting: "ambient", camera: "phone" },
       preserve: [adaptationPreserveInstruction, locationInstruction],
-      change: [adaptationChangeInstruction, wardrobeInstruction, textInstruction],
+      change: [adaptationChangeInstruction, wardrobeInstruction, textInstruction, writtenInstruction],
       avoid: [AUTOMATION_NO_TEXT_AVOID_INSTRUCTION],
       output: { format: "9:16 image", style: "candid phone photo" },
     },
@@ -349,6 +385,7 @@ test("slide validator carries immutable choices, exact text and reference roles 
   assert.ok(slide.prompt.preserve.includes(locationInstruction));
   assert.ok(slide.prompt.change.includes(wardrobeInstruction));
   assert.ok(slide.prompt.change.includes(textInstruction));
+  assert.ok(slide.prompt.change.includes(writtenInstruction));
   assert.ok(slide.prompt.avoid.some((value) => /No captions/i.test(value)));
   assert.deepEqual(slide.prompt.reference_plan[1], { token: "@Maya_identity_2", title: "Maya identity", role: "identity", instruction: AUTOMATION_IDENTITY_REFERENCE_INSTRUCTION });
   const reparsedForGeneration = parseAutomationSlidePlanSet(result.plans);
@@ -366,6 +403,14 @@ test("slide validator carries immutable choices, exact text and reference roles 
     context,
     outputsByNode: new Map(),
   }), /model omitted the exact wardrobe instruction/);
+  await assert.rejects(validate({
+    node: { id: "validate", type: "logic.validate-slide-plans", version: 1, name: "Validate", description: "", position: { x: 0, y: 0 }, groupId: null, config: {}, bindings: {}, disabled: false },
+    config: { maxSlides: 40 },
+    inputs: { data: { slides: [{ ...plans.slides[0], prompt: { ...plans.slides[0].prompt, change: [adaptationChangeInstruction, wardrobeInstruction, textInstruction] } }] }, contract, source: { slides: [{ index: 1, assetId: "source" }] }, identity: { assets: [{ id: "person" }] }, references: { assets: [] } },
+    attempt: 1,
+    context,
+    outputsByNode: new Map(),
+  }), /omitted creative direction requirement creative-direction-1/);
 });
 
 test("slide validator rejects identity references assigned to wardrobe", async () => {
@@ -431,9 +476,10 @@ test("default automation keeps every selected rule through an approved no-repair
         "identity.identity": "person-identity",
         "creative-settings.mode": "identity",
         "creative-settings.newOutfit": true,
-        "creative-settings.newLocation": false,
+        "creative-settings.newLocation": true,
         "creative-settings.textStrategy": "remove",
-        "creative-settings.creativeBrief": "",
+        "creative-settings.creativeBrief": "Keep the exact source location.",
+        "creative-settings.creativeDirectionPolicy": "override-explicit",
         "visual-references.references": [],
         "generate-images.modelId": "nano-banana-2",
       },
@@ -445,6 +491,7 @@ test("default automation keeps every selected rule through an approved no-repair
       "input.visual-references@1": async () => ({ references: { assets: [] } }),
       "ai.structured-task@2": async ({ node }) => {
         if (node.id === "analyze-source") return { result: { format: "slideshow", summary: "portrait", theme: "change", narrativeArc: "before to after", language: "English", transformationBoundary: 1, slides: [{ index: 1, role: "hook", visibleText: "last year...", visualBrief: "mirror portrait", faceVisibility: "clear", framing: "vertical", confidence: 1 }] } };
+        if (node.id === "interpret-user-direction") return { result: { summary: "Preserve the source location.", requirements: [], choiceRequests: [{ field: "newLocation", value: "preserve", evidence: "Keep the exact source location" }], ambiguities: [] } };
         if (node.id === "inspect-identity") return { result: { assets: [{ id: "person", faceAngle: "front", framing: "portrait", captureStyle: "phone", identitySignals: ["face"] }] } };
         if (node.id === "interpret-brief") return { result: { userIntentSummary: "Change person and outfit", requirements: [], globalRules: [], decisions: { newOutfit: true, newLocation: false, textStrategy: "remove" }, campaign: { direction: "identity adaptation", audience: "viewer", tone: "candid" }, sequence: { hook: "portrait", progression: "change", payoff: "new version" }, slides: [{ index: 1, intent: "hook", mustKeep: ["location"], mayChange: ["identity", "wardrobe"] }] } };
         if (node.id === "remove-copy") return { result: { slides: [{ index: 1, sourceText: "last year...", overlayText: "", strategy: "remove", instruction: textInstruction, copyFunction: "hook" }] } };
@@ -459,6 +506,7 @@ test("default automation keeps every selected rule through an approved no-repair
     },
   });
   assert.deepEqual(result.outputs.get("add-to-canvas")?.result, { ok: true });
+  assert.equal((result.outputs.get("resolve-user-direction")?.resolved as { newLocation: boolean }).newLocation, false, "the explicit comment must switch the real location branch before planning");
   assert.ok(generatedPlans);
   const generatedSlide = (generatedPlans as unknown as { slides: Array<{ prompt: { preserve: string[]; change: string[] }; text: { strategy: string; overlayText: string } }> }).slides[0];
   assert.ok(generatedSlide.prompt.preserve.includes(locationInstruction));

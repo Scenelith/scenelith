@@ -275,7 +275,7 @@ export type AutomationNodeDefinition = {
   description: string;
   example?: string;
   category: "trigger" | "input" | "ai" | "logic" | "integration" | "generation" | "output";
-  icon: "play" | "source" | "identity" | "references" | "choices" | "inbox" | "ai" | "transform" | "select-one" | "select-path" | "condition" | "limit" | "merge" | "workflow" | "repeat" | "retry" | "http" | "validate" | "generate" | "canvas" | "finish";
+  icon: "play" | "source" | "identity" | "references" | "choices" | "inbox" | "ai" | "transform" | "select-one" | "select-path" | "condition" | "resolve-direction" | "limit" | "merge" | "workflow" | "repeat" | "retry" | "http" | "validate" | "generate" | "canvas" | "finish";
   accent: "mint" | "amber" | "blue" | "rose" | "neutral";
   inputs: AutomationNodePortDefinition[];
   outputs: AutomationNodePortDefinition[];
