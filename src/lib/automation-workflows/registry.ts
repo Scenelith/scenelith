@@ -141,7 +141,7 @@ const helpByType: Record<string, AutomationNodeHelp> = {
     setup: ["Connect the completed slide plans.", "Also connect the original slideshow and optional identity so indexes and reference IDs can be checked.", "Set the maximum number of slides.", "Connect Checked plans directly to Create slideshow images."],
     exampleFlow: { before: "Plan and review slides", after: "Create slideshow images", explanation: "Only complete, ordered and bounded plans reach the image provider." },
     tips: ["Keep this check even when an AI review step already approved the content.", "AI review judges quality; this step enforces the mechanical contract."],
-    technicalNotes: ["Converts generic data into the typed slide-plan-set contract.", "Rejects missing prompts, mismatched indexes, duplicate references, unavailable identity references and excessive slide counts. Model reference capacity is checked by generation because the model can be chosen at run time."],
+    technicalNotes: ["Validates the model-authored slide-plan-set contract without adding, rewriting or repairing prompt fields.", "Rejects missing JSON fields, mismatched indexes, changed run choices, altered text operations, invalid reference roles, unavailable references and excessive slide counts. Model reference capacity is checked by generation because the model can be chosen at run time."],
   },
   "generation.image": {
     whenToUse: "Use this when checked slide plans should become generated image assets using the selected provider model and references.",
@@ -325,8 +325,8 @@ const rawDefinitions: Array<Omit<AutomationNodeDefinition, "help">> = [
     ],
   },
   {
-    type: "logic.validate-slide-plans", version: 1, title: "Validate slide plans", description: "Checks every planned slide before images are created and stops incomplete plans.", example: "Catch a missing prompt, wrong slide number or broken reference before it spends image credits.", category: "logic", icon: "validate", accent: "blue",
-    inputs: [{ id: "data", label: "Slide plans", type: "data", required: true }, { id: "source", label: "Original slideshow", type: "tiktok-source" }, { id: "identity", label: "Person or character", type: "identity" }, { id: "references", label: "Visual references", type: "visual-references" }], outputs: [{ id: "plans", label: "Checked plans", type: "slide-plan-set" }], fields: [
+    type: "logic.validate-slide-plans", version: 1, title: "Validate slide plans", description: "Checks every plan against the original choices, copy and references before images are created.", example: "Catch a lost location rule, wrong text strategy or reference-role leak before it spends image credits.", category: "logic", icon: "validate", accent: "blue",
+    inputs: [{ id: "data", label: "Slide plans", type: "data", required: true }, { id: "contract", label: "Original generation contract", type: "data" }, { id: "source", label: "Original slideshow", type: "tiktok-source" }, { id: "identity", label: "Person or character", type: "identity" }, { id: "references", label: "Visual references", type: "visual-references" }], outputs: [{ id: "plans", label: "Checked plans", type: "slide-plan-set" }], fields: [
       { id: "maxSlides", label: "Maximum slides allowed", description: "Stops the workflow when the plan unexpectedly contains more slides than you intended.", kind: "number", defaultValue: 40, min: 1, max: 40 },
     ],
   },

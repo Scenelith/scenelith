@@ -23,11 +23,13 @@ test("default TikTok workflow exposes every AI request and validates", () => {
   assert.equal(merge?.type, "logic.merge");
   assert.equal(merge?.config.mode, "named-object");
   assert.deepEqual(merge?.config.inputs, [
+    { id: "input-source-analysis", name: "sourceAnalysis" },
+    { id: "input-choices", name: "choices" },
     { id: "input-copy", name: "copy" },
     { id: "input-brief", name: "brief" },
     { id: "input-references", name: "references" },
   ]);
-  assert.deepEqual(graph.edges.filter((edge) => edge.target === "assemble-contract").map((edge) => edge.targetPort).sort(), ["input-brief", "input-copy", "input-references"]);
+  assert.deepEqual(graph.edges.filter((edge) => edge.target === "assemble-contract").map((edge) => edge.targetPort).sort(), ["input-brief", "input-choices", "input-copy", "input-references", "input-source-analysis"]);
   assert.ok(graph.edges.filter((edge) => edge.role === "data").length >= 8);
   assert.ok(graph.edges.some((edge) => edge.role === "flow"));
 
