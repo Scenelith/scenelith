@@ -149,6 +149,22 @@ export async function ensureSystemAutomationWorkflows(workspaceId: string, userI
   return workflows;
 }
 
+export async function reconcilePersistedSystemAutomationWorkflows() {
+  const actors = await db.prepare(`SELECT DISTINCT ON (workflow.workspace_id)
+      workflow.workspace_id, member.user_id
+    FROM automation_workflows workflow
+    JOIN workspace_members member ON member.workspace_id = workflow.workspace_id
+    WHERE workflow.system_key IS NOT NULL
+    ORDER BY workflow.workspace_id,
+      CASE WHEN member.role = 'owner' THEN 0 ELSE 1 END,
+      member.created_at,
+      member.user_id`).all() as Array<{ workspace_id: string; user_id: string }>;
+  for (const actor of actors) {
+    await ensureSystemAutomationWorkflows(actor.workspace_id, actor.user_id);
+  }
+  return actors.length;
+}
+
 export async function ensureDefaultAutomationWorkflow(workspaceId: string, userId: string) {
   return await ensureSystemAutomationWorkflow(workspaceId, userId, DEFAULT_TIKTOK_AUTOMATION_TEMPLATE);
 }

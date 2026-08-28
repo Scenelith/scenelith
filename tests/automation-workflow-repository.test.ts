@@ -64,6 +64,19 @@ test("system template upgrades transactionally without replacing the workflow id
   assert.deepEqual(current, [{ status: "published", count: 1 }, { status: "superseded", count: 1 }]);
 });
 
+test("automation worker reconciliation upgrades persisted system workflows before trigger draining", async () => {
+  const owner = await seedOwner();
+  const [before] = (await repository.listAutomationWorkflows(owner.userId, owner.projectId))!;
+  const beforeDetail = await repository.getAutomationWorkflow(owner.userId, before.id);
+  await db.prepare("UPDATE automation_workflows SET system_revision = 0 WHERE id = ?").run(before.id);
+  const reconciled = await repository.reconcilePersistedSystemAutomationWorkflows();
+  const stored = await db.prepare("SELECT system_revision, published_version_id FROM automation_workflows WHERE id = ?")
+    .get(before.id) as { system_revision: number; published_version_id: string };
+  assert.ok(reconciled >= 1);
+  assert.equal(stored.system_revision, DEFAULT_TIKTOK_AUTOMATION_TEMPLATE.revision);
+  assert.notEqual(stored.published_version_id, beforeDetail?.published?.id);
+});
+
 test("system metadata is reconciled without rewriting the published graph", async () => {
   const owner = await seedOwner();
   const [before] = (await repository.listAutomationWorkflows(owner.userId, owner.projectId))!;

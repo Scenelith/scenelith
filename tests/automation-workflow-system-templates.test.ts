@@ -11,6 +11,7 @@ import { validateAutomationWorkflowGraph } from "../src/lib/automation-workflows
 const defaultWorkflowSource = readFileSync(new URL("../src/lib/automation-workflows/default-tiktok.ts", import.meta.url), "utf8");
 const repositorySource = readFileSync(new URL("../src/lib/automation-workflows/repository.ts", import.meta.url), "utf8");
 const systemTemplatesSource = readFileSync(new URL("../src/lib/automation-workflows/system-templates.ts", import.meta.url), "utf8");
+const workerSource = readFileSync(new URL("../src/worker.ts", import.meta.url), "utf8");
 
 test("system workflow identity, metadata and graph factory have one public-core registry", () => {
   assert.ok(AUTOMATION_SYSTEM_WORKFLOW_TEMPLATES.length);
@@ -37,4 +38,8 @@ test("system workflow persistence consumes the registry instead of duplicating t
   assert.match(repositorySource, /template\.createGraph\(\)/);
   assert.doesNotMatch(repositorySource, /"Recreate TikTok slideshow"/);
   assert.doesNotMatch(defaultWorkflowSource, /system\.tiktok-recreate/);
+});
+
+test("automation workers reconcile persisted system workflows before consuming triggers", () => {
+  assert.match(workerSource, /await reconcilePersistedSystemAutomationWorkflows\(\);[\s\S]*await Promise\.all\(\[startTikTokAutomationWorkers\(\), startAutomationWorkflowWorkers\(\)\]\)/);
 });

@@ -10,6 +10,7 @@ import { drainAutomationProductEvents, drainAutomationWorkflowTriggers } from ".
 import { drainAutomationTriggerDeliveries } from "./lib/automation-workflows/deliveries";
 import { drainAutomationNotifications } from "./lib/automation-workflows/notifications";
 import { cleanupAutomationRetention } from "./lib/automation-workflows/retention";
+import { reconcilePersistedSystemAutomationWorkflows } from "./lib/automation-workflows/repository";
 import { expireAllStaleGenerations } from "./lib/generation-lifecycle";
 import { workerIdentity } from "./lib/worker-identity";
 import { drainStorageLifecycle } from "./lib/storage-lifecycle";
@@ -215,7 +216,10 @@ process.once("SIGTERM", () => void shutdown("SIGTERM"));
 process.once("SIGINT", () => void shutdown("SIGINT"));
 
 async function main() {
-  if (runsAutomation) await Promise.all([startTikTokAutomationWorkers(), startAutomationWorkflowWorkers()]);
+  if (runsAutomation) {
+    await reconcilePersistedSystemAutomationWorkflows();
+    await Promise.all([startTikTokAutomationWorkers(), startAutomationWorkflowWorkers()]);
+  }
   await heartbeat();
   heartbeatTimer = setInterval(() => void heartbeat().catch((error) => {
     heartbeatFailures += 1;
