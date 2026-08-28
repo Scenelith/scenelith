@@ -44,7 +44,7 @@ export const automationNodeSchema = z.object({
 
 export type AutomationNode = z.infer<typeof automationNodeSchema>;
 
-export const automationEdgeRoles = ["flow", "data", "error"] as const;
+export const automationEdgeRoles = ["flow", "data", "error", "retry"] as const;
 export type AutomationEdgeRole = (typeof automationEdgeRoles)[number];
 
 export const automationEdgeSchema = z.object({
@@ -58,6 +58,7 @@ export const automationEdgeSchema = z.object({
    * supporting information consumed by a later step. Roles affect execution
    * semantics; the editor keeps every saved connection visible as a solid line.
    * when that step is selected. `error` is an explicit recovery route.
+   * `retry` is the one bounded backward route accepted by a Retry gate.
    *
    * Optional keeps version-one portable workflows importable. The runtime and
    * editor treat a missing role as `flow`; newly authored graphs always store
@@ -274,13 +275,15 @@ export type AutomationNodeDefinition = {
   description: string;
   example?: string;
   category: "trigger" | "input" | "ai" | "logic" | "integration" | "generation" | "output";
-  icon: "play" | "source" | "identity" | "references" | "choices" | "inbox" | "ai" | "transform" | "select-one" | "select-path" | "condition" | "limit" | "merge" | "workflow" | "repeat" | "http" | "validate" | "generate" | "canvas" | "finish";
+  icon: "play" | "source" | "identity" | "references" | "choices" | "inbox" | "ai" | "transform" | "select-one" | "select-path" | "condition" | "limit" | "merge" | "workflow" | "repeat" | "retry" | "http" | "validate" | "generate" | "canvas" | "finish";
   accent: "mint" | "amber" | "blue" | "rose" | "neutral";
   inputs: AutomationNodePortDefinition[];
   outputs: AutomationNodePortDefinition[];
   fields: AutomationNodeFieldDefinition[];
   help: AutomationNodeHelp;
   terminal?: boolean;
+  /** Safe to execute again inside a bounded Retry gate loop. */
+  retrySafe?: boolean;
 };
 
 export type AutomationRunInputField = {

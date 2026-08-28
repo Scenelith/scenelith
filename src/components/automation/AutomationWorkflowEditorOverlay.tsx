@@ -21,6 +21,7 @@ import {
   type ReactFlowInstance,
 } from "@xyflow/react";
 import {
+  Activity,
   ArrowRight,
   ArrowDown,
   ArrowUp,
@@ -52,6 +53,7 @@ import {
   Save,
   Search,
   Route,
+  RotateCcw,
   Settings2,
   ShieldCheck,
   SlidersHorizontal,
@@ -114,7 +116,24 @@ export type AutomationWorkflowExecutionState = {
   workflowId: string;
   runId: string | null;
   status: "queued" | "running" | "completed" | "completed_with_warnings" | "failed" | "cancelled";
-  nodeRuns: Array<{ nodeId: string; status: string; attempt: number }>;
+  nodeRuns: Array<{ id?: string; nodeId: string; status: string; attempt: number; error?: string | null; errorCode?: string | null; startedAt?: string | null; completedAt?: string | null }>;
+};
+
+type AutomationNodeExecutionAttempt = {
+  id: string;
+  nodeId: string;
+  nodeType: string;
+  attempt: number;
+  status: string;
+  input: unknown;
+  output: unknown;
+  error: string | null;
+  errorCode: string | null;
+  chargedCredits: number;
+  outputPorts: string[];
+  reusedFromNodeRunId: string | null;
+  startedAt: string | null;
+  completedAt: string | null;
 };
 
 type AutomationExecutionEdgeData = {
@@ -173,6 +192,7 @@ const automationNodeIcons = {
   merge: Merge,
   workflow: Workflow,
   repeat: ListTree,
+  retry: RotateCcw,
   http: Globe2,
   validate: ShieldCheck,
   generate: ImagePlus,
@@ -950,7 +970,8 @@ export function AutomationWorkflowEditorOverlay({ workspaceId, projectId, workfl
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [search, setSearch] = useState("");
   const [previewDefinitionKey, setPreviewDefinitionKey] = useState<string | null>(null);
-  const [inspectorView, setInspectorView] = useState<"guide" | "settings">("guide");
+  const [inspectorView, setInspectorView] = useState<"guide" | "settings" | "execution">("settings");
+  const [executionResult, setExecutionResult] = useState<{ key: string; attempts: AutomationNodeExecutionAttempt[] }>({ key: "", attempts: [] });
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState("");
@@ -1115,6 +1136,20 @@ export function AutomationWorkflowEditorOverlay({ workspaceId, projectId, workfl
   const selectedEdgeContract = graph && selectedEdge ? connectedStep(graph, selectedEdge) : null;
   const selectedDefinition = selectedNode ? automationNodeDefinition(selectedNode.type, selectedNode.version) : null;
   const previewDefinition = previewDefinitionKey ? automationNodeDefinitions().find((definition) => `${definition.type}@${definition.version}` === previewDefinitionKey) || null : null;
+  const executionDetailKey = selectedNode && execution?.runId && execution.workflowId === workflowId ? `${execution.runId}:${selectedNode.id}` : "";
+  useEffect(() => {
+    if (!selectedNode || !execution?.runId || !executionDetailKey) return;
+    let cancelled = false;
+    void fetch(`/api/automation-runs/${encodeURIComponent(execution.runId)}/nodes/${encodeURIComponent(selectedNode.id)}`, { cache: "no-store" })
+      .then(async (response) => {
+        const body = await response.json() as { attempts?: AutomationNodeExecutionAttempt[]; error?: string };
+        if (!response.ok) throw new Error(body.error || "Could not load step execution");
+        return body.attempts || [];
+      })
+      .then((attempts) => { if (!cancelled) setExecutionResult({ key: executionDetailKey, attempts }); })
+      .catch(() => { if (!cancelled) setExecutionResult({ key: executionDetailKey, attempts: [] }); });
+    return () => { cancelled = true; };
+  }, [execution?.nodeRuns, execution?.runId, execution?.status, executionDetailKey, selectedNode]);
   function selectedFieldOptions(field: AutomationNodeFieldDefinition) {
     if (!selectedNode) return field.options || [];
     if (field.runtimeValueType === "tiktok-source") return sources.map((source) => ({ value: source.id, label: source.label }));
@@ -1180,8 +1215,10 @@ export function AutomationWorkflowEditorOverlay({ workspaceId, projectId, workfl
     const sourceNode = graph.nodes.find((node) => node.id === connection.source);
     const sourceDefinition = sourceNode ? automationNodeDefinition(sourceNode.type, sourceNode.version) : null;
     const sourcePort = sourceDefinition?.outputs.find((port) => port.id === connection.sourceHandle);
+    const targetNode = graph.nodes.find((node) => node.id === connection.target);
+    const retryTarget = targetNode?.type === "logic.retry-gate" && connection.targetHandle === "feedback";
     const alreadyHasMainRoute = graph.edges.some((edge) => edge.target === connection.target && (edge.role || "flow") === "flow");
-    const role: AutomationEdgeRole = sourcePort?.type === "error" ? "error" : alreadyHasMainRoute ? "data" : "flow";
+    const role: AutomationEdgeRole = retryTarget ? "retry" : sourcePort?.type === "error" ? "error" : alreadyHasMainRoute ? "data" : "flow";
     const candidate = {
       id: crypto.randomUUID(),
       source: connection.source,
@@ -1605,7 +1642,7 @@ export function AutomationWorkflowEditorOverlay({ workspaceId, projectId, workfl
               }}
               onNodesChange={onFlowNodesChange}
               onNodeDrag={(_, flowNode) => magnetizeFlowNode(flowNode)}
-              onNodeClick={(_, node) => { setSelectedId(node.id); setPreviewDefinitionKey(null); setInspectorView("guide"); setMobileInspectorOpen(true); }}
+              onNodeClick={(_, node) => { setSelectedId(node.id); setPreviewDefinitionKey(null); setInspectorView("settings"); setMobileInspectorOpen(true); }}
               onEdgeClick={(_, edge) => { setSelectedId(`edge:${edge.id}`); setPreviewDefinitionKey(null); setInspectorView("guide"); setMobileInspectorOpen(true); }}
               onNodeDragStop={(_, flowNode) => finishFlowNodeDrag(flowNode)}
               onConnect={onConnect}
@@ -1630,30 +1667,43 @@ export function AutomationWorkflowEditorOverlay({ workspaceId, projectId, workfl
           <button type="button" className="automation-inspector-close" aria-label="Close node details" onClick={() => { setSelectedId(null); setPreviewDefinitionKey(null); setMobileInspectorOpen(false); }}><X size={15} /></button>
           {previewDefinition ? <div className="automation-definition-preview"><span className={`is-${previewDefinition.accent}`}><AutomationNodeIcon definition={previewDefinition} size={16} /></span><small>{categoryNodeLabels[previewDefinition.category]} NODE TYPE</small><h2>{previewDefinition.title}</h2><AutomationNodeGuide definition={previewDefinition} />{!readOnly && <button type="button" onClick={() => addNode(previewDefinition.type, previewDefinition.version)}><Plus size={13} /> Add to workflow</button>}{systemReadOnly && capabilities.edit && <button type="button" className="is-secondary" disabled={saving} onClick={() => void duplicateSystem()}><Copy size={13} /> Duplicate template to add steps</button>}</div>
             : selectedAnnotation ? <div className="automation-annotation-inspector"><span><StickyNote size={18} /></span><small>GUIDE NOTE · DOES NOT RUN</small><h2>{selectedAnnotation.title}</h2><p>Notes explain the workflow but never enter its execution or data flow.</p><AutomationMarkdown markdown={selectedAnnotation.markdown} />{!readOnly && <><label><b>Note title</b><input value={selectedAnnotation.title} onChange={(event) => mutateGraph((current) => ({ ...current, annotations: (current.annotations || []).map((annotation) => annotation.id === selectedAnnotation.id ? { ...annotation, title: event.target.value } : annotation) }))} /></label><label><b>Markdown</b><textarea value={selectedAnnotation.markdown} onChange={(event) => mutateGraph((current) => ({ ...current, annotations: (current.annotations || []).map((annotation) => annotation.id === selectedAnnotation.id ? { ...annotation, markdown: event.target.value } : annotation) }))} /></label><button type="button" className="is-danger" onClick={() => { mutateGraph((current) => ({ ...current, annotations: (current.annotations || []).filter((annotation) => annotation.id !== selectedAnnotation.id) })); setSelectedId(null); setMobileInspectorOpen(false); }}><Trash2 size={13} /> Remove note</button></>}</div>
-            : selectedEdge ? <div className="automation-inspector-empty is-group"><GitBranch size={20} /><small>HOW THESE STEPS CONNECT</small><h2>{selectedEdgeContract?.sourceNode?.name || "Step"} → {selectedEdgeContract?.targetNode?.name || "Step"}</h2><p>The first step passes <b>{selectedEdgeContract?.sourceLabel || selectedEdge.sourcePort}</b>. The next step receives it as <b>{selectedEdgeContract?.targetLabel || selectedEdge.targetPort}</b>.</p><label className="automation-edge-role"><span><b>Connection purpose</b><small>{(selectedEdge.role || (selectedEdgeContract?.dataType === "error" ? "error" : "flow")) === "flow" ? "Main route: shows what runs next." : selectedEdge.role === "data" ? "Supporting data: supplies an additional value without becoming the main route." : "Recovery route: used only after a handled error."}</small></span><select disabled={Boolean(readOnly || selectedEdgeContract?.dataType === "error")} value={selectedEdge.role || (selectedEdgeContract?.dataType === "error" ? "error" : "flow")} onChange={(event) => mutateGraph((current) => ({ ...current, edges: current.edges.map((edge) => edge.id === selectedEdge.id ? { ...edge, role: event.target.value as AutomationEdgeRole } : edge) }))}>{selectedEdgeContract?.dataType === "error" ? <option value="error">Error recovery route</option> : <><option value="flow">Main execution route</option><option value="data">Supporting data</option></>}</select></label>{!readOnly && <button type="button" className="is-danger" onClick={removeSelectedEdge}><Trash2 size={13} /> Remove connection</button>}</div>
+            : selectedEdge ? <div className="automation-inspector-empty is-group"><GitBranch size={20} /><small>HOW THESE STEPS CONNECT</small><h2>{selectedEdgeContract?.sourceNode?.name || "Step"} → {selectedEdgeContract?.targetNode?.name || "Step"}</h2><p>The first step passes <b>{selectedEdgeContract?.sourceLabel || selectedEdge.sourcePort}</b>. The next step receives it as <b>{selectedEdgeContract?.targetLabel || selectedEdge.targetPort}</b>.</p><label className="automation-edge-role"><span><b>Connection purpose</b><small>{(selectedEdge.role || (selectedEdgeContract?.dataType === "error" ? "error" : "flow")) === "flow" ? "Main route: shows what runs next." : selectedEdge.role === "data" ? "Supporting data: supplies an additional value without becoming the main route." : selectedEdge.role === "retry" ? "Bounded retry: returns corrected data to its Retry gate." : "Recovery route: used only after a handled error."}</small></span><select disabled={Boolean(readOnly || selectedEdgeContract?.dataType === "error" || selectedEdge.role === "retry")} value={selectedEdge.role || (selectedEdgeContract?.dataType === "error" ? "error" : "flow")} onChange={(event) => mutateGraph((current) => ({ ...current, edges: current.edges.map((edge) => edge.id === selectedEdge.id ? { ...edge, role: event.target.value as AutomationEdgeRole } : edge) }))}>{selectedEdge.role === "retry" ? <option value="retry">Bounded retry route</option> : selectedEdgeContract?.dataType === "error" ? <option value="error">Error recovery route</option> : <><option value="flow">Main execution route</option><option value="data">Supporting data</option></>}</select></label>{!readOnly && <button type="button" className="is-danger" onClick={removeSelectedEdge}><Trash2 size={13} /> Remove connection</button>}</div>
             : selectedNode && selectedDefinition ? <>
               <header><span className={`is-${selectedDefinition.accent}`}><AutomationNodeIcon definition={selectedDefinition} size={15} /></span><div><small><b>Node type · {selectedDefinition.title}</b><em>{categoryNodeLabels[selectedDefinition.category]} · {readOnly ? "View only" : "Editable step"}</em></small><h2>{selectedNode.name}</h2></div></header>
               <nav className="automation-inspector-tabs" aria-label="Step panel">
                 <button type="button" className={inspectorView === "guide" ? "is-active" : ""} aria-pressed={inspectorView === "guide"} onClick={() => setInspectorView("guide")}><BookOpen size={14} /><span><b>Guide</b><small>Purpose and examples</small></span></button>
                 <button type="button" className={inspectorView === "settings" ? "is-active" : ""} aria-pressed={inspectorView === "settings"} onClick={() => setInspectorView("settings")}><Settings2 size={14} /><span><b>Settings</b><small>{readOnly ? "Current values" : "Configure this step"}</small></span></button>
+                <button type="button" className={inspectorView === "execution" ? "is-active" : ""} aria-pressed={inspectorView === "execution"} onClick={() => setInspectorView("execution")}><Activity size={14} /><span><b>Execution</b><small>{execution?.runId ? "Inputs, outputs and errors" : "No run selected"}</small></span></button>
               </nav>
               <div className="automation-inspector-scroll">
                 {inspectorView === "guide" ? <>
                   <AutomationNodeGuide definition={selectedDefinition} node={selectedNode} />
-                  <AutomationNodeConnections graph={graph} node={selectedNode} onSelect={(nodeId) => { setSelectedId(nodeId); setPreviewDefinitionKey(null); setInspectorView("guide"); setMobileInspectorOpen(true); }} />
-                </> : <>
+                  <AutomationNodeConnections graph={graph} node={selectedNode} onSelect={(nodeId) => { setSelectedId(nodeId); setPreviewDefinitionKey(null); setInspectorView("settings"); setMobileInspectorOpen(true); }} />
+                </> : inspectorView === "settings" ? <>
                   {systemReadOnly && <section className="automation-template-notice"><Copy size={14} /><span><b>View-only template</b><small>Duplicate the workflow once to change these settings.</small></span></section>}
                   <div className="automation-inspector-section-label"><b>{readOnly ? "Current settings" : "Configure this step"}</b><span>{readOnly ? "Values this workflow will use" : "Saved to your draft"}</span></div>
+                  {readOnly && <section className="automation-node-readonly-identity"><span><b>Step name</b><small>{selectedNode.name}</small></span><span><b>Description</b><small>{selectedNode.description || selectedDefinition.description}</small></span></section>}
                   {!readOnly && <label className="automation-inspector-field"><span><b>Step name</b><small>Give this particular step a clear name. Its node type stays {selectedDefinition.title} everywhere.</small></span><input value={selectedNode.name} onChange={(event) => mutateGraph((current) => ({ ...current, nodes: current.nodes.map((node) => node.id === selectedNode.id ? { ...node, name: event.target.value } : node) }))} /></label>}
                   {!readOnly && <label className="automation-inspector-field"><span><b>Step description</b></span><textarea value={selectedNode.description} onChange={(event) => mutateGraph((current) => ({ ...current, nodes: current.nodes.map((node) => node.id === selectedNode.id ? { ...node, description: event.target.value } : node) }))} /></label>}
                   {selectedMainFields.length ? selectedMainFields.map(renderSelectedField) : <p className="automation-no-settings">This step has no settings. Connect it to the next card and it is ready.</p>}
-                  {selectedAdvancedFields.length > 0 && <details className="automation-node-advanced"><summary><span><b>Advanced settings</b><small>{selectedAdvancedDescription}</small></span><Plus size={14} /></summary><div>{selectedAdvancedFields.map(renderSelectedField)}</div></details>}
+                  {selectedAdvancedFields.length > 0 && <details className="automation-node-advanced" open={readOnly ? true : undefined}><summary><span><b>Advanced settings</b><small>{selectedAdvancedDescription}</small></span><Plus size={14} /></summary><div>{selectedAdvancedFields.map(renderSelectedField)}</div></details>}
                   {selectedSlotType && <section className="automation-deployment-binding"><small>DEPLOYMENT BINDING</small><h3>{selectedSlotType === "credential" ? "Connect credential" : "Connect child workflow"}</h3><p>The portable workflow stores only <b>{selectedSlotKey || "a slot name"}</b>. This local connection is never exported.</p>{!selectedSlotKey ? <i>Set the slot name above first.</i> : selectedSlotType === "credential" ? capabilities.manageCredentials ? <>
                   <label><span>Saved credential</span><select disabled={Boolean(readOnly || saving)} value={selectedDeploymentBinding?.credentialId || ""} onChange={(event) => void saveDeploymentBinding("credential", selectedSlotKey, event.target.value)}><option value="">Choose saved credential…</option>{bindingOptions.credentials.map((credential) => <option key={credential.id} value={credential.id}>{credential.name} · {credential.kind} · {credential.fingerprint}</option>)}</select></label>
                   {!readOnly && <details><summary>Create a new credential</summary><div><label><span>Name</span><input value={newCredentialName} onChange={(event) => setNewCredentialName(event.target.value)} placeholder="Production API key…" /></label>{selectedCredentialKind === "basic" && <label><span>Username</span><input value={newCredentialUsername} onChange={(event) => setNewCredentialUsername(event.target.value)} placeholder="Username…" autoComplete="username" /></label>}{selectedCredentialKind === "header" && <label><span>Header name</span><input value={newCredentialHeaderName} onChange={(event) => setNewCredentialHeaderName(event.target.value)} placeholder="X-API-Key…" /></label>}<label><span>{selectedCredentialKind === "basic" ? "Password" : "Secret value"}</span><input type="password" value={newCredentialValue} onChange={(event) => setNewCredentialValue(event.target.value)} placeholder={selectedCredentialKind === "basic" ? "Password…" : "Secret value…"} autoComplete="new-password" /></label><button type="button" disabled={saving || !credentialFormReady} onClick={() => void createAndBindCredential(selectedSlotKey, selectedCredentialKind)}>Save & connect</button></div></details>}
                   </> : <i>Your workspace role cannot manage credentials.</i> : <select disabled={Boolean(readOnly || saving)} value={selectedDeploymentBinding?.targetWorkflowId || ""} onChange={(event) => void saveDeploymentBinding("subworkflow", selectedSlotKey, event.target.value)}><option value="">Choose published workflow</option>{bindingOptions.workflows.filter((workflow) => workflow.id !== detail?.workflow.id && workflow.publishedVersionId).map((workflow) => <option key={workflow.id} value={workflow.id}>{workflow.name}</option>)}</select>}</section>}
                   {!readOnly && <div className="automation-inspector-danger"><button type="button" onClick={removeSelectedNode}><Trash2 size={13} /> Remove step</button></div>}
-                </>}
+                </> : <section className="automation-node-execution">
+                  <div className="automation-inspector-section-label"><b>Step execution</b><span>{execution?.runId ? `Run ${execution.runId.slice(0, 8)}` : "Run the workflow to capture exact data"}</span></div>
+                  {!execution?.runId ? <div className="automation-execution-empty"><Activity size={18} /><b>No execution selected</b><p>After a run starts, this panel shows every attempt, the exact captured input, output and any error returned by this step.</p></div>
+                    : executionResult.key !== executionDetailKey ? <div className="automation-execution-empty"><Activity size={18} /><b>Loading execution…</b></div>
+                      : executionResult.attempts.length ? executionResult.attempts.map((attempt) => <article key={attempt.id} className={`automation-execution-attempt is-${attempt.status}`}>
+                        <header><span><b>Attempt {attempt.attempt}</b><small>{attempt.status.replaceAll("_", " ")}</small></span>{attempt.chargedCredits > 0 && <em>{attempt.chargedCredits} credits</em>}</header>
+                        {attempt.error && <div className="automation-execution-error"><small>{attempt.errorCode || "STEP_ERROR"}</small><b>{attempt.error}</b></div>}
+                        <details open={Boolean(attempt.error)}><summary>Captured input <Plus size={12} /></summary><pre>{JSON.stringify(attempt.input ?? {}, null, 2)}</pre></details>
+                        <details open={Boolean(attempt.error && attempt.output)}><summary>Produced output <Plus size={12} /></summary><pre>{JSON.stringify(attempt.output ?? null, null, 2)}</pre></details>
+                      </article>)
+                        : <div className="automation-execution-empty"><Activity size={18} /><b>This step did not run</b><p>Its required route may not have produced a value in the selected run.</p></div>}
+                </section>}
               </div>
             </> : <div className="automation-workflow-policy"><Workflow size={20} /><small>WORKFLOW SETTINGS</small><h2>Run behavior</h2><p>Choose what happens when runs overlap. Advanced safety limits stay out of the way until you need them.</p>
               <label><span>When another run is active</span><select disabled={Boolean(readOnly)} value={(graph.settings || DEFAULT_AUTOMATION_WORKFLOW_SETTINGS).overlapPolicy} onChange={(event) => mutateGraph((current) => ({ ...current, settings: { ...DEFAULT_AUTOMATION_WORKFLOW_SETTINGS, ...(current.settings || {}), overlapPolicy: event.target.value as "queue" | "skip" | "cancel-previous" } }))}><option value="queue">Queue the new run</option><option value="skip">Skip the new run</option><option value="cancel-previous">Cancel the previous run</option></select></label>

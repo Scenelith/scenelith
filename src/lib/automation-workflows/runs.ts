@@ -126,7 +126,7 @@ function publicRun(
     queuePosition,
     nodeRuns: nodeRuns.map((item) => ({
       id: String(item.id), nodeId: String(item.node_id), nodeType: String(item.node_type), attempt: Number(item.attempt), status: String(item.status),
-      error: item.error ? String(item.error) : null, chargedCredits: Number(item.charged_credits || 0), startedAt: item.started_at ? String(item.started_at) : null, completedAt: item.completed_at ? String(item.completed_at) : null,
+      error: item.error ? String(item.error) : null, errorCode: item.error_code ? String(item.error_code) : null, chargedCredits: Number(item.charged_credits || 0), startedAt: item.started_at ? String(item.started_at) : null, completedAt: item.completed_at ? String(item.completed_at) : null,
       outputPorts: jsonValue<string[]>(item.output_ports_json || []), hasCapturedInput: Boolean(item.input_json), reusedFromNodeRunId: item.reused_from_node_run_id ? String(item.reused_from_node_run_id) : null,
       input: row.run_kind === "node-preview" ? jsonValue(item.input_json || {}) : undefined,
       output: row.run_kind === "node-preview" && item.output_json ? jsonValue(item.output_json) : undefined,
@@ -241,7 +241,7 @@ export async function enqueueAutomationWorkflowRun(input: {
 export async function getAutomationWorkflowRun(userId: string, runId: string) {
   const row = await db.prepare("SELECT * FROM automation_runs WHERE id = ? AND user_id = ?").get(runId, userId) as RunRow | undefined;
   if (!row || !await userCanAccessProject(userId, row.project_id)) return null;
-  const nodeRuns = await db.prepare("SELECT id, node_id, node_type, attempt, status, input_json, output_json, error, charged_credits, output_ports_json, reused_from_node_run_id, started_at, completed_at FROM automation_node_runs WHERE run_id = ? ORDER BY created_at, attempt")
+  const nodeRuns = await db.prepare("SELECT id, node_id, node_type, attempt, status, input_json, output_json, error, error_code, charged_credits, output_ports_json, reused_from_node_run_id, started_at, completed_at FROM automation_node_runs WHERE run_id = ? ORDER BY created_at, attempt")
     .all(runId) as Array<Record<string, unknown>>;
   const events = await db.prepare("SELECT id, event_type, node_run_id, payload_json, created_at FROM automation_run_events WHERE run_id = ? ORDER BY id").all(runId) as Array<Record<string, unknown>>;
   const queuePosition = row.status === "queued" ? Number((await db.prepare(`SELECT COUNT(*) AS count FROM automation_runs
@@ -255,6 +255,30 @@ export async function getAutomationWorkflowRun(userId: string, runId: string) {
     chargedCredits: Number(totals.charged || 0), warningCount: Number(totals.warnings || 0), runCount: Number(totals.run_count || 0),
     nodeExecutions: Number(root?.tree_node_executions || 0), generatedAssets: Number(root?.tree_generated_assets || 0),
   });
+}
+
+export async function getAutomationWorkflowNodeRunDetails(userId: string, runId: string, nodeId: string) {
+  const run = await db.prepare("SELECT project_id FROM automation_runs WHERE id = ? AND user_id = ?").get(runId, userId) as { project_id: string } | undefined;
+  if (!run || !await userCanAccessProject(userId, run.project_id)) return null;
+  const rows = await db.prepare(`SELECT id, node_id, node_type, attempt, status, input_json, output_json, error, error_code,
+    charged_credits, output_ports_json, reused_from_node_run_id, started_at, completed_at
+    FROM automation_node_runs WHERE run_id = ? AND node_id = ? ORDER BY attempt DESC, created_at DESC`).all(runId, nodeId) as Array<Record<string, unknown>>;
+  return rows.map((item) => ({
+    id: String(item.id),
+    nodeId: String(item.node_id),
+    nodeType: String(item.node_type),
+    attempt: Number(item.attempt),
+    status: String(item.status),
+    input: jsonValue(item.input_json || {}),
+    output: item.output_json ? jsonValue(item.output_json) : null,
+    error: item.error ? String(item.error) : null,
+    errorCode: item.error_code ? String(item.error_code) : null,
+    chargedCredits: Number(item.charged_credits || 0),
+    outputPorts: jsonValue<string[]>(item.output_ports_json || []),
+    reusedFromNodeRunId: item.reused_from_node_run_id ? String(item.reused_from_node_run_id) : null,
+    startedAt: item.started_at ? String(item.started_at) : null,
+    completedAt: item.completed_at ? String(item.completed_at) : null,
+  }));
 }
 
 export async function listAutomationWorkflowRuns(input: {
@@ -769,8 +793,9 @@ async function processRun(run: RunRow) {
           async nodeFailed(node, error) {
             const now = new Date().toISOString();
             const message = error instanceof Error ? error.message : String(error);
-            await db.prepare("UPDATE automation_node_runs SET status = 'failed', error = ?, error_code = 'NODE_PREVIEW_FAILED', completed_at = ?, updated_at = ? WHERE id = ?")
-              .run(message, now, now, previewNodeRunId);
+            const code = typeof (error as { code?: unknown } | null)?.code === "string" ? String((error as { code: string }).code) : "NODE_PREVIEW_FAILED";
+            await db.prepare("UPDATE automation_node_runs SET status = 'failed', error = ?, error_code = ?, completed_at = ?, updated_at = ? WHERE id = ?")
+              .run(message, code, now, now, previewNodeRunId);
             await appendEvent(run.id, "preview.node.failed", { nodeId: node.id, message }, previewNodeRunId);
           },
         },
@@ -860,9 +885,10 @@ async function processRun(run: RunRow) {
           const nodeRun = nodeRunIds.get(`${node.id}:${attempt}`)!;
           const now = new Date().toISOString();
           const message = error instanceof Error ? error.message : String(error);
+          const code = typeof (error as { code?: unknown } | null)?.code === "string" ? String((error as { code: string }).code) : "NODE_FAILED";
           const chargedCredits = Math.max(0, Number((error as { automationUsage?: { chargedCredits?: unknown } } | null)?.automationUsage?.chargedCredits || 0));
-          await db.prepare("UPDATE automation_node_runs SET status = 'failed', error = ?, error_code = 'NODE_FAILED', charged_credits = ?, completed_at = ?, updated_at = ? WHERE id = ?")
-            .run(message, chargedCredits, now, now, nodeRun.id);
+          await db.prepare("UPDATE automation_node_runs SET status = 'failed', error = ?, error_code = ?, charged_credits = ?, completed_at = ?, updated_at = ? WHERE id = ?")
+            .run(message, code, chargedCredits, now, now, nodeRun.id);
           await appendEvent(run.id, "node.failed", { nodeId: node.id, attempt: nodeRun.attempt, message }, nodeRun.id);
         },
         async nodeContinued(node, output, attempt, reason) {
@@ -870,14 +896,14 @@ async function processRun(run: RunRow) {
           const nodeRun = nodeRunIds.get(`${node.id}:${attempt}`)!;
           const now = new Date().toISOString();
           const outputPorts = Object.keys(output).filter((key) => !key.startsWith("__") && output[key] !== undefined);
-          await db.prepare(`UPDATE automation_node_runs SET status = 'completed', output_json = ?, error_code = 'FAILURE_POLICY_APPLIED',
+          await db.prepare(`UPDATE automation_node_runs SET status = 'completed', output_json = ?, error_code = COALESCE(error_code, 'FAILURE_POLICY_APPLIED'),
             output_ports_json = ?, completed_at = ?, updated_at = ? WHERE id = ?`)
             .run(JSON.stringify(output), JSON.stringify(outputPorts), now, now, nodeRun.id);
           await appendEvent(run.id, "node.continued", { nodeId: node.id, attempt: nodeRun.attempt, reason, outputPorts }, nodeRun.id);
         },
-        async nodeSkipped(node: AutomationNode, reason: string) {
+        async nodeSkipped(node: AutomationNode, reason: string, attempt: number) {
           const id = randomUUID();
-          const durableAttempt = (attemptBaseByNode.get(node.id) || 0) + 1;
+          const durableAttempt = (attemptBaseByNode.get(node.id) || 0) + attempt;
           const now = new Date().toISOString();
           await db.prepare(`INSERT INTO automation_node_runs
             (id, run_id, node_id, node_type, attempt, status, error, charged_credits, completed_at, created_at, updated_at)

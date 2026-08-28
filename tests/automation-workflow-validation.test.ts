@@ -10,7 +10,7 @@ test("default TikTok workflow exposes every AI request and validates", () => {
   const result = validateAutomationWorkflowGraph(graph);
   assert.deepEqual(result.issues, []);
   assert.equal(result.valid, true);
-  assert.equal(graph.nodes.filter((node) => node.type === "ai.structured-task").length, 12);
+  assert.equal(graph.nodes.filter((node) => node.type === "ai.structured-task").length, 13);
   for (const aiNode of graph.nodes.filter((node) => node.type === "ai.structured-task")) {
     assert.equal(aiNode.version, 2);
     assert.equal(aiNode.config.outputMode, "structured");

@@ -3763,7 +3763,7 @@ function CanvasWorkspace({ initialProject, projects: initialProjects, initialWor
             progress: number;
             error?: string | null;
             output?: Record<string, { result?: { nodeIds?: string[]; failures?: Array<{ index?: number; error?: string }> } }> | null;
-            nodeRuns?: Array<{ nodeId: string; nodeType: string; status: string; attempt: number }>;
+            nodeRuns?: Array<{ id: string; nodeId: string; nodeType: string; status: string; attempt: number; error?: string | null; errorCode?: string | null; startedAt?: string | null; completedAt?: string | null }>;
           };
           error?: string;
         };
@@ -3773,7 +3773,7 @@ function CanvasWorkspace({ initialProject, projects: initialProjects, initialWor
           workflowId: requestedWorkflowId,
           runId: queued.runId,
           status: run.status,
-          nodeRuns: (run.nodeRuns || []).map((nodeRun) => ({ nodeId: nodeRun.nodeId, status: nodeRun.status, attempt: Number(nodeRun.attempt || 1) })),
+          nodeRuns: (run.nodeRuns || []).map((nodeRun) => ({ id: nodeRun.id, nodeId: nodeRun.nodeId, status: nodeRun.status, attempt: Number(nodeRun.attempt || 1), error: nodeRun.error || null, errorCode: nodeRun.errorCode || null, startedAt: nodeRun.startedAt || null, completedAt: nodeRun.completedAt || null })),
         });
         setAutomationPlanningProgress(run.progress);
         setAutomationStageLabel(run.status === "queued" ? "Waiting for an automation slot" : run.stageLabel || "Running workflow");
@@ -3804,7 +3804,7 @@ function CanvasWorkspace({ initialProject, projects: initialProjects, initialWor
       setAutomationRunId(null);
       setAutomationStatus("failed");
       setAutomationExecution((current) => current?.workflowId === requestedWorkflowId
-        ? { ...current, runId: null, status: current.status === "cancelled" ? "cancelled" : "failed" }
+        ? { ...current, status: current.status === "cancelled" ? "cancelled" : "failed" }
         : current);
       setAutomationStageLabel(error instanceof Error ? error.message : "Workflow failed");
       setNotice(error instanceof Error ? error.message : "Workflow failed");

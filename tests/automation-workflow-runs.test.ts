@@ -102,6 +102,14 @@ test("a saved fixture previews one pinned node and exposes only its port data", 
   assert.equal(preview?.nodeRuns.length, 1);
   assert.deepEqual(preview?.nodeRuns[0].input, { data: { exact: "fixture-value" } });
   assert.deepEqual(preview?.nodeRuns[0].output, { result: { outcome: "completed", message: "completed", data: { exact: "fixture-value" } } });
+  const executionDetails = await runs.getAutomationWorkflowNodeRunDetails(owner.userId, queued!.runId, "finish");
+  assert.equal(executionDetails?.length, 1);
+  assert.deepEqual(executionDetails?.[0].input, { data: { exact: "fixture-value" } });
+  assert.deepEqual(executionDetails?.[0].output, { result: { outcome: "completed", message: "completed", data: { exact: "fixture-value" } } });
+  assert.equal(executionDetails?.[0].error, null);
+  assert.equal(executionDetails?.[0].errorCode, null);
+  const intruder = await seedOwner();
+  assert.equal(await runs.getAutomationWorkflowNodeRunDetails(intruder.userId, queued!.runId, "finish"), null);
 });
 
 test("retry creates a linked run and reuses only safe upstream outputs", async () => {

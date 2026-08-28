@@ -180,7 +180,7 @@ test("automation steps separate a plain-language guide from configuration and de
   assert.doesNotMatch(panelSource, /is-editor-open/);
   assert.match(workflowEditorSource, /AutomationWorkflowExecutionState/);
   assert.match(workflowEditorSource, /nodeRun\.attempt >= current\.attempt/);
-  assert.match(canvasSource, /nodeRuns\?: Array<\{ nodeId: string; nodeType: string; status: string; attempt: number \}>/);
+  assert.match(canvasSource, /nodeRuns\?: Array<\{ id: string; nodeId: string; nodeType: string; status: string; attempt: number;/);
   assert.match(canvasSource, /execution=\{automationExecution\}/);
   assert.match(canvasSource, /setAutomationExecution\(\{[\s\S]*nodeRuns: \(run\.nodeRuns \|\| \[\]\)\.map/);
   assert.match(themeSource, /is-execution-running/);
@@ -211,6 +211,12 @@ test("automation steps separate a plain-language guide from configuration and de
   assert.match(workflowEditorSource, /Disconnect this input before removing it/);
   assert.match(themeSource, /\.automation-node-connections/);
   assert.match(themeSource, /\.automation-inspector-tabs/);
+  assert.match(workflowEditorSource, /useState<"guide" \| "settings" \| "execution">\("settings"\)/);
+  assert.match(workflowEditorSource, /<b>Execution<\/b>/);
+  assert.match(workflowEditorSource, /Captured input/);
+  assert.match(workflowEditorSource, /Produced output/);
+  assert.match(workflowEditorSource, /open=\{readOnly \? true : undefined\}/);
+  assert.match(themeSource, /\.automation-node-execution/);
   assert.match(themeSource, /\.automation-help-flow/);
   assert.match(themeSource, /\.automation-help-steps/);
   assert.match(themeSource, /\.automation-node-technical/);
@@ -241,7 +247,7 @@ test("every registered node type owns hand-written user help and technical notes
   assert.match(registrySource, /Missing help content for automation node type/);
   const registeredTypes = [...registrySource.matchAll(/^\s+type: "([^"]+)"/gm)].map((match) => match[1]);
   const helpedTypes = [...registrySource.matchAll(/^\s+"([^"]+)": \{/gm)].map((match) => match[1]);
-  assert.equal(new Set(registeredTypes).size, 20);
+  assert.equal(new Set(registeredTypes).size, 21);
   assert.deepEqual(new Set(helpedTypes), new Set(registeredTypes));
   for (const definition of automationNodeDefinitions()) {
     assert.ok(definition.description.trim(), `${definition.type} needs a plain-language description`);

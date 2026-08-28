@@ -1591,6 +1591,8 @@ body,
 .automation-flow-stage .react-flow__edge.is-execution-completed .react-flow__edge-path { stroke:color-mix(in srgb,var(--color-mint) 62%,var(--color-stone-2)); }
 .automation-flow-stage .react-flow__edge.is-execution-running .react-flow__edge-path { stroke:var(--color-mint); stroke-width:2.25; }
 .automation-flow-stage .react-flow__edge.is-execution-failed .react-flow__edge-path { stroke:var(--color-rose); stroke-width:2.1; }
+.automation-flow-stage .react-flow__edge.is-retry .react-flow__edge-path { stroke:color-mix(in srgb,var(--color-source) 72%,var(--color-stone-2)); stroke-width:1.8; stroke-dasharray:7 5; }
+.automation-flow-stage .react-flow__edge.is-retry.is-traced .react-flow__edge-path { stroke:var(--color-source); stroke-width:2.25; }
 .automation-execution-edge-label {
   position:absolute;
   padding:4px 7px;
@@ -1719,7 +1721,7 @@ body,
 .automation-node-inspector > header small b { min-width:0; color:var(--color-mint); font:inherit; overflow-wrap:anywhere; text-transform:uppercase; letter-spacing:.07em; }
 .automation-node-inspector > header small em { flex:0 0 auto; color:var(--color-text-dim); font:inherit; font-style:normal; text-transform:uppercase; letter-spacing:.06em; }
 .automation-node-inspector > header h2 { min-width:0; margin:0; color:var(--color-text); font-size:12px; font-weight:720; line-height:1.25; overflow-wrap:anywhere; }
-.automation-inspector-tabs { display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:4px; padding:8px 10px; border-bottom:1px solid var(--color-border-faint); background:var(--color-ink-2); }
+.automation-inspector-tabs { display:grid; grid-template-columns:repeat(3,minmax(0,1fr)); gap:4px; padding:8px 10px; border-bottom:1px solid var(--color-border-faint); background:var(--color-ink-2); }
 .automation-inspector-tabs button { min-width:0; min-height:43px; display:flex; align-items:center; gap:8px; padding:6px 9px; border:1px solid transparent; border-radius:8px; background:transparent; color:var(--color-text-dim); text-align:left; cursor:pointer; }
 .automation-inspector-tabs button:hover { color:var(--color-text-soft); }
 .automation-inspector-tabs button.is-active { border-color:var(--color-border-faint); background:var(--color-ink-4); color:var(--color-mint); }
@@ -1801,6 +1803,31 @@ body,
 .automation-inspector-section-label { display:grid; gap:3px; padding:14px 0 2px; }
 .automation-inspector-section-label b { color:var(--color-text-soft); font-size:11px; }
 .automation-inspector-section-label span { color:var(--color-text-dim); font-size:8px; line-height:1.35; }
+.automation-node-readonly-identity { display:grid; gap:8px; margin-top:10px; padding:10px; border:1px solid var(--color-border-faint); border-radius:8px; background:var(--color-ink-3); }
+.automation-node-readonly-identity > span { display:grid; gap:3px; }
+.automation-node-readonly-identity b { color:var(--color-text-dim); font:700 8px/1.2 var(--font-mono); text-transform:uppercase; letter-spacing:.08em; }
+.automation-node-readonly-identity small { color:var(--color-text-soft); font-size:10px; line-height:1.45; }
+.automation-node-execution { min-height:100%; }
+.automation-execution-empty { min-height:160px; display:grid; place-items:center; align-content:center; gap:7px; padding:24px 14px; border:1px dashed var(--color-border); border-radius:10px; color:var(--color-text-dim); text-align:center; }
+.automation-execution-empty b { color:var(--color-text-soft); font-size:11px; }
+.automation-execution-empty p { max-width:280px; margin:0; color:var(--color-text-muted); font-size:9px; line-height:1.55; }
+.automation-execution-attempt { margin-top:10px; overflow:hidden; border:1px solid var(--color-border-faint); border-radius:9px; background:var(--color-ink-3); }
+.automation-execution-attempt > header { display:flex; align-items:center; justify-content:space-between; gap:10px; padding:9px 10px; border-bottom:1px solid var(--color-border-faint); }
+.automation-execution-attempt > header span { display:flex; align-items:center; gap:7px; }
+.automation-execution-attempt > header b { color:var(--color-text-soft); font-size:10px; }
+.automation-execution-attempt > header small { padding:2px 5px; border-radius:999px; background:var(--color-ink-5); color:var(--color-text-dim); font:700 7px/1.3 var(--font-mono); text-transform:uppercase; }
+.automation-execution-attempt.is-failed > header small { background:color-mix(in srgb,var(--color-danger) 18%,transparent); color:var(--color-danger); }
+.automation-execution-attempt.is-completed > header small { background:color-mix(in srgb,var(--color-mint) 14%,transparent); color:var(--color-mint); }
+.automation-execution-attempt > header em { color:var(--color-text-dim); font:700 8px/1 var(--font-mono); font-style:normal; }
+.automation-execution-error { display:grid; gap:5px; padding:10px; border-bottom:1px solid color-mix(in srgb,var(--color-danger) 24%,transparent); background:color-mix(in srgb,var(--color-danger) 7%,transparent); }
+.automation-execution-error small { color:var(--color-danger); font:700 8px/1.2 var(--font-mono); }
+.automation-execution-error b { color:var(--color-text-soft); font-size:10px; line-height:1.5; }
+.automation-execution-attempt > details { border-bottom:1px solid var(--color-border-faint); }
+.automation-execution-attempt > details:last-child { border-bottom:0; }
+.automation-execution-attempt > details > summary { display:flex; align-items:center; justify-content:space-between; padding:9px 10px; color:var(--color-text-muted); font-size:9px; cursor:pointer; list-style:none; }
+.automation-execution-attempt > details > summary::-webkit-details-marker { display:none; }
+.automation-execution-attempt > details[open] > summary svg { transform:rotate(45deg); }
+.automation-execution-attempt pre { max-height:360px; margin:0; overflow:auto; padding:10px; border-top:1px solid var(--color-border-faint); background:var(--color-ink-1); color:var(--color-text-muted); font:8px/1.55 var(--font-mono); white-space:pre-wrap; word-break:break-word; }
 .automation-setting-summary { display:grid; gap:5px; padding:11px 0; border-bottom:1px solid var(--color-border-faint); }
 .automation-setting-summary > span { min-width:0; display:flex; align-items:center; justify-content:space-between; gap:8px; }
 .automation-setting-summary > span b { overflow:hidden; color:var(--color-text-soft); font-size:9px; text-overflow:ellipsis; white-space:nowrap; }
