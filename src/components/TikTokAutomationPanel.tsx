@@ -4,6 +4,7 @@ import { FileUp, Plus, Settings2, Workflow, X } from "lucide-react";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { generatorRatiosFor, generatorResolutionsFor, type GeneratorModelOption } from "@/components/FrameNode";
 import { InspectorSelect } from "@/components/InspectorSelect";
+import type { AutomationReferenceCandidate } from "@/components/automation/AutomationReferencePicker";
 import { tiktokAutomationPlanningModels } from "@/lib/assistant-models";
 import type { AutomationCapabilities } from "@/editions/contracts/access";
 import type { PersonaRecord } from "@/lib/types";
@@ -66,6 +67,7 @@ export function TikTokAutomationPanel({
   onRuntimeValuesChange,
 }: {
   workspaceId?: string;
+  canvasReferences?: AutomationReferenceCandidate[];
   projectId: string;
   workflowId: string;
   setWorkflowId: (value: string) => void;
