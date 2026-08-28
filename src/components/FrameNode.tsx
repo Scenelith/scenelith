@@ -20,6 +20,7 @@ import { CanvasVideoPlayer, type CanvasVideoPlaybackRequest } from "@/components
 import { VideoMasterPlayer } from "@/components/VideoMasterPlayer";
 import { editorPlaybackUrl } from "@/lib/editor-media";
 import { AddToIdentityPopover } from "@/components/AddToIdentityPopover";
+import { ReferenceMenuShell } from "@/components/ReferenceMenuShell";
 
 export { CanvasVideoPlayer, type CanvasVideoPlaybackRequest } from "@/components/CanvasVideoPlayer";
 
@@ -2023,19 +2024,15 @@ function FrameNodeCardComponent({ id, data, selected }: NodeProps<FrameNode>) {
     const ratioOptions = references.length
       ? [{ value: "original", label: `Original · ${data.ratioMode === "original" ? data.aspectRatio || "auto" : "auto"}`, description: "Match the first connected reference" }, ...ratios.map((ratio) => ({ value: ratio, label: ratio }))]
       : ratios.map((ratio) => ({ value: ratio, label: ratio }));
-    const referenceMenu = openGeneratorMenu === "references" && <div
-      className="generator-reference-menu nodrag nopan nowheel"
-      onPointerDown={(event) => event.stopPropagation()}
-      onPointerMove={(event) => event.stopPropagation()}
-      onWheelCapture={(event) => event.stopPropagation()}
-      onTouchMove={(event) => event.stopPropagation()}
-    >
-      <div className="generator-reference-menu-head"><span>REFERENCES</span><b>{references.length} ATTACHED</b></div>
-      <div className="generator-reference-capacity"><span>{selectedModel?.label || "Selected model"}</span><small>{maxReferences > 0 ? `supports up to ${maxReferences} reference input${maxReferences === 1 ? "" : "s"}` : "does not accept reference inputs"}</small></div>
-      <div className="generator-reference-scroll nowheel" onWheelCapture={(event) => {
+    const referenceMenu = openGeneratorMenu === "references" && <ReferenceMenuShell
+      attachedLabel={`${references.length} ATTACHED`}
+      capacityTitle={selectedModel?.label || "Selected model"}
+      capacityDescription={maxReferences > 0 ? `supports up to ${maxReferences} reference input${maxReferences === 1 ? "" : "s"}` : "does not accept reference inputs"}
+      onScrollWheelCapture={(event) => {
         if ((event.target as HTMLElement).closest(".generator-persona-picker-options")) return;
         event.stopPropagation();
-      }} onTouchMove={(event) => event.stopPropagation()}>
+      }}
+    >
       {references.length > 0 && <div className="generator-reference-current">
         {references.map((reference) => {
           const persona = reference.assetId ? generator.personas.find((item) => item.id === reference.personaId) : null;
@@ -2085,8 +2082,7 @@ function FrameNodeCardComponent({ id, data, selected }: NodeProps<FrameNode>) {
         })()}
         {!generator.personas.length && <div className="generator-reference-empty"><UserRound size={17} /><span>Add identities in the Identities section first.</span></div>}
       </div>
-      </div>
-    </div>;
+    </ReferenceMenuShell>;
     const renderedGeneratorWidth = liveNodeWidth || data.nodeWidth || generatorWidth;
     const promptMaxHeight = Math.round(Math.min(120, Math.max(44, (Number(renderedGeneratorWidth) / ratioValue) * 0.2)));
     return <article className={`frame-node frame-node--generator generator-${outputMediaType} ${selected ? "is-selected" : ""} ${failed ? "is-failed" : ""}`} style={{ width: renderedGeneratorWidth }}>
@@ -2566,10 +2562,12 @@ function FrameNodeCardComponent({ id, data, selected }: NodeProps<FrameNode>) {
         setAssistantBusy(false);
       }
     };
-    const referenceMenu = openGeneratorMenu === "references" && activeReferencePort && <div className="generator-reference-menu nodrag nopan nowheel" onPointerDown={(event) => event.stopPropagation()} onPointerMove={(event) => event.stopPropagation()} onWheelCapture={(event) => event.stopPropagation()}>
-      <div className="generator-reference-menu-head"><span>REFERENCES</span><b>{sceneReferences.length} ATTACHED</b></div>
-      <div className="generator-reference-capacity"><span>{activeReferencePort.label}</span><small>{activeReferencePort.required ? "Required input" : "Optional input"} · up to {activeReferencePort.max || maxReferences}</small></div>
-      <div className="generator-reference-scroll nowheel" onWheelCapture={(event) => { if ((event.target as HTMLElement).closest(".generator-persona-picker-options")) return; event.stopPropagation(); }}>
+    const referenceMenu = openGeneratorMenu === "references" && activeReferencePort && <ReferenceMenuShell
+      attachedLabel={`${sceneReferences.length} ATTACHED`}
+      capacityTitle={activeReferencePort.label}
+      capacityDescription={`${activeReferencePort.required ? "Required input" : "Optional input"} · up to ${activeReferencePort.max || maxReferences}`}
+      onScrollWheelCapture={(event) => { if ((event.target as HTMLElement).closest(".generator-persona-picker-options")) return; event.stopPropagation(); }}
+    >
         {sceneReferences.length > 0 && <div className="generator-reference-current">{sceneReferences.map((reference) => {
           const roleLabel = generatorReferenceRoleLabels[reference.role || ""] || "Connected reference";
           const durationLabel = Number(reference.durationSeconds || 0) > 0 ? ` · ${Number(reference.durationSeconds).toFixed(1)}s` : "";
@@ -2582,8 +2580,7 @@ function FrameNodeCardComponent({ id, data, selected }: NodeProps<FrameNode>) {
           </div>}
           {selectedReferencePersona && <div className="generator-persona-option">{(["reference", "before", "after"] as const).map((variant) => { const assets = selectedReferencePersona.assets.filter((asset) => asset.role === variant); if (!assets.length) return null; return <div className="generator-persona-state" key={variant}><header><span>{variant === "reference" ? "identity" : variant}</span><button type="button" disabled={!assets.some((asset) => !attachedReferenceIds.has(asset.id)) || sceneReferences.length >= maxReferences} onClick={(event) => { event.preventDefault(); event.stopPropagation(); attachPersonaVariant(selectedReferencePersona, variant); }}>Add available</button></header><div>{assets.map((asset, index) => { const active = attachedReferenceIds.has(asset.id); return <button type="button" className={active ? "is-attached" : ""} disabled={!active && sceneReferences.length >= maxReferences} key={asset.id} onClick={(event) => { event.preventDefault(); event.stopPropagation(); attachPersonaAsset(selectedReferencePersona, asset); }}><img src={asset.thumbnailUrl || asset.url} alt="" /><span>{String(index + 1).padStart(2, "0")}</span>{active && <Check size={9} />}</button>; })}</div></div>; })}</div>}
         </div></>}
-      </div>
-    </div>;
+    </ReferenceMenuShell>;
     const renderedMasterWidth = Math.max(860, Number(liveNodeWidth || data.nodeWidth || 920));
     const masterPreviewHeight = Math.round(Math.max(430, Math.min(560, renderedMasterWidth * .58)));
     const promptMaxHeight = Math.round(Math.min(132, Math.max(60, masterPreviewHeight * .2)));
