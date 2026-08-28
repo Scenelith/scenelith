@@ -1591,7 +1591,6 @@ body,
 .automation-flow-stage .react-flow__edge.is-execution-completed .react-flow__edge-path { stroke:color-mix(in srgb,var(--color-mint) 62%,var(--color-stone-2)); }
 .automation-flow-stage .react-flow__edge.is-execution-running .react-flow__edge-path { stroke:var(--color-mint); stroke-width:2.25; }
 .automation-flow-stage .react-flow__edge.is-execution-failed .react-flow__edge-path { stroke:var(--color-rose); stroke-width:2.1; }
-.automation-execution-particle { fill:var(--color-mint); stroke:var(--color-ink-1); stroke-width:2; pointer-events:none; }
 .automation-execution-edge-label {
   position:absolute;
   padding:4px 7px;
@@ -1645,7 +1644,7 @@ body,
 }
 .automation-flow-node.is-selected { border-color: var(--color-mint); box-shadow:0 0 0 2px rgba(114,221,183,.13),0 14px 34px rgba(0,0,0,.28); }
 .automation-flow-node.is-previous,.automation-flow-node.is-next { border-color:color-mix(in srgb,var(--color-mint) 48%,var(--color-border)); }
-.automation-flow-node.is-execution-running { border-color:var(--color-mint); box-shadow:0 0 0 2px rgba(114,221,183,.11),0 14px 34px rgba(0,0,0,.28); }
+.automation-flow-node.is-execution-running { border-color:var(--color-border-strong); box-shadow:none; }
 .automation-flow-node.is-execution-completed { border-color:color-mix(in srgb,var(--color-mint) 48%,var(--color-border)); }
 .automation-flow-node.is-execution-failed { border-color:var(--color-rose); }
 .automation-flow-node.is-execution-skipped { border-color:var(--color-stone-3); }
@@ -2061,7 +2060,7 @@ body,
 .automation-version-list small,.automation-version-list p { margin: 0; color: var(--color-text-dim); font-size: 9px; }
 .automation-editor-shell button:focus-visible,.automation-editor-shell input:focus-visible,.automation-editor-shell select:focus-visible,.automation-editor-shell textarea:focus-visible,.automation-editor-shell summary:focus-visible,.automation-operations button:focus-visible,.automation-operations input:focus-visible,.automation-operations select:focus-visible,.automation-operations textarea:focus-visible,.automation-operations summary:focus-visible { outline:2px solid var(--color-mint); outline-offset:2px; }
 .automation-editor-shell .automation-library-info:focus-visible { outline:0; box-shadow:inset 2px 0 var(--color-mint); }
-@media (prefers-reduced-motion: reduce) { .automation-editor-loading i,.automation-operations-loading i { animation: none; } .automation-flow-node,.automation-boolean i::after { transition:none; } .automation-execution-particle { display:none; } }
+@media (prefers-reduced-motion: reduce) { .automation-editor-loading i,.automation-operations-loading i { animation: none; } .automation-flow-node,.automation-boolean i::after { transition:none; } }
 @media (min-width: 1501px) {
   .automation-editor-body:has(.automation-node-inspector.is-open) { grid-template-columns:minmax(0,1fr) minmax(360px,420px) 268px; }
   .automation-editor-body:has(.automation-node-inspector.is-open) .automation-node-library { grid-column:3; }

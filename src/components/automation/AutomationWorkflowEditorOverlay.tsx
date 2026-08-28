@@ -43,7 +43,6 @@ import {
   Inbox,
   Layers3,
   ListTree,
-  LoaderCircle,
   Merge,
   MoreHorizontal,
   Play,
@@ -192,6 +191,9 @@ function AutomationNodeCard({ data, selected }: NodeProps<Node<FlowNodeData>>) {
     : empty;
   const connectableOutputs = definition.outputs.filter((port) => port.connectable !== false);
   return <div className={`automation-flow-node is-${definition.accent} ${selected ? "is-selected" : ""} ${node.disabled ? "is-disabled" : ""} ${data.previewInactive ? "is-preview-inactive" : ""} ${data.relation ? `is-${data.relation}` : ""} ${data.executionStatus !== "idle" ? `is-execution-${data.executionStatus}` : ""}`}>
+    {data.executionStatus === "running" && <svg className="generator-running-outline automation-flow-node-running-outline" aria-hidden="true">
+      <rect className="generator-running-runner" x="2" y="2" width="calc(100% - 4px)" height="calc(100% - 4px)" rx="15" pathLength="100" />
+    </svg>}
     {inputPorts.map((port, index) => <Handle
       key={port.id}
       id={port.id}
@@ -201,7 +203,7 @@ function AutomationNodeCard({ data, selected }: NodeProps<Node<FlowNodeData>>) {
       style={{ top: `${((index + 1) / (inputPorts.length + 1)) * 100}%` }}
       title={port.label}
     />)}
-    <span className="automation-flow-node-kicker"><AutomationNodeIcon definition={definition} size={13} /><em>{String(data.stepIndex).padStart(2, "0")}</em><b>{definition.title}</b>{data.executionStatus === "running" ? <i className="automation-flow-node-run-state is-running" title="Running now"><LoaderCircle className="spin" size={13} />Running</i> : data.executionStatus === "completed" ? <i className="automation-flow-node-run-state is-completed" title="Completed"><Check size={12} />Done</i> : data.executionStatus === "failed" ? <i className="automation-flow-node-run-state is-failed" title="Stopped on this step"><CircleAlert size={12} />Stopped</i> : data.executionStatus === "skipped" ? <i className="automation-flow-node-run-state is-skipped" title="Skipped">Skipped</i> : null}</span>
+    <span className="automation-flow-node-kicker"><AutomationNodeIcon definition={definition} size={13} /><em>{String(data.stepIndex).padStart(2, "0")}</em><b>{definition.title}</b>{data.executionStatus === "running" ? <i className="automation-flow-node-run-state is-running" title="Running now">Running</i> : data.executionStatus === "completed" ? <i className="automation-flow-node-run-state is-completed" title="Completed"><Check size={12} />Done</i> : data.executionStatus === "failed" ? <i className="automation-flow-node-run-state is-failed" title="Stopped on this step"><CircleAlert size={12} />Stopped</i> : data.executionStatus === "skipped" ? <i className="automation-flow-node-run-state is-skipped" title="Skipped">Skipped</i> : null}</span>
     <strong>{node.name}</strong>
     <p>{node.description || definition.description}</p>
     <span className="automation-flow-node-io" aria-hidden="true">
@@ -282,9 +284,6 @@ function AutomationExecutionEdge({ id, sourceX, sourceY, targetX, targetY, sourc
   const [path, labelX, labelY] = getBezierPath({ sourceX, sourceY, targetX, targetY, sourcePosition, targetPosition, curvature: 0.32 });
   return <>
     <BaseEdge id={id} path={path} markerEnd={markerEnd} style={style} interactionWidth={24} />
-    {edgeData.executionStatus === "running" && <circle className="automation-execution-particle" r="4" aria-hidden="true">
-      <animateMotion path={path} dur="1.05s" repeatCount="indefinite" />
-    </circle>}
     {edgeData.label && <EdgeLabelRenderer><div className="automation-execution-edge-label nodrag nopan" style={{ transform: `translate(-50%, -50%) translate(${labelX}px,${labelY}px)` }}>{edgeData.label}</div></EdgeLabelRenderer>}
   </>;
 }
