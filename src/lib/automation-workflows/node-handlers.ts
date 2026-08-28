@@ -330,6 +330,32 @@ async function selectPath(execution: AutomationNodeExecution) {
   return { result };
 }
 
+async function retryGate(execution: AutomationNodeExecution) {
+  const iteration = Math.max(0, Number(execution.retryIteration || 0));
+  const maximum = Math.min(8, Math.max(1, Number(execution.config.maxRetries || 2)));
+  const feedback = execution.inputs.feedback;
+  if (iteration > maximum) {
+    return {
+      exhausted: {
+        code: "RETRY_EXHAUSTED",
+        message: `Retry limit reached after ${maximum} corrected attempt${maximum === 1 ? "" : "s"}`,
+        attempts: maximum,
+        lastFeedback: feedback,
+      },
+      __retryIteration: iteration,
+    };
+  }
+  let current = iteration === 0 ? execution.inputs.initial : feedback;
+  const feedbackPath = String(execution.config.feedbackPath || "").trim();
+  if (iteration > 0 && feedbackPath) current = pathValue(feedback, feedbackPath);
+  if (current === undefined) {
+    throw Object.assign(new Error(feedbackPath
+      ? `Retry feedback does not contain “${feedbackPath}”`
+      : "Retry feedback did not contain a corrected value"), { code: "RETRY_FEEDBACK_INVALID", automationRetryable: false });
+  }
+  return { current, __retryIteration: iteration };
+}
+
 async function condition(execution: AutomationNodeExecution) {
   const match = evaluateAutomationCondition(execution.inputs.data, execution.config);
   return match ? { yes: execution.inputs.data } : { no: execution.inputs.data };
@@ -373,7 +399,7 @@ function childRuntimeInputs(execution: AutomationNodeExecution) {
 
 async function runSubworkflow(execution: AutomationNodeExecution) {
   if (!execution.context.subworkflow) throw Object.assign(new Error("Subworkflow runtime is unavailable"), { code: "SUBWORKFLOW_UNAVAILABLE" });
-  const child = await execution.context.subworkflow.run({ parentNodeId: execution.node.id, parentAttempt: execution.attempt, slotKey: String(execution.config.subworkflowSlot || ""), payload: execution.inputs.data, runtimeInputs: childRuntimeInputs(execution) });
+  const child = await execution.context.subworkflow.run({ parentNodeId: execution.node.id, parentAttempt: execution.durableAttempt || execution.attempt, slotKey: String(execution.config.subworkflowSlot || ""), payload: execution.inputs.data, runtimeInputs: childRuntimeInputs(execution) });
   return { result: { runId: child.runId, output: child.output, warningCount: child.warningCount }, __warnings: child.warningCount ? [`Child workflow completed with ${child.warningCount} warning${child.warningCount === 1 ? "" : "s"}`] : [] };
 }
 
@@ -385,7 +411,7 @@ async function mapSubworkflow(execution: AutomationNodeExecution) {
   if (items.length > maximum) throw Object.assign(new Error(`For each item received ${items.length} items; its configured maximum is ${maximum}`), { code: "MAP_ITEM_LIMIT" });
   const concurrency = Math.min(execution.context.policy?.maxParallelism || 8, 16, Math.max(1, Number(execution.config.concurrency || 3)));
   const settled = await settleWithConcurrency(items, concurrency, async (item, itemIndex) => execution.context.subworkflow!.run({
-    parentNodeId: execution.node.id, parentAttempt: execution.attempt, slotKey: String(execution.config.subworkflowSlot || ""), payload: item, runtimeInputs: childRuntimeInputs(execution), itemIndex,
+    parentNodeId: execution.node.id, parentAttempt: execution.durableAttempt || execution.attempt, slotKey: String(execution.config.subworkflowSlot || ""), payload: item, runtimeInputs: childRuntimeInputs(execution), itemIndex,
   }));
   const results = settled.flatMap((entry, itemIndex) => entry.status === "fulfilled" ? [{ itemIndex, runId: entry.value.runId, output: entry.value.output, warningCount: entry.value.warningCount }] : []);
   const failures = settled.flatMap((entry, itemIndex) => entry.status === "rejected" ? [{ itemIndex, error: entry.reason instanceof Error ? entry.reason.message : String(entry.reason) }] : []);
@@ -588,8 +614,11 @@ async function validateSlidePlans(execution: AutomationNodeExecution) {
   if (locationRule.mode !== (decisions.newLocation ? "change" : "preserve")) throw new Error("The selected location route disagrees with the run switch");
   const wardrobeInstruction = String(wardrobeRule.instruction || "").trim();
   const locationInstruction = String(locationRule.instruction || "").trim();
-  const adaptationInstruction = String(adaptationRule.instruction || "").trim();
-  if (!wardrobeInstruction || !locationInstruction || !adaptationInstruction) throw new Error("The original contract lost an adaptation, wardrobe or location instruction");
+  const adaptationPreserveInstruction = String(adaptationRule.preserveInstruction || "").trim();
+  const adaptationChangeInstruction = String(adaptationRule.changeInstruction || "").trim();
+  if (!wardrobeInstruction || !locationInstruction || !adaptationPreserveInstruction || !adaptationChangeInstruction) {
+    throw new Error("The original contract lost an adaptation preserve/change, wardrobe or location instruction");
+  }
 
   slides = slides.map((slide) => {
     const copy = copyByIndex.get(slide.index);
@@ -644,11 +673,11 @@ async function validateSlidePlans(execution: AutomationNodeExecution) {
     if (!decisions.newLocation && slide.prompt.change.some((item) => /(?:new|different|change|replace).*(?:location|setting|background|environment)|(?:location|setting|background|environment).*(?:new|different|change|replace)/i.test(item))) {
       throw new Error(`Slide ${slide.index} contradicts the Preserve location choice`);
     }
-    const adaptationArray = adaptationMode === "concept" ? slide.prompt.change : slide.prompt.preserve;
     const wardrobeArray = decisions.newOutfit ? slide.prompt.change : slide.prompt.preserve;
     const locationArray = decisions.newLocation ? slide.prompt.change : slide.prompt.preserve;
     const textArray = textStrategy === "keep" ? slide.prompt.preserve : slide.prompt.change;
-    if (!adaptationArray.includes(adaptationInstruction)) throw new Error(`Slide ${slide.index} model omitted the exact adaptation instruction`);
+    if (!slide.prompt.preserve.includes(adaptationPreserveInstruction)) throw new Error(`Slide ${slide.index} model omitted the exact adaptation preserve instruction`);
+    if (!slide.prompt.change.includes(adaptationChangeInstruction)) throw new Error(`Slide ${slide.index} model omitted the exact adaptation change instruction`);
     if (!wardrobeArray.includes(wardrobeInstruction)) throw new Error(`Slide ${slide.index} model omitted the exact wardrobe instruction`);
     if (!locationArray.includes(locationInstruction)) throw new Error(`Slide ${slide.index} model omitted the exact location instruction`);
     if (!textArray.includes(textInstruction)) throw new Error(`Slide ${slide.index} model omitted the exact on-screen text instruction`);
@@ -1003,6 +1032,7 @@ export function coreAutomationNodeHandlers(): AutomationNodeHandlers {
     "ai.structured-task@2": aiTask,
     "logic.transform@1": transform,
     "logic.select-one@1": selectOne,
+    "logic.retry-gate@1": retryGate,
     "logic.select-path@1": selectPath,
     "logic.condition@1": condition,
     "logic.merge@1": merge,

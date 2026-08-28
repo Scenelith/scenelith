@@ -101,6 +101,13 @@ const helpByType: Record<string, AutomationNodeHelp> = {
     tips: ["Use this only for alternatives where one and only one path can complete.", "Use Merge paths when the next step needs several results together."],
     technicalNotes: ["Fails unless exactly one connected branch produced a value.", "Passes that value unchanged without wrapping, renaming, coercion or fallback."],
   },
+  "logic.retry-gate": {
+    whenToUse: "Use this when a deterministic check can return repair feedback and the corrected value must be checked again through a visible bounded path.",
+    setup: ["Connect the original value to First attempt.", "Connect Current value to the check and its success path.", "Route the check error through an explicit repair step.", "Connect the repaired package back to Retry feedback using a Retry route.", "Connect Retry exhausted to a deliberate failed output."],
+    exampleFlow: { before: "Slide plans rejected by validation", after: "Repair once, then validate the corrected plans again", explanation: "The retry route returns only through this gate, increments a stored counter and stops at the configured limit." },
+    tips: ["Keep generation, publishing and other side effects after the successful check, outside the retry body.", "Include the validator error and repaired value in the feedback package so the final failure remains understandable."],
+    technicalNotes: ["This is the only node that accepts a backward Retry route; ordinary graph cycles remain invalid.", "Retries are bounded, persisted in node outputs and counted against the workflow step-execution limit.", "The feedback field path selects the corrected value without inventing or repairing missing data."],
+  },
   "logic.select-path": {
     whenToUse: "Use this when the next step needs one existing field from a larger result and that field must stay unchanged.",
     setup: ["Connect the larger result.", "Enter the exact field path, such as plans or campaign.brief.", "Connect Selected information to the next step."],
@@ -152,10 +159,10 @@ const helpByType: Record<string, AutomationNodeHelp> = {
   },
   "logic.validate-slide-plans": {
     whenToUse: "Use this as the final deterministic gate before image generation when the workflow creates structured slide plans.",
-    setup: ["Connect the completed slide plans.", "Also connect the original slideshow and optional identity so indexes and reference IDs can be checked.", "Set the maximum number of slides.", "Connect Checked plans directly to Create slideshow images."],
+    setup: ["Connect the completed slide plans.", "Also connect the original slideshow and optional identity so indexes and reference IDs can be checked.", "Set the maximum number of slides.", "Connect Checked plans to image creation.", "When repair is allowed, set failure behavior to Send the error and connect the error to a repair step and bounded Retry gate."],
     exampleFlow: { before: "Plan and review slides", after: "Create slideshow images", explanation: "Only complete, ordered and bounded plans reach the image provider." },
     tips: ["Keep this check even when an AI review step already approved the content.", "AI review judges quality; this step enforces the mechanical contract."],
-    technicalNotes: ["Validates the model-authored slide-plan-set contract without adding, rewriting or repairing prompt fields.", "Rejects missing JSON fields, mismatched indexes, changed run choices, altered text operations, invalid reference roles, unavailable references and excessive slide counts. Model reference capacity is checked by generation because the model can be chosen at run time."],
+    technicalNotes: ["Validates the model-authored slide-plan-set contract without adding, rewriting or repairing prompt fields.", "Rejects missing JSON fields, mismatched indexes, changed run choices, altered text operations, invalid reference roles, unavailable references and excessive slide counts. Model reference capacity is checked by generation because the model can be chosen at run time.", "Error output contains the exact deterministic failure and never substitutes a fallback plan."],
   },
   "generation.image": {
     whenToUse: "Use this when checked slide plans should become generated image assets using the selected provider model and references.",
@@ -236,7 +243,7 @@ const rawDefinitions: Array<Omit<AutomationNodeDefinition, "help">> = [
     ],
   },
   {
-    type: "ai.structured-task", version: 2, title: "AI", description: "Runs one named AI task and returns either readable text or defined data fields.", example: "Name the step for its job: understand the source, write new copy, or check a finished plan.", category: "ai", icon: "ai", accent: "blue",
+    type: "ai.structured-task", version: 2, title: "AI", description: "Runs one named AI task and returns either readable text or defined data fields.", example: "Name the step for its job: understand the source, write new copy, or check a finished plan.", category: "ai", icon: "ai", accent: "blue", retrySafe: true,
     inputs: [
       { id: "primary", label: "Main information", type: "data", required: true },
       { id: "context", label: "Extra context", type: "data", multiple: true },
@@ -265,23 +272,38 @@ const rawDefinitions: Array<Omit<AutomationNodeDefinition, "help">> = [
     ],
   },
   {
-    type: "logic.transform", version: 1, title: "Prepare information", description: "Renames, selects or combines incoming information for the next step.", example: "Take an AI answer with many fields and pass only the slide plans to image generation.", category: "logic", icon: "transform", accent: "neutral",
+    type: "logic.transform", version: 1, title: "Prepare information", description: "Renames, selects or combines incoming information for the next step.", example: "Take an AI answer with many fields and pass only the slide plans to image generation.", category: "logic", icon: "transform", accent: "neutral", retrySafe: true,
     inputs: [{ id: "data", label: "Incoming information", type: "data", required: true, multiple: true }], outputs: [{ id: "result", label: "Prepared information", type: "data" }], fields: [
       { id: "template", label: "What the next step should receive", description: "Build a JSON result with variables. Use {{ byNode.step-id }} for a named card or {{ inputs.0 }} for the first connected value.", kind: "json", defaultValue: {} },
     ],
   },
   {
-    type: "logic.select-one", version: 1, title: "Continue one path", description: "Joins mutually exclusive paths and passes the one completed value forward unchanged.", example: "Continue with either the approved plan or the repaired plan, but never both.", category: "logic", icon: "select-one", accent: "neutral",
+    type: "logic.select-one", version: 1, title: "Continue one path", description: "Joins mutually exclusive paths and passes the one completed value forward unchanged.", example: "Continue with either the approved plan or the repaired plan, but never both.", category: "logic", icon: "select-one", accent: "neutral", retrySafe: true,
     inputs: [{ id: "data", label: "Alternative results", type: "data", required: true, multiple: true }], outputs: [{ id: "result", label: "Selected information", type: "data" }], fields: [],
   },
   {
-    type: "logic.select-path", version: 1, title: "Select information", description: "Takes one existing field from incoming information and passes its value forward unchanged.", example: "Continue with the plans field from a larger review package without reconstructing it.", category: "logic", icon: "select-path", accent: "neutral",
+    type: "logic.retry-gate", version: 1, title: "Retry gate", description: "Returns corrected information to a check through one explicit bounded retry route.", example: "When validation rejects a plan, repair it and send it back through this gate up to two times.", category: "logic", icon: "retry", accent: "amber", retrySafe: true,
+    inputs: [
+      { id: "initial", label: "First attempt", type: "data", required: true },
+      { id: "feedback", label: "Retry feedback", type: "data" },
+    ],
+    outputs: [
+      { id: "current", label: "Current value", type: "data", required: true },
+      { id: "exhausted", label: "Retry exhausted", type: "error", required: true },
+    ],
+    fields: [
+      { id: "maxRetries", label: "Maximum retries", description: "How many corrected values may return through the Retry route after the first attempt.", kind: "number", defaultValue: 2, min: 1, max: 8 },
+      { id: "feedbackPath", label: "Corrected value field", description: "Optional field path inside the feedback package, for example plans. Leave empty when the feedback itself is the corrected value.", placeholder: "plans", kind: "text", defaultValue: "", advanced: true },
+    ],
+  },
+  {
+    type: "logic.select-path", version: 1, title: "Select information", description: "Takes one existing field from incoming information and passes its value forward unchanged.", example: "Continue with the plans field from a larger review package without reconstructing it.", category: "logic", icon: "select-path", accent: "neutral", retrySafe: true,
     inputs: [{ id: "data", label: "Incoming information", type: "data", required: true }], outputs: [{ id: "result", label: "Selected information", type: "data" }], fields: [
       { id: "path", label: "Field to continue", description: "Enter the exact field path, for example plans or campaign.brief. The run stops if that field is missing.", placeholder: "plans", kind: "text", required: true, defaultValue: "" },
     ],
   },
   {
-    type: "logic.condition", version: 1, title: "Choose a path", description: "Checks one rule and sends the information down the matching path.", example: "If review status is approved, generate images. Otherwise, send the plan back for repair.", category: "logic", icon: "condition", accent: "amber",
+    type: "logic.condition", version: 1, title: "Choose a path", description: "Checks one rule and sends the information down the matching path.", example: "If review status is approved, generate images. Otherwise, send the plan back for repair.", category: "logic", icon: "condition", accent: "amber", retrySafe: true,
     inputs: [{ id: "data", label: "Information to check", type: "data", required: true }], outputs: [
       { id: "yes", label: "Rule matches", type: "data", required: true }, { id: "no", label: "Rule does not match", type: "data", required: true },
     ], fields: [
@@ -297,13 +319,13 @@ const rawDefinitions: Array<Omit<AutomationNodeDefinition, "help">> = [
     ],
   },
   {
-    type: "logic.limit-batch", version: 1, title: "Limit the amount", description: "Stops an unexpectedly large list before it reaches expensive or slow steps.", example: "Allow no more than 20 slide plans to continue to image generation.", category: "logic", icon: "limit", accent: "neutral",
+    type: "logic.limit-batch", version: 1, title: "Limit the amount", description: "Stops an unexpectedly large list before it reaches expensive or slow steps.", example: "Allow no more than 20 slide plans to continue to image generation.", category: "logic", icon: "limit", accent: "neutral", retrySafe: true,
     inputs: [{ id: "items", label: "Incoming list", type: "data", required: true }], outputs: [{ id: "items", label: "Allowed items", type: "data" }, { id: "summary", label: "Count summary", type: "data" }], fields: [
       { id: "maxItems", label: "Maximum number to continue", description: "The workflow stops with a clear error when the incoming list is larger.", kind: "number", defaultValue: 40, min: 1, max: 500 },
     ],
   },
   {
-    type: "logic.merge", version: 1, title: "Merge paths", description: "Waits for connected paths and creates one clear list or named object for the next step.", example: "Combine an approved brief, copy and reference plan into one named planning package.", category: "logic", icon: "merge", accent: "neutral",
+    type: "logic.merge", version: 1, title: "Merge paths", description: "Waits for connected paths and creates one clear list or named object for the next step.", example: "Combine an approved brief, copy and reference plan into one named planning package.", category: "logic", icon: "merge", accent: "neutral", retrySafe: true,
     inputs: DEFAULT_AUTOMATION_MERGE_INPUTS.map((input) => ({ id: input.id, label: humanizeAutomationPortName(input.name), type: "data", required: true })), outputs: [{ id: "result", label: "Combined information", type: "data" }], fields: [
       { id: "mode", label: "How should the results be combined?", description: "Use a named object when the next step should receive predictable fields. Use a list when every branch returns the same kind of item.", kind: "select", defaultValue: "named-object", options: [
         { value: "named-object", label: "Named object" }, { value: "append-list", label: "One combined list" },
@@ -349,9 +371,12 @@ const rawDefinitions: Array<Omit<AutomationNodeDefinition, "help">> = [
     ],
   },
   {
-    type: "logic.validate-slide-plans", version: 1, title: "Validate slide plans", description: "Checks every plan against the original choices, copy and references before images are created.", example: "Catch a lost location rule, wrong text strategy or reference-role leak before it spends image credits.", category: "logic", icon: "validate", accent: "blue",
-    inputs: [{ id: "data", label: "Slide plans", type: "data", required: true }, { id: "contract", label: "Original generation contract", type: "data" }, { id: "source", label: "Original slideshow", type: "tiktok-source" }, { id: "identity", label: "Person or character", type: "identity" }, { id: "references", label: "Visual references", type: "visual-references" }], outputs: [{ id: "plans", label: "Checked plans", type: "slide-plan-set" }], fields: [
+    type: "logic.validate-slide-plans", version: 1, title: "Validate slide plans", description: "Checks every plan against the original choices, copy and references before images are created.", example: "Catch a lost location rule, wrong text strategy or reference-role leak before it spends image credits.", category: "logic", icon: "validate", accent: "blue", retrySafe: true,
+    inputs: [{ id: "data", label: "Slide plans", type: "data", required: true }, { id: "contract", label: "Original generation contract", type: "data" }, { id: "source", label: "Original slideshow", type: "tiktok-source" }, { id: "identity", label: "Person or character", type: "identity" }, { id: "references", label: "Visual references", type: "visual-references" }], outputs: [{ id: "plans", label: "Checked plans", type: "slide-plan-set" }, { id: "error", label: "Validation error", type: "error" }], fields: [
       { id: "maxSlides", label: "Maximum slides allowed", description: "Stops the workflow when the plan unexpectedly contains more slides than you intended.", kind: "number", defaultValue: 40, min: 1, max: 40 },
+      { id: "failureMode", label: "If validation fails", description: "Stop the run or send the exact validation error to an explicit repair path.", kind: "select", defaultValue: "stop", options: [
+        { value: "stop", label: "Stop and show the error" }, { value: "error-output", label: "Send the error to a repair path" },
+      ], advanced: true },
     ],
   },
   {

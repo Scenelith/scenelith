@@ -45,6 +45,10 @@ export type AutomationNodeExecution = {
   config: Record<string, unknown>;
   inputs: Record<string, unknown>;
   attempt: number;
+  /** Monotonic persisted attempt for this node across bounded graph retries. */
+  durableAttempt?: number;
+  /** Zero for the first pass, then one-based for a Retry gate feedback pass. */
+  retryIteration?: number;
   context: AutomationExecutionContext;
   outputsByNode: ReadonlyMap<string, Record<string, unknown>>;
   /** Provenance for values received through graph edges. Direct handler tests and
@@ -60,7 +64,7 @@ export type AutomationExecutionObserver = {
   nodeCompleted?: (node: AutomationNode, output: Record<string, unknown>, attempt: number) => Promise<void> | void;
   nodeFailed?: (node: AutomationNode, error: unknown, attempt: number) => Promise<void> | void;
   nodeContinued?: (node: AutomationNode, output: Record<string, unknown>, attempt: number, reason: string) => Promise<void> | void;
-  nodeSkipped?: (node: AutomationNode, reason: string) => Promise<void> | void;
+  nodeSkipped?: (node: AutomationNode, reason: string, attempt: number) => Promise<void> | void;
 };
 
 function signalAbortError(signal?: AbortSignal) {
@@ -130,7 +134,12 @@ function resolvedNodeConfig(node: AutomationNode, runtimeInputs: Record<string, 
   return config;
 }
 
-function nodeInputState(graph: AutomationWorkflowGraph, node: AutomationNode, outputs: Map<string, Record<string, unknown>>) {
+function nodeInputState(
+  graph: AutomationWorkflowGraph,
+  node: AutomationNode,
+  outputs: Map<string, Record<string, unknown>>,
+  retryFeedbacks: ReadonlyMap<string, unknown> = new Map(),
+) {
   const values: Record<string, unknown> = {};
   const connectionsByPort: Record<string, AutomationInputConnection[]> = {};
   const inputPorts = automationNodeInputPorts(node);
@@ -138,7 +147,7 @@ function nodeInputState(graph: AutomationWorkflowGraph, node: AutomationNode, ou
   for (const port of inputPorts) {
     const connections = graph.edges.filter((edge) => edge.target === node.id && edge.targetPort === port.id);
     const resolvedConnections = connections.flatMap((edge) => {
-      const value = outputs.get(edge.source)?.[edge.sourcePort];
+      const value = edge.role === "retry" ? retryFeedbacks.get(node.id) : outputs.get(edge.source)?.[edge.sourcePort];
       if (value === undefined) return [];
       return [{ sourceNodeId: edge.source, sourceNodeName: nodeById.get(edge.source)?.name || edge.source, sourcePort: edge.sourcePort, targetPort: edge.targetPort, value }];
     });
@@ -147,6 +156,35 @@ function nodeInputState(graph: AutomationWorkflowGraph, node: AutomationNode, ou
     values[port.id] = port.multiple ? connectedValues : connectedValues[0];
   }
   return { values, connectionsByPort };
+}
+
+function outputRetryEpochs(output: Record<string, unknown> | undefined) {
+  const value = output?.__retryEpochs;
+  if (!value || typeof value !== "object" || Array.isArray(value)) return {} as Record<string, number>;
+  return Object.fromEntries(Object.entries(value as Record<string, unknown>)
+    .flatMap(([gateId, epoch]) => Number.isInteger(Number(epoch)) && Number(epoch) >= 0 ? [[gateId, Number(epoch)]] : []));
+}
+
+function inheritedRetryEpochs(inputConnections: Readonly<Record<string, AutomationInputConnection[]>>, outputs: ReadonlyMap<string, Record<string, unknown>>) {
+  const epochs: Record<string, number> = {};
+  for (const connection of Object.values(inputConnections).flat()) {
+    for (const [gateId, epoch] of Object.entries(outputRetryEpochs(outputs.get(connection.sourceNodeId)))) {
+      epochs[gateId] = Math.max(epochs[gateId] ?? 0, epoch);
+    }
+  }
+  return epochs;
+}
+
+function forwardDescendants(graph: AutomationWorkflowGraph, startNodeId: string) {
+  const descendants = new Set<string>();
+  const pending = [startNodeId];
+  while (pending.length) {
+    const nodeId = pending.shift()!;
+    if (descendants.has(nodeId)) continue;
+    descendants.add(nodeId);
+    pending.push(...graph.edges.filter((edge) => edge.role !== "retry" && edge.source === nodeId).map((edge) => edge.target));
+  }
+  return descendants;
 }
 
 function missingRequiredInput(node: AutomationNode, inputs: Record<string, unknown>, options: { nullIsMissing?: boolean } = {}) {
@@ -217,95 +255,144 @@ export async function executeAutomationGraph(input: {
     if (!node) throw Object.assign(new Error(`Saved output references unavailable step ${nodeId}`), { code: "NODE_OUTPUT_CONTRACT" });
     validatedNodeOutput(node, output);
   }
+  const retryIterations = new Map<string, number>();
+  for (const node of input.graph.nodes.filter((candidate) => candidate.type === "logic.retry-gate")) {
+    const output = outputs.get(node.id);
+    const iteration = Math.max(0, Number(output?.__retryIteration ?? outputRetryEpochs(output)[node.id] ?? 0));
+    retryIterations.set(node.id, iteration);
+  }
+  // A worker may resume after a retry gate has already consumed feedback. Any
+  // downstream output from an older retry epoch is stale and must be executed
+  // again instead of being mistaken for the current pass.
+  for (const [nodeId, output] of [...outputs]) {
+    const epochs = outputRetryEpochs(output);
+    if ([...retryIterations].some(([gateId, epoch]) => epochs[gateId] !== undefined && epochs[gateId] < epoch)) outputs.delete(nodeId);
+  }
   const skipped = new Set<string>();
   const warnings: Array<{ nodeId: string; message: string }> = [];
+  const observerAttempts = new Map<string, number>();
+  const retryFeedbacks = new Map<string, unknown>();
   let nodeExecutions = 0;
   const policy = { ...DEFAULT_AUTOMATION_WORKFLOW_SETTINGS, ...(input.graph.settings || {}), ...(input.context.policy || {}) };
   const executionContext = { ...input.context, policy };
   const maximumExecutions = policy.maxNodeExecutions;
-  for (const nodeId of topologicalAutomationNodeIds(input.graph)) {
-    const node = nodeById.get(nodeId)!;
-    if (outputs.has(node.id)) continue;
-    const inputState = nodeInputState(input.graph, node, outputs);
-    const inputs = inputState.values;
-    const missing = missingRequiredInput(node, inputs);
-    if (missing) {
-      skipped.add(node.id);
-      await input.observer?.nodeSkipped?.(node, `Required input “${missing.label}” produced no value`);
-      continue;
-    }
-    const handler = input.handlers[`${node.type}@${node.version}`];
-    if (!handler) throw new Error(`No runtime handler is installed for ${node.type}@${node.version}`);
-    assertExecutionWithinPolicy(executionContext);
-    nodeExecutions += 1;
-    if (nodeExecutions > maximumExecutions) throw Object.assign(new Error(`Workflow exceeded its ${maximumExecutions} step execution limit`), { code: "NODE_EXECUTION_LIMIT" });
-    const config = resolvedNodeConfig(node, input.context.runtimeInputs);
-    // Generation owns per-item retries and durable artifacts internally. An
-    // outer node retry would multiply provider attempts for the same failed
-    // slide; all other nodes keep their explicit node-level retry policy.
-    const maxAttempts = node.type === "generation.image" ? 1 : Math.min(8, Math.max(1, Number(config.maxAttempts || 1)));
-    let completed = false;
-    let latestError: unknown;
-    for (let attempt = 1; attempt <= maxAttempts; attempt += 1) {
-      await input.observer?.nodeStarted?.(node, inputs, attempt);
-      try {
-        const output = validatedNodeOutput(node, await handler({
-          node,
-          config,
-          inputs,
-          attempt,
-          context: executionContext,
-          outputsByNode: outputs,
-          inputConnections: inputState.connectionsByPort,
-        }));
-        assertExecutionWithinPolicy(executionContext);
+  const orderedNodeIds = topologicalAutomationNodeIds(input.graph);
+  while (true) {
+    for (const nodeId of orderedNodeIds) {
+      const node = nodeById.get(nodeId)!;
+      if (outputs.has(node.id)) continue;
+      const inputState = nodeInputState(input.graph, node, outputs, retryFeedbacks);
+      const inputs = inputState.values;
+      const missing = missingRequiredInput(node, inputs);
+      if (missing) {
+        skipped.add(node.id);
+        const observerAttempt = (observerAttempts.get(node.id) || 0) + 1;
+        observerAttempts.set(node.id, observerAttempt);
+        await input.observer?.nodeSkipped?.(node, `Required input “${missing.label}” produced no value`, observerAttempt);
+        continue;
+      }
+      skipped.delete(node.id);
+      const handler = input.handlers[`${node.type}@${node.version}`];
+      if (!handler) throw new Error(`No runtime handler is installed for ${node.type}@${node.version}`);
+      assertExecutionWithinPolicy(executionContext);
+      nodeExecutions += 1;
+      if (nodeExecutions > maximumExecutions) throw Object.assign(new Error(`Workflow exceeded its ${maximumExecutions} step execution limit`), { code: "NODE_EXECUTION_LIMIT" });
+      const config = resolvedNodeConfig(node, input.context.runtimeInputs);
+      // Generation owns per-item retries and durable artifacts internally. An
+      // outer node retry would multiply provider attempts for the same failed
+      // slide; all other nodes keep their explicit node-level retry policy.
+      const maxAttempts = node.type === "generation.image" ? 1 : Math.min(8, Math.max(1, Number(config.maxAttempts || 1)));
+      let completed = false;
+      let latestError: unknown;
+      let latestObserverAttempt = observerAttempts.get(node.id) || 0;
+      for (let attempt = 1; attempt <= maxAttempts; attempt += 1) {
+        const observerAttempt = (observerAttempts.get(node.id) || 0) + 1;
+        observerAttempts.set(node.id, observerAttempt);
+        latestObserverAttempt = observerAttempt;
+        await input.observer?.nodeStarted?.(node, inputs, observerAttempt);
+        try {
+          const output = validatedNodeOutput(node, await handler({
+            node,
+            config,
+            inputs,
+            attempt,
+            durableAttempt: observerAttempt,
+            retryIteration: node.type === "logic.retry-gate" ? retryIterations.get(node.id) || 0 : undefined,
+            context: executionContext,
+            outputsByNode: outputs,
+            inputConnections: inputState.connectionsByPort,
+          }));
+          const epochs = inheritedRetryEpochs(inputState.connectionsByPort, outputs);
+          if (node.type === "logic.retry-gate") epochs[node.id] = retryIterations.get(node.id) || 0;
+          if (Object.keys(epochs).length) output.__retryEpochs = epochs;
+          assertExecutionWithinPolicy(executionContext);
+          outputs.set(node.id, output);
+          const outputWarnings = Array.isArray(output.__warnings) ? output.__warnings.map(String) : [];
+          const assetFailures = output.assets && typeof output.assets === "object" && Array.isArray((output.assets as { failures?: unknown }).failures)
+            ? ((output.assets as { failures: unknown[] }).failures).map((failure) => typeof failure === "object" && failure && "error" in failure ? String((failure as { error: unknown }).error) : String(failure))
+            : [];
+          warnings.push(...[...outputWarnings, ...assetFailures].map((message) => ({ nodeId: node.id, message })));
+          await input.observer?.nodeCompleted?.(node, output, observerAttempt);
+          completed = true;
+          break;
+        } catch (error) {
+          const failure = executionContext.signal?.aborted ? executionAbortError(executionContext) : error;
+          latestError = failure;
+          await input.observer?.nodeFailed?.(node, failure, observerAttempt);
+          if (executionContext.signal?.aborted) throw failure;
+          if ((failure as { automationRetryable?: unknown })?.automationRetryable === false) break;
+          if (attempt < maxAttempts) await abortableDelay(Math.min(8_000, 800 * 2 ** (attempt - 1)), executionContext.signal);
+        }
+      }
+      if (!completed) {
+        const failureMode = String(config.failureMode || "stop");
+        let continuedOutput: Record<string, unknown> | null = null;
+        if (failureMode === "continue-empty") {
+          const emptyPort = automationNodeDefinition(node.type, node.version)?.outputs.find((port) => port.type !== "error");
+          if (!emptyPort) throw latestError;
+          continuedOutput = {
+            [emptyPort.id]: null,
+            __warnings: [latestError instanceof Error ? latestError.message : String(latestError)],
+          };
+        }
+        else if (failureMode === "error-output") {
+          const failure = latestError as { message?: unknown; code?: unknown; safeResponse?: unknown } | null;
+          continuedOutput = {
+            error: {
+              message: latestError instanceof Error ? latestError.message : String(latestError),
+              nodeId: node.id,
+              ...(failure?.code ? { code: String(failure.code) } : {}),
+              ...(failure?.safeResponse !== undefined ? { response: failure.safeResponse } : {}),
+            },
+          };
+        }
+        else throw latestError;
+        const output = validatedNodeOutput(node, continuedOutput);
+        const epochs = inheritedRetryEpochs(inputState.connectionsByPort, outputs);
+        if (Object.keys(epochs).length) output.__retryEpochs = epochs;
         outputs.set(node.id, output);
-        const outputWarnings = Array.isArray(output.__warnings) ? output.__warnings.map(String) : [];
-        const assetFailures = output.assets && typeof output.assets === "object" && Array.isArray((output.assets as { failures?: unknown }).failures)
-          ? ((output.assets as { failures: unknown[] }).failures).map((failure) => typeof failure === "object" && failure && "error" in failure ? String((failure as { error: unknown }).error) : String(failure))
-          : [];
-        warnings.push(...[...outputWarnings, ...assetFailures].map((message) => ({ nodeId: node.id, message })));
-        await input.observer?.nodeCompleted?.(node, output, attempt);
-        completed = true;
-        break;
-      } catch (error) {
-        const failure = executionContext.signal?.aborted ? executionAbortError(executionContext) : error;
-        latestError = failure;
-        await input.observer?.nodeFailed?.(node, failure, attempt);
-        if (executionContext.signal?.aborted) throw failure;
-        if ((failure as { automationRetryable?: unknown })?.automationRetryable === false) break;
-        if (attempt < maxAttempts) await abortableDelay(Math.min(8_000, 800 * 2 ** (attempt - 1)), executionContext.signal);
+        if (failureMode === "continue-empty") {
+          warnings.push({ nodeId: node.id, message: latestError instanceof Error ? latestError.message : String(latestError) });
+        }
+        await input.observer?.nodeContinued?.(node, output, latestObserverAttempt, failureMode);
       }
     }
-    if (!completed) {
-      const failureMode = String(config.failureMode || "stop");
-      let continuedOutput: Record<string, unknown> | null = null;
-      if (failureMode === "continue-empty") {
-        const emptyPort = automationNodeDefinition(node.type, node.version)?.outputs.find((port) => port.type !== "error");
-        if (!emptyPort) throw latestError;
-        continuedOutput = {
-          [emptyPort.id]: null,
-          __warnings: [latestError instanceof Error ? latestError.message : String(latestError)],
-        };
-      }
-      else if (failureMode === "error-output") {
-        const failure = latestError as { message?: unknown; code?: unknown; safeResponse?: unknown } | null;
-        continuedOutput = {
-          error: {
-            message: latestError instanceof Error ? latestError.message : String(latestError),
-            nodeId: node.id,
-            ...(failure?.code ? { code: String(failure.code) } : {}),
-            ...(failure?.safeResponse !== undefined ? { response: failure.safeResponse } : {}),
-          },
-        };
-      }
-      else throw latestError;
-      const output = validatedNodeOutput(node, continuedOutput);
-      outputs.set(node.id, output);
-      if (failureMode === "continue-empty") {
-        warnings.push({ nodeId: node.id, message: latestError instanceof Error ? latestError.message : String(latestError) });
-      }
-      await input.observer?.nodeContinued?.(node, output, maxAttempts, failureMode);
+
+    const pendingRetry = input.graph.edges.find((edge) => {
+      if (edge.role !== "retry") return false;
+      const sourceOutput = outputs.get(edge.source);
+      if (sourceOutput?.[edge.sourcePort] === undefined) return false;
+      const sourceEpoch = outputRetryEpochs(sourceOutput)[edge.target] ?? 0;
+      return sourceEpoch >= (retryIterations.get(edge.target) || 0);
+    });
+    if (!pendingRetry) break;
+    const sourceOutput = outputs.get(pendingRetry.source)!;
+    const nextIteration = (retryIterations.get(pendingRetry.target) || 0) + 1;
+    retryFeedbacks.set(pendingRetry.target, structuredClone(sourceOutput[pendingRetry.sourcePort]));
+    retryIterations.set(pendingRetry.target, nextIteration);
+    for (const nodeId of forwardDescendants(input.graph, pendingRetry.target)) {
+      outputs.delete(nodeId);
+      skipped.delete(nodeId);
     }
   }
   const terminalNodeIds = input.graph.nodes

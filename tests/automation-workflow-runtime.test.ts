@@ -7,6 +7,7 @@ import { AUTOMATION_IDENTITY_REFERENCE_INSTRUCTION, AUTOMATION_NO_TEXT_AVOID_INS
 import { validateAutomationStructuredValue } from "../src/lib/automation-workflows/json-schema";
 import { parseAutomationSlidePlanSet } from "../src/lib/automation-workflows/slide-plan-contract";
 import type { AutomationWorkflowGraph } from "../src/lib/automation-workflows/types";
+import { validateAutomationWorkflowGraph } from "../src/lib/automation-workflows/validation";
 
 const context = { runId: "run", userId: "user", workspaceId: "workspace", projectId: "project", runtimeInputs: { "source.source": "canvas-source" } };
 
@@ -296,13 +297,14 @@ test("select-information returns the exact nested value and never guesses anothe
 test("slide validator carries immutable choices, exact text and reference roles into generation", async () => {
   const wardrobeInstruction = "Create a visibly new wardrobe on every applicable slide.";
   const locationInstruction = "Preserve the exact source location and room layout.";
-  const adaptationInstruction = "Keep the source concept and change the person.";
+  const adaptationPreserveInstruction = "Keep the source concept.";
+  const adaptationChangeInstruction = "Change the person.";
   const textInstruction = "Remove and erase every existing word; do not render replacement text.";
   const contract = {
     sourceAnalysis: { slides: [{ index: 1, visibleText: "last year..." }] },
     choices: {
       settings: { mode: "identity", newOutfit: true, newLocation: false, textStrategy: "remove" },
-      adaptation: { adaptation: { mode: "identity", instruction: adaptationInstruction } },
+      adaptation: { adaptation: { mode: "identity", preserveInstruction: adaptationPreserveInstruction, changeInstruction: adaptationChangeInstruction } },
       wardrobe: { wardrobe: { mode: "change", instruction: wardrobeInstruction } },
       location: { location: { mode: "preserve", instruction: locationInstruction } },
     },
@@ -322,8 +324,8 @@ test("slide validator carries immutable choices, exact text and reference roles 
       ],
       subject: { identity: "Maya", appearance: ["visibly new outfit"], pose: "source pose", expression: "relaxed" },
       scene: { environment: "source hallway", composition: "source framing", lighting: "ambient", camera: "phone" },
-      preserve: [adaptationInstruction, locationInstruction],
-      change: [wardrobeInstruction, textInstruction],
+      preserve: [adaptationPreserveInstruction, locationInstruction],
+      change: [adaptationChangeInstruction, wardrobeInstruction, textInstruction],
       avoid: [AUTOMATION_NO_TEXT_AVOID_INSTRUCTION],
       output: { format: "9:16 image", style: "candid phone photo" },
     },
@@ -359,7 +361,7 @@ test("slide validator carries immutable choices, exact text and reference roles 
   await assert.rejects(validate({
     node: { id: "validate", type: "logic.validate-slide-plans", version: 1, name: "Validate", description: "", position: { x: 0, y: 0 }, groupId: null, config: {}, bindings: {}, disabled: false },
     config: { maxSlides: 40 },
-    inputs: { data: { slides: [{ ...plans.slides[0], prompt: { ...plans.slides[0].prompt, change: [textInstruction] } }] }, contract, source: { slides: [{ index: 1, assetId: "source" }] }, identity: { assets: [{ id: "person" }] }, references: { assets: [] } },
+    inputs: { data: { slides: [{ ...plans.slides[0], prompt: { ...plans.slides[0].prompt, change: [adaptationChangeInstruction, textInstruction] } }] }, contract, source: { slides: [{ index: 1, assetId: "source" }] }, identity: { assets: [{ id: "person" }] }, references: { assets: [] } },
     attempt: 1,
     context,
     outputsByNode: new Map(),
@@ -372,7 +374,7 @@ test("slide validator rejects identity references assigned to wardrobe", async (
     sourceAnalysis: { slides: [{ index: 1, visibleText: "" }] },
     choices: {
       settings: { mode: "identity", newOutfit: false, newLocation: false, textStrategy: "keep" },
-      adaptation: { adaptation: { mode: "identity", instruction: "Keep the concept." } },
+      adaptation: { adaptation: { mode: "identity", preserveInstruction: "Keep the concept.", changeInstruction: "Change the person." } },
       wardrobe: { wardrobe: { mode: "preserve", instruction: "Preserve wardrobe." } },
       location: { location: { mode: "preserve", instruction: "Preserve location." } },
     },
@@ -447,7 +449,7 @@ test("default automation keeps every selected rule through an approved no-repair
         if (node.id === "interpret-brief") return { result: { userIntentSummary: "Change person and outfit", requirements: [], globalRules: [], decisions: { newOutfit: true, newLocation: false, textStrategy: "remove" }, campaign: { direction: "identity adaptation", audience: "viewer", tone: "candid" }, sequence: { hook: "portrait", progression: "change", payoff: "new version" }, slides: [{ index: 1, intent: "hook", mustKeep: ["location"], mayChange: ["identity", "wardrobe"] }] } };
         if (node.id === "remove-copy") return { result: { slides: [{ index: 1, sourceText: "last year...", overlayText: "", strategy: "remove", instruction: textInstruction, copyFunction: "hook" }] } };
         if (node.id === "bind-references") return { result: { slides: [{ index: 1, references: [{ assetId: "person", title: "Maya identity", role: "identity", instruction: AUTOMATION_IDENTITY_REFERENCE_INSTRUCTION }] }] } };
-        if (node.id === "plan-slides") return { result: { slides: [{ index: 1, role: "hook", prompt: { title: "Opening", task: "Recreate the portrait with the selected identity.", reference_plan: [{ token: "@Source_composition_1_1", title: "Source composition 1", role: "source composition", instruction: AUTOMATION_SOURCE_REFERENCE_INSTRUCTION }, { token: "@Maya_identity_2", title: "Maya identity", role: "identity", instruction: AUTOMATION_IDENTITY_REFERENCE_INSTRUCTION }], subject: { identity: "Maya", appearance: ["new outfit"], pose: "source pose", expression: "relaxed" }, scene: { environment: "source hallway", composition: "source framing", lighting: "ambient", camera: "phone" }, preserve: ["Keep the source concept, hook, sequence and scene intent. Adapt the person or character using the selected identity without inventing a different campaign concept.", locationInstruction], change: [wardrobeInstruction, textInstruction], avoid: [AUTOMATION_NO_TEXT_AVOID_INSTRUCTION], output: { format: "9:16 image", style: "candid phone photo" } }, referenceAssetIds: ["person"], text: { strategy: "remove", sourceText: "last year...", overlayText: "", instruction: textInstruction }, confidence: 1 }] } };
+        if (node.id === "plan-slides") return { result: { slides: [{ index: 1, role: "hook", prompt: { title: "Opening", task: "Recreate the portrait with the selected identity.", reference_plan: [{ token: "@Source_composition_1_1", title: "Source composition 1", role: "source composition", instruction: AUTOMATION_SOURCE_REFERENCE_INSTRUCTION }, { token: "@Maya_identity_2", title: "Maya identity", role: "identity", instruction: AUTOMATION_IDENTITY_REFERENCE_INSTRUCTION }], subject: { identity: "Maya", appearance: ["new outfit"], pose: "source pose", expression: "relaxed" }, scene: { environment: "source hallway", composition: "source framing", lighting: "ambient", camera: "phone" }, preserve: ["Keep the source concept, hook, sequence and scene intent without inventing a different campaign concept.", locationInstruction], change: ["Adapt the person or character using the selected identity while keeping identity references isolated from wardrobe and location.", wardrobeInstruction, textInstruction], avoid: [AUTOMATION_NO_TEXT_AVOID_INSTRUCTION], output: { format: "9:16 image", style: "candid phone photo" } }, referenceAssetIds: ["person"], text: { strategy: "remove", sourceText: "last year...", overlayText: "", instruction: textInstruction }, confidence: 1 }] } };
         if (node.id === "review-series") return { result: { passed: true, summary: "All requirements covered", slides: [{ index: 1, passed: true, issues: [] }], requirementCoverage: [{ requirement: "preserve location", passed: true, slideIndexes: [1], issues: [] }] } };
         if (node.id === "repair-slides") throw new Error("Approved plans must not be rewritten");
         throw new Error(`Unexpected AI node ${node.id}`);
@@ -656,4 +658,74 @@ test("finish node gives condition and error branches an explicit terminal", asyn
   const execution = { node, attempt: 1, context, outputsByNode: new Map<string, Record<string, unknown>>(), inputs: { data: { approved: true } } };
   assert.deepEqual(await handler({ ...execution, config: { outcome: "completed", message: "Approved: {{ data.approved }}" } }), { result: { outcome: "completed", message: "Approved: true", data: { approved: true } } });
   await assert.rejects(handler({ ...execution, config: { outcome: "failed", message: "Quality gate failed" } }), /Quality gate failed/);
+});
+
+function boundedRetryGraph(maxRetries = 2): AutomationWorkflowGraph {
+  return {
+    schemaVersion: 1,
+    groups: [],
+    nodes: [
+      { id: "run", type: "core.manual-trigger", version: 1, name: "Run", description: "", position: { x: 0, y: 0 }, groupId: null, config: {}, bindings: {}, disabled: false },
+      { id: "retry", type: "logic.retry-gate", version: 1, name: "Retry corrected value", description: "", position: { x: 100, y: 0 }, groupId: null, config: { maxRetries, feedbackPath: "plans" }, bindings: {}, disabled: false },
+      { id: "check", type: "ai.structured-task", version: 2, name: "Check", description: "", position: { x: 200, y: 0 }, groupId: null, config: { modelId: "google/gemini-3.7-flash", userPrompt: "Check", outputMode: "text", maxAttempts: 1, failureMode: "error-output" }, bindings: {}, disabled: false },
+      { id: "repair", type: "ai.structured-task", version: 2, name: "Repair", description: "", position: { x: 300, y: 120 }, groupId: null, config: { modelId: "google/gemini-3.7-flash", userPrompt: "Repair", outputMode: "text", maxAttempts: 1, failureMode: "stop" }, bindings: {}, disabled: false },
+      { id: "feedback", type: "logic.merge", version: 1, name: "Keep repair and error", description: "", position: { x: 400, y: 120 }, groupId: null, config: { mode: "named-object", inputs: [{ id: "input-plans", name: "plans" }, { id: "input-error", name: "validationError" }] }, bindings: {}, disabled: false },
+      { id: "success", type: "output.finish", version: 1, name: "Success", description: "", position: { x: 400, y: 0 }, groupId: null, config: { outcome: "completed", message: "Done" }, bindings: {}, disabled: false },
+      { id: "failed", type: "output.finish", version: 1, name: "Failed", description: "", position: { x: 200, y: 240 }, groupId: null, config: { outcome: "failed", message: "{{ data.message }}" }, bindings: {}, disabled: false },
+    ],
+    edges: [
+      { id: "run-retry", source: "run", sourcePort: "run", target: "retry", targetPort: "initial", role: "flow" },
+      { id: "retry-check", source: "retry", sourcePort: "current", target: "check", targetPort: "primary", role: "flow" },
+      { id: "check-success", source: "check", sourcePort: "result", target: "success", targetPort: "data", role: "flow" },
+      { id: "check-repair", source: "check", sourcePort: "error", target: "repair", targetPort: "primary", role: "error" },
+      { id: "retry-repair", source: "retry", sourcePort: "current", target: "repair", targetPort: "context", role: "data" },
+      { id: "repair-feedback", source: "repair", sourcePort: "result", target: "feedback", targetPort: "input-plans", role: "flow" },
+      { id: "error-feedback", source: "check", sourcePort: "error", target: "feedback", targetPort: "input-error", role: "error" },
+      { id: "feedback-retry", source: "feedback", sourcePort: "result", target: "retry", targetPort: "feedback", role: "retry" },
+      { id: "retry-failed", source: "retry", sourcePort: "exhausted", target: "failed", targetPort: "data", role: "error" },
+    ],
+  };
+}
+
+test("bounded Retry route repairs a failed value and executes the same check again", async () => {
+  const graph = boundedRetryGraph();
+  assert.equal(validateAutomationWorkflowGraph(graph).valid, true);
+  const attempts: string[] = [];
+  const handlers = coreAutomationNodeHandlers();
+  const result = await executeAutomationGraph({
+    graph,
+    context,
+    handlers: {
+      ...handlers,
+      "core.manual-trigger@1": async () => ({ run: { value: "bad" } }),
+      "ai.structured-task@2": async ({ node, inputs }) => {
+        attempts.push(node.id);
+        if (node.id === "check") {
+          const value = inputs.primary as { value?: string };
+          if (value.value !== "good") throw Object.assign(new Error("Value must be good"), { code: "VALIDATION_FAILED", automationRetryable: false });
+          return { result: value };
+        }
+        return { result: { value: "good" } };
+      },
+    },
+  });
+  assert.deepEqual(attempts, ["check", "repair", "check"]);
+  assert.deepEqual(result.outputs.get("success")?.result, { outcome: "completed", message: "Done", data: { value: "good" } });
+  assert.equal(result.outputs.get("retry")?.__retryIteration, 1);
+});
+
+test("bounded Retry route stops through its explicit exhausted output", async () => {
+  const graph = boundedRetryGraph(1);
+  const handlers = coreAutomationNodeHandlers();
+  await assert.rejects(executeAutomationGraph({
+    graph,
+    context,
+    handlers: {
+      ...handlers,
+      "core.manual-trigger@1": async () => ({ run: { value: "bad" } }),
+      "ai.structured-task@2": async ({ node }) => node.id === "check"
+        ? Promise.reject(Object.assign(new Error("Still invalid"), { code: "VALIDATION_FAILED", automationRetryable: false }))
+        : { result: { value: "bad" } },
+    },
+  }), /Retry limit reached after 1 corrected attempt/);
 });

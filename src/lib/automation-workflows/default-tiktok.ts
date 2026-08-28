@@ -24,7 +24,7 @@ function aiNode(input: {
   id: string;
   name: string;
   description: string;
-  groupId: string;
+  groupId: string | null;
   position: { x: number; y: number };
   systemPrompt: string;
   userPrompt: string;
@@ -220,11 +220,11 @@ export function createDefaultTikTokWorkflowGraph(): AutomationWorkflowGraph {
     }),
     node({
       id: "rebuild-concept-mode", type: "logic.transform", name: "Rebuild for a new concept", description: "Tell the brief to create a new concept while preserving the source structure that still matters.", groupId: "group-adapt", position: { x: 1090, y: 296 },
-      config: { template: { choice: "{{ inputs.0 }}", adaptation: { mode: "concept", instruction: "Rebuild the source into a new concept. Preserve useful structure, hook and sequence mechanics, but create a distinct campaign direction." } } },
+      config: { template: { choice: "{{ inputs.0 }}", adaptation: { mode: "concept", preserveInstruction: "Preserve the source hook, sequence mechanics and any useful composition evidence that still serves the new version.", changeInstruction: "Rebuild the source into a distinct campaign concept and creative direction rather than copying the original campaign." } } },
     }),
     node({
       id: "keep-concept-mode", type: "logic.transform", name: "Keep concept, change the person", description: "Tell the brief to preserve the source concept and mainly adapt the selected person or character.", groupId: "group-adapt", position: { x: 1090, y: 472 },
-      config: { template: { choice: "{{ inputs.0 }}", adaptation: { mode: "identity", instruction: "Keep the source concept, hook, sequence and scene intent. Adapt the person or character using the selected identity without inventing a different campaign concept." } } },
+      config: { template: { choice: "{{ inputs.0 }}", adaptation: { mode: "identity", preserveInstruction: "Keep the source concept, hook, sequence and scene intent without inventing a different campaign concept.", changeInstruction: "Adapt the person or character using the selected identity while keeping identity references isolated from wardrobe and location." } } },
     }),
     node({
       id: "select-adaptation", type: "logic.select-one", name: "Continue with the selected adaptation", description: "Pass the one active adaptation contract forward without asking AI to reconstruct the choice.", groupId: "group-adapt", position: { x: 1420, y: 472 },
@@ -348,7 +348,7 @@ export function createDefaultTikTokWorkflowGraph(): AutomationWorkflowGraph {
     aiNode({
       id: "plan-slides", name: "Plan every image", description: "Describe what each image should keep, what should change and how it should look.", groupId: "group-build", position: { x: 3730, y: 296 },
       systemPrompt: "You are the prompt composer used immediately before image generation. Author the complete structured JSON contract yourself, with the same semantic fields as Canvas Assistant. The connected choices are immutable. Never collapse preserve, change, text or reference rules into vague prose, and never rely on a later validator to add a missing instruction.",
-      userPrompt: `Build one complete final generation JSON per source slide from {{ primary }}. Each slide must return index, role, prompt, referenceAssetIds, text and confidence. The prompt object must itself be the exact Canvas Assistant contract with title, task, reference_plan, subject, scene, preserve, change, avoid and output. Put the source composition first in reference_plan, title it Source composition plus the slide index, give it an @token ending in _1, use role source composition and copy this instruction exactly: ${AUTOMATION_SOURCE_REFERENCE_INSTRUCTION} Then copy every assigned reference into reference_plan in assignment order with its exact title, role and instruction and a unique matching @token. referenceAssetIds must list those assigned asset IDs in the same order, excluding the automatic source image. Copy the selected text strategy and its sourceText, overlayText and instruction exactly into the sidecar text evidence, and also put that exact instruction into prompt.preserve or prompt.change. Put each exact adaptation, wardrobe and location instruction into prompt.preserve or prompt.change according to the selected route. In Remove mode include this exact prompt.avoid item: ${AUTOMATION_NO_TEXT_AVOID_INSTRUCTION} The model-authored prompt object is sent to generation unchanged; no later step will complete missing creative fields. Never omit or reorder a slide.`,
+      userPrompt: `Build one complete final generation JSON per source slide from {{ primary }}. Each slide must return index, role, prompt, referenceAssetIds, text and confidence. The prompt object must itself be the exact Canvas Assistant contract with title, task, reference_plan, subject, scene, preserve, change, avoid and output. Put the source composition first in reference_plan, title it Source composition plus the slide index, give it an @token ending in _1, use role source composition and copy this instruction exactly: ${AUTOMATION_SOURCE_REFERENCE_INSTRUCTION} Then copy every assigned reference into reference_plan in assignment order with its exact title, role and instruction and a unique matching @token. referenceAssetIds must list those assigned asset IDs in the same order, excluding the automatic source image. Copy the selected text strategy and its sourceText, overlayText and instruction exactly into the sidecar text evidence, and also put that exact instruction into prompt.preserve or prompt.change. Copy adaptation.preserveInstruction exactly into prompt.preserve and adaptation.changeInstruction exactly into prompt.change. Put each exact wardrobe and location instruction into prompt.preserve or prompt.change according to its selected route. In Remove mode include this exact prompt.avoid item: ${AUTOMATION_NO_TEXT_AVOID_INSTRUCTION} The model-authored prompt object is sent to generation unchanged; no later step will complete missing creative fields. Never omit or reorder a slide.`,
       responseSchema: slidePlansSchema,
     }),
     node({
@@ -392,16 +392,38 @@ export function createDefaultTikTokWorkflowGraph(): AutomationWorkflowGraph {
       id: "select-final-plans", type: "logic.select-one", name: "Continue with one final plan set", description: "Join the mutually exclusive approved and repaired paths without dropping any plan fields.", groupId: "group-review", position: { x: 5710, y: 296 },
     }),
     node({
-      id: "validate-slide-plans", type: "logic.validate-slide-plans", name: "Check every immutable requirement", description: "Stop before creating images if any choice, text rule, slide, reference role or generation field was lost.", position: { x: 6040, y: 296 },
-      config: { maxSlides: 40 },
+      id: "retry-validation", type: "logic.retry-gate", name: "Retry corrected plans", description: "Send corrected plans through the same validator again, at most twice.", position: { x: 6040, y: 296 },
+      config: { maxRetries: 2, feedbackPath: "plans" },
     }),
     node({
-      id: "generate-images", type: "generation.image", name: "Create the images", description: "Create the checked slides from the same structured JSON contract used by Canvas Assistant.", position: { x: 6370, y: 296 },
+      id: "validate-slide-plans", type: "logic.validate-slide-plans", name: "Check every immutable requirement", description: "Pass valid plans forward or send the exact deterministic error to the visible repair path.", position: { x: 6370, y: 296 },
+      config: { maxSlides: 40, failureMode: "error-output" },
+    }),
+    aiNode({
+      id: "repair-validation", name: "Repair validator failures", description: "Fix only the exact contract failures returned by the deterministic validator.", groupId: null, position: { x: 6700, y: 560 },
+      systemPrompt: "You repair structured slide plans after deterministic validation. The original contract is authoritative. Fix every named validation failure, preserve all already valid fields byte-for-byte, and return the complete slide-plan JSON contract. Never weaken a requirement or invent a fallback format.",
+      userPrompt: "Validation returned {{ primary }}. The currently checked plans and original generation contract are connected in {{ connected.context }}. Return the complete corrected slide plan collection using the configured schema. Fix the exact validation error, keep every source index, reference binding, text contract and already valid prompt field, and do not add commentary outside the structured answer.",
+      responseSchema: slidePlansSchema,
+      maxAttempts: 2,
+    }),
+    node({
+      id: "assemble-retry-feedback", type: "logic.merge", name: "Return repair with its error", description: "Keep the repaired plans and the validator error together for the retry gate and final diagnostics.", position: { x: 7030, y: 560 },
+      config: { mode: "named-object", inputs: [
+        { id: "input-plans", name: "plans" },
+        { id: "input-error", name: "validationError" },
+      ] },
+    }),
+    node({
+      id: "retry-exhausted", type: "output.finish", name: "Stop after retry limit", description: "Fail clearly when corrected plans still cannot satisfy the same validator.", position: { x: 6700, y: 824 },
+      config: { outcome: "failed", message: "{{ data.message }}" },
+    }),
+    node({
+      id: "generate-images", type: "generation.image", name: "Create the images", description: "Create the checked slides from the same structured JSON contract used by Canvas Assistant.", position: { x: 7030, y: 120 },
       config: { modelId: "nano-banana-2", ratio: "9:16", resolution: "1K", concurrency: 3, maxAttempts: 3, partialFailure: "keep-successful" },
       bindings: { modelId: { mode: "ask-on-run", label: "Image model", required: true } },
     }),
     node({
-      id: "add-to-canvas", type: "output.add-to-canvas", name: "Add slideshow to canvas", description: "Place the finished images beside their source so you can keep editing them.", position: { x: 6700, y: 296 },
+      id: "add-to-canvas", type: "output.add-to-canvas", name: "Add slideshow to canvas", description: "Place the finished images beside their source so you can keep editing them.", position: { x: 7360, y: 120 },
       config: { layout: "beside-source", includePlanNote: true },
     }),
   ];
@@ -477,12 +499,20 @@ export function createDefaultTikTokWorkflowGraph(): AutomationWorkflowGraph {
     edge("review-passed", "no", "repair-slides", "primary"),
     edge("use-approved-plans", "result", "select-final-plans", "data"),
     edge("repair-slides", "result", "select-final-plans", "data"),
-    edge("select-final-plans", "result", "validate-slide-plans", "data"),
+    edge("select-final-plans", "result", "retry-validation", "initial"),
+    edge("retry-validation", "current", "validate-slide-plans", "data"),
     edge("assemble-contract", "result", "validate-slide-plans", "contract", "data"),
     edge("tiktok-source", "source", "validate-slide-plans", "source", "data"),
     edge("identity", "identity", "validate-slide-plans", "identity", "data"),
     edge("visual-references", "references", "validate-slide-plans", "references", "data"),
     edge("validate-slide-plans", "plans", "generate-images", "plans"),
+    edge("validate-slide-plans", "error", "repair-validation", "primary", "error"),
+    edge("retry-validation", "current", "repair-validation", "context", "data"),
+    edge("assemble-contract", "result", "repair-validation", "context", "data"),
+    edge("repair-validation", "result", "assemble-retry-feedback", "input-plans"),
+    edge("validate-slide-plans", "error", "assemble-retry-feedback", "input-error", "error"),
+    edge("assemble-retry-feedback", "result", "retry-validation", "feedback", "retry"),
+    edge("retry-validation", "exhausted", "retry-exhausted", "data", "error"),
     edge("tiktok-source", "source", "generate-images", "source", "data"),
     edge("identity", "identity", "generate-images", "identity", "data"),
     edge("visual-references", "references", "generate-images", "references", "data"),

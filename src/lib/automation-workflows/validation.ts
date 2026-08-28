@@ -62,6 +62,10 @@ export function validateAutomationConnection(
   const role = connection.role || (sourcePort?.type === "error" ? "error" : "flow");
   if (sourcePort?.type === "error" && role !== "error") issues.push(issue("ERROR_ROUTE_ROLE", "An error output must use an Error recovery route."));
   if (sourcePort?.type !== "error" && role === "error") issues.push(issue("ERROR_ROUTE_ROLE", "Only an error output can create an Error recovery route."));
+  const isRetryTarget = target.type === "logic.retry-gate" && connection.targetPort === "feedback";
+  if (role === "retry" && !isRetryTarget) issues.push(issue("RETRY_ROUTE_TARGET", "A Retry route must return to the Retry feedback input of a Retry gate."));
+  if (isRetryTarget && role !== "retry") issues.push(issue("RETRY_ROUTE_ROLE", "Retry feedback accepts only a bounded Retry route."));
+  if (role === "retry" && sourcePort?.type === "error") issues.push(issue("RETRY_ROUTE_VALUE", "Repair the error first, then return the corrected value through the Retry route."));
   const otherEdges = graph.edges.filter((edge) => !connection.id || edge.id !== connection.id);
   if (otherEdges.some((edge) => edge.source === connection.source && edge.sourcePort === connection.sourcePort && edge.target === connection.target && edge.targetPort === connection.targetPort)) {
     issues.push(issue("DUPLICATE_CONNECTION", "These two ports are already connected."));
@@ -71,12 +75,12 @@ export function validateAutomationConnection(
   }
   if (source.id !== target.id) {
     const outgoing = new Map<string, string[]>();
-    for (const edge of otherEdges) outgoing.set(edge.source, [...(outgoing.get(edge.source) || []), edge.target]);
+    for (const edge of otherEdges.filter((edge) => edge.role !== "retry")) outgoing.set(edge.source, [...(outgoing.get(edge.source) || []), edge.target]);
     const pending = [target.id];
     const visited = new Set<string>();
     while (pending.length) {
       const nodeId = pending.shift()!;
-      if (nodeId === source.id) {
+      if (nodeId === source.id && role !== "retry") {
         issues.push(issue("UNBOUNDED_CYCLE", "This connection would create a cycle. Use a bounded batch step instead."));
         break;
       }
@@ -143,6 +147,10 @@ export function validateAutomationWorkflowGraph(value: unknown): AutomationValid
     const role = edge.role || (sourcePort?.type === "error" ? "error" : "flow");
     if (sourcePort?.type === "error" && role !== "error") issues.push(issue("ERROR_ROUTE_ROLE", `“${sourcePort.label}” must use an Error recovery route.`, { edgeId: edge.id, nodeId: source.id }));
     if (sourcePort?.type !== "error" && role === "error") issues.push(issue("ERROR_ROUTE_ROLE", `“${sourcePort?.label || edge.sourcePort}” is normal data and cannot use an Error recovery route.`, { edgeId: edge.id, nodeId: source.id }));
+    const isRetryTarget = target.type === "logic.retry-gate" && edge.targetPort === "feedback";
+    if (role === "retry" && !isRetryTarget) issues.push(issue("RETRY_ROUTE_TARGET", "A Retry route must return to the Retry feedback input of a Retry gate.", { edgeId: edge.id }));
+    if (isRetryTarget && role !== "retry") issues.push(issue("RETRY_ROUTE_ROLE", `“${target.name}” accepts feedback only through a bounded Retry route.`, { edgeId: edge.id, nodeId: target.id }));
+    if (role === "retry" && sourcePort?.type === "error") issues.push(issue("RETRY_ROUTE_VALUE", "Repair the error first, then return the corrected value through the Retry route.", { edgeId: edge.id, nodeId: source.id }));
     const incoming = incomingByNode.get(target.id) || [];
     incoming.push(edge);
     incomingByNode.set(target.id, incoming);
@@ -295,7 +303,7 @@ export function validateAutomationWorkflowGraph(value: unknown): AutomationValid
       } else if (!current) deploymentSlots.set(subworkflowSlot, { type: "subworkflow", nodeId: node.id });
     }
     const incoming = incomingByNode.get(node.id) || [];
-    if (definition.category !== "trigger" && incoming.length && !incoming.some((edge) => effectiveEdgeRole(edge) !== "data")) {
+    if (definition.category !== "trigger" && incoming.length && !incoming.some((edge) => !["data", "retry"].includes(effectiveEdgeRole(edge)))) {
       issues.push(issue(
         "MISSING_FLOW_ROUTE",
         `“${node.name}” is connected only as supporting data. Mark one incoming connection as Main execution route so the step remains visible and runnable.`,
@@ -321,10 +329,10 @@ export function validateAutomationWorkflowGraph(value: unknown): AutomationValid
       : node.config.failureMode ?? failureField?.defaultValue;
     const errorPort = definition.outputs.find((output) => output.type === "error");
     const errorConnections = errorPort ? outgoing.filter((edge) => edge.sourcePort === errorPort.id) : [];
-    if (errorConnections.length && failureMode !== "error-output") {
+    if (failureField && errorConnections.length && failureMode !== "error-output") {
       issues.push(issue("DORMANT_ERROR_OUTPUT", `“${node.name}” has an error branch, but its failure behavior is not set to Use error output.`, { nodeId: node.id }));
     }
-    if (failureMode === "error-output" && errorPort && !errorConnections.length) {
+    if (failureField && failureMode === "error-output" && errorPort && !errorConnections.length) {
       issues.push(issue("MISSING_ERROR_HANDLER", `“${node.name}” is configured to use its error output, but that output is not connected.`, { nodeId: node.id }));
     }
     if (definition.terminal && outgoing.length) issues.push(issue("TERMINAL_CONTINUES", `“${node.name}” is a final step and cannot lead to another step.`, { nodeId: node.id }));
@@ -357,7 +365,7 @@ export function validateAutomationWorkflowGraph(value: unknown): AutomationValid
 
   const activeNodes = graph.nodes.filter((node) => !node.disabled);
   const indegree = new Map(activeNodes.map((node) => [node.id, 0]));
-  for (const edge of graph.edges) {
+  for (const edge of graph.edges.filter((item) => effectiveEdgeRole(item) !== "retry")) {
     if (indegree.has(edge.source) && indegree.has(edge.target)) indegree.set(edge.target, (indegree.get(edge.target) || 0) + 1);
   }
   const queue = [...indegree.entries()].filter(([, degree]) => degree === 0).map(([nodeId]) => nodeId);
@@ -365,14 +373,48 @@ export function validateAutomationWorkflowGraph(value: unknown): AutomationValid
   while (queue.length) {
     const nodeId = queue.shift()!;
     ordered.push(nodeId);
-    for (const edge of outgoingByNode.get(nodeId) || []) {
+    for (const edge of (outgoingByNode.get(nodeId) || []).filter((item) => effectiveEdgeRole(item) !== "retry")) {
       if (!indegree.has(edge.target)) continue;
       const next = (indegree.get(edge.target) || 0) - 1;
       indegree.set(edge.target, next);
       if (next === 0) queue.push(edge.target);
     }
   }
-  if (ordered.length !== activeNodes.length) issues.push(issue("UNBOUNDED_CYCLE", "The workflow contains a cycle. Scenelith workflows must move forward; use a bounded batch step to limit a collection without connecting backwards."));
+  if (ordered.length !== activeNodes.length) issues.push(issue("UNBOUNDED_CYCLE", "The workflow contains an unbounded cycle. Return corrected data only through a bounded Retry gate."));
+
+  const forwardEdges = graph.edges.filter((edge) => effectiveEdgeRole(edge) !== "retry");
+  for (const retryEdge of graph.edges.filter((edge) => effectiveEdgeRole(edge) === "retry")) {
+    const gate = nodeById.get(retryEdge.target);
+    const source = nodeById.get(retryEdge.source);
+    if (!gate || !source || gate.type !== "logic.retry-gate" || retryEdge.targetPort !== "feedback") continue;
+    const reachable = new Set<string>();
+    const pending = [gate.id];
+    while (pending.length) {
+      const current = pending.shift()!;
+      if (reachable.has(current)) continue;
+      reachable.add(current);
+      pending.push(...forwardEdges.filter((edge) => edge.source === current).map((edge) => edge.target));
+    }
+    if (!reachable.has(source.id)) {
+      issues.push(issue("RETRY_ROUTE_DIRECTION", `“${source.name}” is not downstream of “${gate.name}”; a Retry route must return a checked and repaired value to its own gate.`, { edgeId: retryEdge.id }));
+      continue;
+    }
+    const ancestors = new Set<string>();
+    const backwards = [source.id];
+    while (backwards.length) {
+      const current = backwards.shift()!;
+      if (ancestors.has(current)) continue;
+      ancestors.add(current);
+      backwards.push(...forwardEdges.filter((edge) => edge.target === current).map((edge) => edge.source));
+    }
+    for (const nodeId of [...reachable].filter((id) => ancestors.has(id))) {
+      const loopNode = nodeById.get(nodeId);
+      const definition = loopNode && automationNodeDefinition(loopNode.type, loopNode.version);
+      if (loopNode && loopNode.id !== gate.id && !definition?.retrySafe) {
+        issues.push(issue("UNSAFE_RETRY_BODY", `“${loopNode.name}” cannot run inside a Retry path. Keep generation, external services, child workflows and final outputs after the successful check.`, { nodeId: loopNode.id, edgeId: retryEdge.id }));
+      }
+    }
+  }
 
   if (triggers.length === 1) {
     const reachable = new Set<string>();
@@ -468,7 +510,7 @@ export function topologicalAutomationNodeIds(graph: AutomationWorkflowGraph) {
   const active = graph.nodes.filter((node) => !node.disabled);
   const indegree = new Map(active.map((node) => [node.id, 0]));
   const outgoing = new Map<string, string[]>();
-  for (const edge of graph.edges) {
+  for (const edge of graph.edges.filter((item) => item.role !== "retry")) {
     if (!indegree.has(edge.source) || !indegree.has(edge.target)) continue;
     indegree.set(edge.target, (indegree.get(edge.target) || 0) + 1);
     outgoing.set(edge.source, [...(outgoing.get(edge.source) || []), edge.target]);
