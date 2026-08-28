@@ -13,7 +13,7 @@ function preview(input: { identityId?: string; mode?: "concept" | "identity"; ne
     "creative-settings.newLocation": input.newLocation,
     "creative-settings.textStrategy": input.textStrategy,
     "creative-settings.creativeBrief": input.creativeBrief || "",
-    "creative-settings.creativeDirectionPolicy": "override-explicit",
+    "creative-settings.creativeDirectionPolicy": "propose",
   });
 }
 
@@ -91,9 +91,8 @@ test("text handling activates exactly one complete route", () => {
 
 test("written direction exposes the smart resolver before its runtime choice is known", () => {
   const result = preview({ newOutfit: true, newLocation: true, textStrategy: "rewrite", creativeBrief: "Keep the same room and remove all text." });
-  for (const nodeId of ["has-creative-direction", "interpret-user-direction", "select-user-direction", "resolve-user-direction"]) {
+  for (const nodeId of ["prepare-user-direction", "interpret-user-direction", "resolve-user-direction"]) {
     assert.equal(result.activeNodeIds.has(nodeId), true, nodeId);
   }
-  assert.equal(result.activeNodeIds.has("empty-user-direction"), false);
   assert.equal(result.activeNodeIds.has("direction-conflict"), true, "the visible conflict path remains possible until the parser returns a deterministic contract");
 });

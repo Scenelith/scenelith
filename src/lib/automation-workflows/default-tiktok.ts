@@ -1,6 +1,7 @@
 import { DEFAULT_AUTOMATION_WORKFLOW_SETTINGS, type AutomationAnnotation, type AutomationEdge, type AutomationEdgeRole, type AutomationGroup, type AutomationNode, type AutomationWorkflowGraph } from "./types";
 import { AUTOMATION_IDENTITY_REFERENCE_INSTRUCTION, AUTOMATION_NO_TEXT_AVOID_INSTRUCTION, AUTOMATION_SOURCE_REFERENCE_INSTRUCTION } from "../generation-prompt-contract";
 import { automationSlidePlanCollectionJsonSchema } from "./slide-plan-contract";
+import { DEFAULT_AUTOMATION_CREATIVE_CONTROLS } from "./creative-direction-contract";
 
 const defaultPlanningModel = "google/gemini-3.7-flash";
 
@@ -94,22 +95,6 @@ const creativeDirectionRequirementSchema = strictObject({
   placement: { type: "string", enum: ["preserve", "change", "avoid"] },
   slideIndexes: { type: "array", items: integer },
 });
-const creativeDirectionExtractionSchema = strictObject({
-  summary: text,
-  requirements: list(strictObject({
-    instruction: text,
-    evidence: text,
-    category: { type: "string", enum: ["audience", "offer", "tone", "visual", "copy", "subject", "product", "pacing", "other"] },
-    placement: { type: "string", enum: ["preserve", "change", "avoid"] },
-    slideIndexes: { type: "array", items: integer },
-  })),
-  choiceRequests: list(strictObject({
-    field: { type: "string", enum: ["mode", "newOutfit", "newLocation", "textStrategy"] },
-    value: { type: "string", enum: ["concept", "identity", "change", "preserve", "keep", "rewrite", "remove"] },
-    evidence: text,
-  })),
-  ambiguities: list(strictObject({ description: text, evidence: strings })),
-});
 const creativeBriefSchema = strictObject({
   userIntentSummary: text,
   requirements: list(creativeDirectionRequirementSchema),
@@ -147,7 +132,7 @@ const seriesReviewSchema = strictObject({
 
 const groups: AutomationGroup[] = [
   { id: "group-understand", name: "Understand source", description: "Read the slideshow and its visual mechanic.", position: { x: 760, y: 120 }, size: { width: 620, height: 430 }, collapsedByDefault: true, nodeIds: ["analyze-source"] },
-  { id: "group-adapt", name: "Define the new version", description: "Resolve written direction, choose the adaptation route, preservation rules, text handling and identity references.", position: { x: 760, y: 296 }, size: { width: 2400, height: 1610 }, collapsedByDefault: true, nodeIds: ["has-creative-direction", "interpret-user-direction", "empty-user-direction", "select-user-direction", "resolve-user-direction", "direction-conflict", "adaptation-mode-choice", "rebuild-concept-mode", "keep-concept-mode", "select-adaptation", "inspect-identity", "wardrobe-choice", "allow-wardrobe-change", "preserve-wardrobe", "select-wardrobe", "location-choice", "allow-location-change", "preserve-location", "select-location", "assemble-choices", "interpret-brief", "text-route-rewrite", "text-route-keep", "decompose-copy", "rewrite-copy", "review-copy", "keep-copy", "remove-copy", "select-copy", "bind-references"] },
+  { id: "group-adapt", name: "Define the new version", description: "Resolve written direction, choose the adaptation route, preservation rules, text handling and identity references.", position: { x: 760, y: 296 }, size: { width: 2400, height: 1610 }, collapsedByDefault: true, nodeIds: ["prepare-user-direction", "interpret-user-direction", "resolve-user-direction", "direction-conflict", "adaptation-mode-choice", "rebuild-concept-mode", "keep-concept-mode", "select-adaptation", "inspect-identity", "wardrobe-choice", "allow-wardrobe-change", "preserve-wardrobe", "select-wardrobe", "location-choice", "allow-location-change", "preserve-location", "select-location", "assemble-choices", "interpret-brief", "text-route-rewrite", "text-route-keep", "decompose-copy", "rewrite-copy", "review-copy", "keep-copy", "remove-copy", "select-copy", "bind-references"] },
   { id: "group-build", name: "Build slides", description: "Assemble the contract and plan every output slide.", position: { x: 3400, y: 296 }, size: { width: 620, height: 430 }, collapsedByDefault: true, nodeIds: ["assemble-contract", "plan-slides"] },
   { id: "group-review", name: "Review series", description: "Check the complete sequence against its source contract and repair only failed slides.", position: { x: 4060, y: 296 }, size: { width: 1940, height: 780 }, collapsedByDefault: true, nodeIds: ["assemble-review-package", "review-series", "assemble-review-gate", "review-passed", "use-approved-plans", "repair-slides", "select-final-plans"] },
 ];
@@ -171,7 +156,7 @@ Each card performs one visible job. A line starts at an output socket and ends a
 - **Identity** loads an optional saved person or character when one is selected. It is passed to identity analysis, reference matching and image creation; the workflow can also run without it.
 - **Visual references** loads optional images chosen from this canvas, the workspace Library or saved Identities. These can describe a product, place, pose, composition or style; use the separate Identity step when the workflow must preserve a recognizable person or character.
 - **Creative settings** collects the visible switches, optional written direction and one explicit policy: written choices may override only when unambiguous, or they must agree with the switches.
-- **Was extra direction written?** avoids an AI call for an empty comment. Otherwise **Understand the written direction** extracts every switch request, ordinary requirement and ambiguity without resolving contradictions. **Resolve comments against choices** deterministically applies the selected policy. A clear request can switch the later branch only when overrides are enabled; contradictory or ambiguous wording goes to **Stop for conflicting direction** with the exact phrases and fields to fix.
+- **Prepare the written direction** freezes the exact comment, configurable switches and raw source indexes. **Understand the written direction** classifies every clause under a fixed strict contract; an empty comment returns an explicit empty analysis without a provider call. **Resolve comments against choices** checks the comment hash, exact evidence ranges, complete wording coverage, confidence and configured options before applying the selected policy. Contradictory, partial or ambiguous wording goes to **Stop for conflicting direction** with the exact phrases and fields to fix.
 - **Adaptation route** reads the resolved mode and activates exactly one visible instruction: **Rebuild for a new concept** or **Keep concept, change the person**. The selected path then passes through one join card without asking AI to restate it.
 - **Wardrobe route** and **Location route** each choose one real path. Their visible **Allow change** and **Preserve source** cards create explicit instructions. **Lock the run choices** keeps those selected route objects beside the raw switches as one authoritative package, so turning a switch off never forgets that property.
 - **Text routes** choose exactly one of **Keep original text**, **Write new text** or **Remove text**. Unselected cards and their lines are skipped and shown as inactive before the run.
@@ -225,14 +210,14 @@ export function createDefaultTikTokWorkflowGraph(): AutomationWorkflowGraph {
     }),
     node({
       id: "creative-settings", type: "input.creative-settings", name: "Creative settings", description: "Choose what changes when this workflow starts.", position: { x: 430, y: 472 },
-      config: { mode: "concept", newOutfit: true, newLocation: true, textStrategy: "rewrite", creativeBrief: "", creativeDirectionPolicy: "override-explicit" },
+      config: { mode: "concept", newOutfit: true, newLocation: true, textStrategy: "rewrite", creativeBrief: "", creativeDirectionPolicy: "propose" },
       bindings: {
         mode: { mode: "ask-on-run", value: "concept", label: "Adaptation mode", required: true },
         newOutfit: { mode: "ask-on-run", value: true, label: "New wardrobe or subjects", required: true },
         newLocation: { mode: "ask-on-run", value: true, label: "New location or setting", required: true },
         textStrategy: { mode: "ask-on-run", value: "rewrite", label: "On-screen text", required: true },
         creativeBrief: { mode: "ask-on-run", value: "", label: "Creative direction", required: false },
-        creativeDirectionPolicy: { mode: "ask-on-run", value: "override-explicit", label: "How comments affect choices", required: true },
+        creativeDirectionPolicy: { mode: "ask-on-run", value: "propose", label: "How comments affect choices", required: true },
       },
     }),
     node({
@@ -241,25 +226,16 @@ export function createDefaultTikTokWorkflowGraph(): AutomationWorkflowGraph {
       bindings: { references: { mode: "ask-on-run", label: "Visual references", required: false } },
     }),
     node({
-      id: "has-creative-direction", type: "logic.condition", name: "Was extra direction written?", description: "Use the parser only when the run includes a non-empty creative comment.", groupId: "group-adapt", position: { x: 760, y: 648 },
-      config: { path: "creativeBrief", operator: "is-not-empty", compareValue: null },
-    }),
-    aiNode({
-      id: "interpret-user-direction", name: "Understand the written direction", description: "Extract explicit switch requests and atomic creative requirements without deciding conflicts.", groupId: "group-adapt", position: { x: 1090, y: 560 },
-      systemPrompt: "You extract operational requirements from a person's creative direction. Report only instructions supported by the written words. Never resolve contradictions, silently choose between alternatives or invent a preference. Connected source analysis is evidence for real slide indexes, not permission to add requirements.",
-      userPrompt: "Read only primary.creativeBrief as the person's extra direction. Use the connected source analysis only to resolve phrases such as first slide or final slide to real indexes. Return one choiceRequests entry for every explicit request that changes adaptation mode, wardrobe or subjects, location or setting, or on-screen text. Keep contradictory requests as separate entries so the next deterministic node can reject them. Put every other explicit atomic instruction into its own requirements entry; never combine separate instructions. Copy the exact supporting phrase into evidence and turn it into one operational instruction without weakening it. Use an empty slideIndexes list for a global requirement. Choose preserve when the instruction must remain, change when it must be created or altered, and avoid when it must not appear. Put uncertainty, mutually exclusive wording or a request that cannot be mapped safely into ambiguities. Do not treat audience, offer, tone, visual style, product, pacing or ordinary content details as switch requests.",
-      responseSchema: creativeDirectionExtractionSchema,
-      maxAttempts: 2,
+      id: "prepare-user-direction", type: "logic.prepare-creative-direction", name: "Prepare the written direction", description: "Freeze the exact comment, configured choices and real source indexes into one typed request.", groupId: "group-adapt", position: { x: 760, y: 648 },
+      config: { controls: DEFAULT_AUTOMATION_CREATIVE_CONTROLS, briefPath: "creativeBrief", policyPath: "creativeDirectionPolicy", minConfidence: 0.9, maxBriefCharacters: 5000, maxClauses: 16, maxClauseCharacters: 1000, maxRequirements: 24, allowIgnoredClauses: false },
     }),
     node({
-      id: "empty-user-direction", type: "logic.transform", name: "Continue without extra direction", description: "Create an explicit empty direction contract without spending an AI call.", groupId: "group-adapt", position: { x: 1090, y: 736 },
-      config: { template: { summary: "", requirements: [], choiceRequests: [], ambiguities: [] } },
+      id: "interpret-user-direction", type: "ai.interpret-creative-direction", name: "Understand the written direction", description: "Classify every exact clause under the fixed creative-direction contract.", groupId: "group-adapt", position: { x: 1090, y: 648 },
+      config: { modelId: defaultPlanningModel, maxAttempts: 2, fallbackModelId: "", failureMode: "stop" },
+      bindings: { modelId: { mode: "fixed", value: defaultPlanningModel, label: "Planning model", required: true } },
     }),
     node({
-      id: "select-user-direction", type: "logic.select-one", name: "Continue with one direction contract", description: "Join the parsed and empty paths without changing either result.", groupId: "group-adapt", position: { x: 1420, y: 648 },
-    }),
-    node({
-      id: "resolve-user-direction", type: "logic.resolve-creative-direction", name: "Resolve comments against choices", description: "Apply explicit overrides under the selected policy or return every contradiction on a visible error path.", groupId: "group-adapt", position: { x: 1750, y: 648 },
+      id: "resolve-user-direction", type: "logic.resolve-creative-direction", version: 2, name: "Resolve comments against choices", description: "Verify exact evidence and coverage, then apply only policy-approved configured choices.", groupId: "group-adapt", position: { x: 1420, y: 648 },
     }),
     node({
       id: "direction-conflict", type: "output.finish", name: "Stop for conflicting direction", description: "Show the exact settings and phrases that need clarification before generation.", groupId: "group-adapt", position: { x: 2080, y: 824 },
@@ -486,15 +462,11 @@ export function createDefaultTikTokWorkflowGraph(): AutomationWorkflowGraph {
     edge("manual-run", "run", "visual-references", "run"),
     edge("tiktok-source", "source", "analyze-source", "primary"),
     edge("identity", "identity", "inspect-identity", "primary"),
-    edge("creative-settings", "settings", "has-creative-direction", "data"),
-    edge("has-creative-direction", "yes", "interpret-user-direction", "primary"),
-    edge("analyze-source", "result", "interpret-user-direction", "context", "data"),
-    edge("has-creative-direction", "no", "empty-user-direction", "data"),
-    edge("interpret-user-direction", "result", "select-user-direction", "data"),
-    edge("empty-user-direction", "result", "select-user-direction", "data"),
-    edge("creative-settings", "settings", "resolve-user-direction", "settings"),
-    edge("select-user-direction", "result", "resolve-user-direction", "direction", "data"),
-    edge("analyze-source", "result", "resolve-user-direction", "source", "data"),
+    edge("creative-settings", "settings", "prepare-user-direction", "settings"),
+    edge("tiktok-source", "source", "prepare-user-direction", "source", "data"),
+    edge("prepare-user-direction", "request", "interpret-user-direction", "request"),
+    edge("prepare-user-direction", "request", "resolve-user-direction", "request", "data"),
+    edge("interpret-user-direction", "analysis", "resolve-user-direction", "analysis"),
     edge("resolve-user-direction", "conflict", "direction-conflict", "data", "error"),
     edge("analyze-source", "result", "interpret-brief", "primary"),
     edge("inspect-identity", "result", "interpret-brief", "context", "data"),

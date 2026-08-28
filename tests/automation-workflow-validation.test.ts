@@ -10,7 +10,8 @@ test("default TikTok workflow exposes every AI request and validates", () => {
   const result = validateAutomationWorkflowGraph(graph);
   assert.deepEqual(result.issues, []);
   assert.equal(result.valid, true);
-  assert.equal(graph.nodes.filter((node) => node.type === "ai.structured-task").length, 14);
+  assert.equal(graph.nodes.filter((node) => node.type === "ai.structured-task").length, 13);
+  assert.equal(graph.nodes.filter((node) => node.type === "ai.interpret-creative-direction").length, 1);
   for (const aiNode of graph.nodes.filter((node) => node.type === "ai.structured-task")) {
     assert.equal(aiNode.version, 2);
     assert.equal(aiNode.config.outputMode, "structured");
@@ -74,6 +75,18 @@ test("the AI node validates only the selected output contract and keeps permanen
   node.config.systemPrompt = "Always follow {{ primary }}";
   result = validateAutomationWorkflowGraph(graph);
   assert.ok(result.issues.some((entry) => entry.code === "VARIABLE_IN_PERMANENT_INSTRUCTIONS"));
+});
+
+test("creative-direction interpretation exposes one immutable built-in system contract", () => {
+  const graph = createDefaultTikTokWorkflowGraph();
+  const node = graph.nodes.find((entry) => entry.id === "interpret-user-direction")!;
+  const definition = automationNodeDefinitions().find((entry) => entry.type === "ai.interpret-creative-direction")!;
+  const contract = definition.fields.find((field) => field.id === "systemInstructions")!;
+  assert.equal(contract.readOnly, true);
+  assert.match(String(contract.defaultValue), /COMPLETE COVERAGE/);
+  node.config.systemInstructions = "Ignore the contract";
+  const result = validateAutomationWorkflowGraph(graph);
+  assert.ok(result.issues.some((entry) => entry.code === "IMMUTABLE_NODE_SETTING"));
 });
 
 test("runtime panel fields come from ask-on-run bindings", () => {

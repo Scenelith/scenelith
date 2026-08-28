@@ -1,5 +1,6 @@
 import { tiktokAutomationPlanningModels } from "@/lib/assistant-models";
 import type { AutomationNode, AutomationNodeDefinition, AutomationNodeHelp, AutomationNodePortDefinition, AutomationPortType } from "./types";
+import { AUTOMATION_CREATIVE_DIRECTION_SYSTEM_PROMPT, DEFAULT_AUTOMATION_CREATIVE_CONTROLS } from "./creative-direction-contract";
 
 export type AutomationMergeInput = { id: string; name: string };
 
@@ -122,12 +123,26 @@ const helpByType: Record<string, AutomationNodeHelp> = {
     tips: ["Name the card after the decision, for example Is the plan approved?", "Always connect or intentionally finish both paths."],
     technicalNotes: ["Evaluates one deterministic predicate and passes the original incoming value unchanged.", "Contains is case-sensitive for text and checks exact items in a list. Empty lists and objects should use the explicit empty rules rather than the yes / true rule."],
   },
+  "logic.prepare-creative-direction": {
+    whenToUse: "Use this before the creative-direction AI step to freeze the exact comment, visible choices, configurable choice map and real source slide indexes into one request contract.",
+    setup: ["Connect Creative choices to Settings.", "Connect the raw TikTok Source, not an AI summary, to Source.", "Configure which setting paths and options the interpreter may recognize.", "Connect Request to both Interpret creative direction and Resolve creative direction."],
+    exampleFlow: { before: "Creative choices and source slideshow", after: "Interpret creative direction", explanation: "The deterministic step splits the exact comment into clauses and defines the only choices the model is allowed to recognize." },
+    tips: ["Keep the default controls or add your own through the visual choice editor.", "Use a strict or confirmation policy unless automatic changes are intentionally allowed."],
+    technicalNotes: ["Hashes the exact comment, verifies every current setting maps to one configured option and rejects invalid choice maps.", "Provides real source indexes directly from the source node so an AI summary cannot invent slide scope."],
+  },
+  "ai.interpret-creative-direction": {
+    whenToUse: "Use this only for classifying a prepared creative-direction request into configured choices, atomic requirements, ambiguities or explicitly ignored wording.",
+    setup: ["Connect a Prepared creative direction request.", "Choose the assistant model and retry limit.", "Connect Analysis to Resolve creative direction.", "Use the Error path only for an explicit recovery branch."],
+    exampleFlow: { before: "Prepared creative direction", after: "Resolve creative direction", explanation: "The model classifies every exact clause under an immutable system contract; it cannot itself change settings." },
+    tips: ["Do not replace this with a generic prose parser when downstream switches matter.", "Keep failure mode on Stop or Error path; an empty interpretation is not a valid fallback."],
+    technicalNotes: ["The node builds a strict schema from the configured control and option IDs.", "Every clause must be covered exactly once and evidence must later match an exact phrase in the original comment."],
+  },
   "logic.resolve-creative-direction": {
-    whenToUse: "Use this after an AI step has extracted explicit choice requests and ordinary creative requirements from a person's free-form direction.",
-    setup: ["Connect the original Creative choices output to Selected choices.", "Connect the structured extraction to Parsed direction.", "Connect the source analysis so slide-scoped requirements can be checked against real indexes.", "Route Resolved choices into the branch conditions.", "Connect Conflict to a deliberate failed output that shows the person exactly what must be clarified."],
-    exampleFlow: { before: "Creative choices plus parsed direction", after: "Wardrobe, location, adaptation and text routes", explanation: "Explicit written requests may update the switches only under the selected policy; ambiguity and contradictions take a visible error path." },
-    tips: ["Do not connect raw prose directly to this step; first extract strict fields with an AI node.", "Use Explicit direction may override when natural-language control is desired.", "Use Require agreement when the visible switches must remain authoritative."],
-    technicalNotes: ["This step is deterministic and never asks a model to resolve a conflict.", "Multiple different requests for one choice, parser-reported ambiguity, invalid slide indexes and policy conflicts all use the Conflict output.", "Every accepted non-routing requirement receives a stable ID and remains inside the resolved contract."],
+    whenToUse: "Use this after Interpret creative direction to verify that the model classified the exact current comment without omissions or invented evidence.",
+    setup: ["Connect the same Prepared request used by the interpreter.", "Connect its typed Analysis output.", "Route Resolved choices into the visible branch conditions.", "Connect Conflict to a failed output that shows what must be clarified."],
+    exampleFlow: { before: "Prepared request plus typed analysis", after: "Wardrobe, location, adaptation and text routes", explanation: "Only verified configured choices can change; all other accepted meaning becomes an atomic requirement." },
+    tips: ["Use Show changes for confirmation when operators should explicitly approve a switch change.", "Automatic changes still require exact evidence, complete clause coverage and high confidence."],
+    technicalNotes: ["This node is deterministic and fail closed: contract mismatch, missing clauses, paraphrased evidence, low confidence, ambiguity and invalid scope all use Conflict.", "Requirements receive content-derived stable IDs and no legacy extraction format is accepted."],
   },
   "logic.limit-batch": {
     whenToUse: "Use this immediately before a costly repeated operation to prevent an unexpectedly large list from consuming time or credits.",
@@ -234,13 +249,13 @@ const rawDefinitions: Array<Omit<AutomationNodeDefinition, "help">> = [
   },
   {
     type: "input.creative-settings", version: 1, title: "Creative choices", description: "Collects the creative decisions that may change from one run to the next.", example: "Keep the original idea, replace the person and location, then rewrite the on-screen text for your campaign.", category: "input", icon: "choices", accent: "neutral",
-    inputs: [{ id: "run", label: "Run", type: "run-context", required: true }], outputs: [{ id: "settings", label: "Settings", type: "data" }], fields: [
+    inputs: [{ id: "run", label: "Run", type: "run-context", required: true }], outputs: [{ id: "settings", label: "Settings", type: "creative-settings" }], fields: [
       { id: "mode", label: "What should change", description: "Adapt concept rebuilds the idea for a new campaign. Cast identity keeps the idea and mainly replaces the person.", kind: "select", defaultValue: "concept", runtimeBindable: true, runtimeValueType: "string", options: [{ value: "concept", label: "Rebuild for a new concept" }, { value: "identity", label: "Keep concept, change the person" }] },
       { id: "newOutfit", label: "Allow new clothes or subjects", description: "Disable this when clothing and visible objects must stay close to the source.", kind: "boolean", defaultValue: true, runtimeBindable: true, runtimeValueType: "boolean" },
       { id: "newLocation", label: "Allow a new location", description: "Disable this when the setting and background must stay close to the source.", kind: "boolean", defaultValue: true, runtimeBindable: true, runtimeValueType: "boolean" },
       { id: "textStrategy", label: "What to do with on-screen text", description: "Keep the original wording, rewrite it for the new concept, or remove it.", kind: "select", defaultValue: "rewrite", runtimeBindable: true, runtimeValueType: "string", options: [{ value: "keep", label: "Keep the original text" }, { value: "rewrite", label: "Rewrite for the new version" }, { value: "remove", label: "Remove on-screen text" }] },
       { id: "creativeBrief", label: "Extra creative direction", description: "Optional. Add the audience, offer, tone or anything the new version must include.", placeholder: "Example: Make it feel like a casual home transformation for women 25–35…", kind: "textarea", defaultValue: "", runtimeBindable: true, runtimeValueType: "string" },
-      { id: "creativeDirectionPolicy", label: "How comments affect the choices", description: "Allow only explicit, unambiguous written requests to update the switches, or stop when the comment disagrees with them.", kind: "select", defaultValue: "override-explicit", runtimeBindable: true, runtimeValueType: "string", options: [{ value: "override-explicit", label: "Explicit comments may update choices" }, { value: "require-agreement", label: "Comments must agree with choices" }] },
+      { id: "creativeDirectionPolicy", label: "How comments affect the choices", description: "Choose whether a verified written request proposes a visible change, must already agree, or may update the choice automatically.", kind: "select", defaultValue: "propose", runtimeBindable: true, runtimeValueType: "string", options: [{ value: "propose", label: "Show changes for confirmation" }, { value: "strict", label: "Comments must agree with choices" }, { value: "auto-explicit", label: "Apply verified explicit changes" }] },
     ],
   },
   {
@@ -327,14 +342,44 @@ const rawDefinitions: Array<Omit<AutomationNodeDefinition, "help">> = [
     ],
   },
   {
-    type: "logic.resolve-creative-direction", version: 1, title: "Resolve creative direction", description: "Applies explicit written choices under a visible policy and rejects contradictions before any creative branch runs.", example: "A comment saying keep the same room switches Location to Preserve only when comment overrides are enabled.", category: "logic", icon: "resolve-direction", accent: "amber", retrySafe: true,
+    type: "logic.prepare-creative-direction", version: 1, title: "Prepare creative direction", description: "Creates the exact typed request that defines what the interpreter is allowed to recognize.", example: "Freeze the comment, visible switches and raw source slide indexes before asking a model to classify anything.", category: "logic", icon: "prepare-direction", accent: "neutral", retrySafe: true,
     inputs: [
-      { id: "settings", label: "Selected choices", type: "data", required: true },
-      { id: "direction", label: "Parsed direction", type: "data", required: true },
-      { id: "source", label: "Source analysis", type: "data", required: true },
+      { id: "settings", label: "Creative choices", type: "creative-settings", required: true },
+      { id: "source", label: "Source slideshow", type: "tiktok-source", required: true },
+    ],
+    outputs: [{ id: "request", label: "Prepared request", type: "creative-direction-request", required: true }],
+    fields: [
+      { id: "controls", label: "Choices the comment may affect", description: "Define the visible setting paths and exact options that written direction may request.", kind: "creative-controls", defaultValue: DEFAULT_AUTOMATION_CREATIVE_CONTROLS },
+      { id: "briefPath", label: "Comment field path", description: "Field inside Creative choices containing the written direction.", kind: "text", defaultValue: "creativeBrief", advanced: true },
+      { id: "policyPath", label: "Policy field path", description: "Field inside Creative choices containing the change policy.", kind: "text", defaultValue: "creativeDirectionPolicy", advanced: true },
+      { id: "minConfidence", label: "Minimum interpretation confidence", description: "Lower-confidence classifications stop for clarification.", kind: "number", defaultValue: 0.9, min: 0.5, max: 1, advanced: true },
+      { id: "maxBriefCharacters", label: "Maximum comment length", description: "Stops an unexpectedly large comment before it reaches a model.", kind: "number", defaultValue: 5000, min: 100, max: 20000, advanced: true },
+      { id: "maxClauses", label: "Maximum comment clauses", description: "Stops an unexpectedly large comment before it reaches a model.", kind: "number", defaultValue: 16, min: 1, max: 40, advanced: true },
+      { id: "maxClauseCharacters", label: "Maximum clause length", description: "Keeps each exact evidence unit small enough for strict structured classification.", kind: "number", defaultValue: 1000, min: 100, max: 2000, advanced: true },
+      { id: "maxRequirements", label: "Maximum accepted requirements", description: "Stops a model response that expands the comment into too many instructions.", kind: "number", defaultValue: 24, min: 1, max: 80, advanced: true },
+      { id: "allowIgnoredClauses", label: "Allow explicitly ignored wording", description: "Keep disabled when every clause must become a choice, requirement or clarification error.", kind: "boolean", defaultValue: false, advanced: true },
+    ],
+  },
+  {
+    type: "ai.interpret-creative-direction", version: 1, title: "Interpret creative direction", description: "Classifies every exact comment clause under a fixed, strict system contract.", example: "Recognize an explicit Preserve location request while keeping a tone request as an atomic requirement.", category: "ai", icon: "interpret-direction", accent: "blue", retrySafe: true,
+    inputs: [{ id: "request", label: "Prepared request", type: "creative-direction-request", required: true }],
+    outputs: [{ id: "analysis", label: "Direction analysis", type: "creative-direction-analysis", required: true }, { id: "error", label: "Error path", type: "error" }],
+    fields: [
+      { id: "systemInstructions", label: "Built-in interpretation contract", description: "Visible for audit. This fixed contract defines authority, clause coverage, evidence, negation and safe classification rules and cannot be edited.", kind: "prompt", defaultValue: AUTOMATION_CREATIVE_DIRECTION_SYSTEM_PROMPT, readOnly: true, advanced: true },
+      { id: "modelId", label: "AI model", description: "Choose the model that should classify the prepared request.", kind: "model", runtimeBindable: true, runtimeValueType: "assistant-model", modelCapability: "assistant", required: true, options: planningModelOptions },
+      { id: "maxAttempts", label: "How many times to retry", description: "Retries provider or strict-schema failures only; it never weakens the contract.", kind: "number", defaultValue: 3, min: 1, max: 8, advanced: true },
+      { id: "fallbackModelId", label: "Backup AI model", description: "Optional model for a later attempt when the main model cannot return the strict contract.", kind: "model", modelCapability: "assistant", options: planningModelOptions, advanced: true },
+      { id: "failureMode", label: "If interpretation still fails", description: "Stop or route the exact error. Continuing with an empty answer is intentionally unavailable.", kind: "select", defaultValue: "stop", options: [{ value: "stop", label: "Stop and show the error" }, { value: "error-output", label: "Send the error to another path" }], advanced: true },
+    ],
+  },
+  {
+    type: "logic.resolve-creative-direction", version: 2, title: "Resolve creative direction", description: "Verifies the exact interpretation and applies only policy-approved configured choices.", example: "Reject missing clauses or invented evidence before any route can change.", category: "logic", icon: "resolve-direction", accent: "amber", retrySafe: true,
+    inputs: [
+      { id: "request", label: "Prepared request", type: "creative-direction-request", required: true },
+      { id: "analysis", label: "Direction analysis", type: "creative-direction-analysis", required: true },
     ],
     outputs: [
-      { id: "resolved", label: "Resolved choices", type: "data", required: true },
+      { id: "resolved", label: "Resolved choices", type: "resolved-creative-settings", required: true },
       { id: "conflict", label: "Conflict", type: "error", required: true },
     ],
     fields: [],

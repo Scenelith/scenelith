@@ -1,5 +1,6 @@
 import { lookup } from "node:dns/promises";
 import { isIP } from "node:net";
+import { createHash } from "node:crypto";
 import { isDeepStrictEqual } from "node:util";
 import http from "node:http";
 import https from "node:https";
@@ -22,6 +23,7 @@ import { validateAutomationStructuredValue } from "./json-schema";
 import { evaluateAutomationCondition } from "./condition";
 import { resolveAutomationCredential } from "./credentials";
 import { parseAutomationSlidePlanCollection, parseAutomationSlidePlanSet, type AutomationSlidePlan } from "./slide-plan-contract";
+import { AUTOMATION_CREATIVE_DIRECTION_SYSTEM_PROMPT, AUTOMATION_CREATIVE_DIRECTION_USER_PROMPT, automationCreativeControlIssues, automationCreativeControls, splitAutomationCreativeDirection, type AutomationCreativeControl } from "./creative-direction-contract";
 import type { AutomationNodeExecution, AutomationNodeHandlers } from "./runtime";
 
 type MultimodalContent = { type: "text"; text: string } | { type: "image_url"; image_url: { url: string } };
@@ -178,41 +180,11 @@ async function creativeSettings(execution: AutomationNodeExecution) {
     newLocation: execution.config.newLocation !== false,
     textStrategy: String(execution.config.textStrategy || "rewrite"),
     creativeBrief: String(execution.config.creativeBrief || ""),
-    creativeDirectionPolicy: String(execution.config.creativeDirectionPolicy || "override-explicit"),
+    creativeDirectionPolicy: String(execution.config.creativeDirectionPolicy || "propose"),
   } };
 }
 
-const creativeChoiceValues = {
-  mode: new Set(["concept", "identity"]),
-  newOutfit: new Set(["change", "preserve"]),
-  newLocation: new Set(["change", "preserve"]),
-  textStrategy: new Set(["keep", "rewrite", "remove"]),
-} as const;
-
-const creativeChoiceLabels = {
-  mode: "Adaptation mode",
-  newOutfit: "Wardrobe or subjects",
-  newLocation: "Location or setting",
-  textStrategy: "On-screen text",
-} as const;
-
-type CreativeChoiceField = keyof typeof creativeChoiceValues;
-
-function creativeChoiceSelectedValue(settings: Record<string, unknown>, field: CreativeChoiceField) {
-  if (field === "newOutfit" || field === "newLocation") return settings[field] === false ? "preserve" : "change";
-  return String(settings[field] || (field === "mode" ? "concept" : "rewrite"));
-}
-
-function applyCreativeChoice(settings: Record<string, unknown>, field: CreativeChoiceField, value: string) {
-  if (field === "newOutfit" || field === "newLocation") settings[field] = value === "change";
-  else settings[field] = value;
-}
-
-function creativeDirectionConflict(
-  settings: Record<string, unknown>,
-  direction: Record<string, unknown>,
-  conflicts: Array<Record<string, unknown>>,
-) {
+function creativeDirectionConflict(settings: Record<string, unknown>, direction: Record<string, unknown>, conflicts: Array<Record<string, unknown>>) {
   const details = conflicts.map((conflict) => String(conflict.message || conflict.description || "Clarify the creative direction")).filter(Boolean);
   return {
     conflict: {
@@ -225,103 +197,283 @@ function creativeDirectionConflict(
   };
 }
 
-async function resolveCreativeDirection(execution: AutomationNodeExecution) {
+function normalizedCreativeDirectionPolicy(value: unknown) {
+  return String(value || "propose");
+}
+
+function setSafePath(target: Record<string, unknown>, path: string, value: unknown) {
+  const parts = path.split(".");
+  let cursor = target;
+  for (const part of parts.slice(0, -1)) {
+    const current = cursor[part];
+    if (!current || typeof current !== "object" || Array.isArray(current)) cursor[part] = {};
+    cursor = cursor[part] as Record<string, unknown>;
+  }
+  cursor[parts.at(-1)!] = value;
+}
+
+function contentHash(value: string) {
+  return createHash("sha256").update(value, "utf8").digest("hex");
+}
+
+async function prepareCreativeDirection(execution: AutomationNodeExecution) {
   const settings = recordValue(execution.inputs.settings);
-  const direction = recordValue(execution.inputs.direction);
   const source = recordValue(execution.inputs.source);
-  const policy = String(settings.creativeDirectionPolicy || "override-explicit");
-  const rawBrief = String(settings.creativeBrief || "").trim();
-  const conflicts: Array<Record<string, unknown>> = [];
-
-  if (policy !== "override-explicit" && policy !== "require-agreement") {
-    conflicts.push({ field: "creativeDirectionPolicy", message: "Choose how comments should affect the visible choices" });
+  const rawControls = execution.config.controls;
+  const controlIssues = automationCreativeControlIssues(rawControls);
+  if (controlIssues.length) throw new Error(`Creative direction choice rules are invalid: ${controlIssues.join("; ")}`);
+  const controls = automationCreativeControls(rawControls);
+  for (const control of controls) {
+    const selected = pathValue(settings, control.path);
+    const matches = control.options.filter((option) => isDeepStrictEqual(option.value, selected));
+    if (matches.length !== 1) throw new Error(`${control.label} has no single selected option in the connected settings`);
   }
-
-  const parsedAmbiguities = Array.isArray(direction.ambiguities) ? direction.ambiguities : [];
-  for (const item of parsedAmbiguities) {
-    const ambiguity = recordValue(item);
-    const description = String(ambiguity.description || "").trim();
-    if (description) conflicts.push({ field: "creativeBrief", kind: "ambiguous", description, evidence: ambiguity.evidence || [] });
-  }
-
-  const groupedRequests = new Map<CreativeChoiceField, Map<string, string[]>>();
-  const normalizedRequests: Array<{ field: CreativeChoiceField; value: string; evidence: string }> = [];
-  const parsedRequests = Array.isArray(direction.choiceRequests) ? direction.choiceRequests : [];
-  for (const item of parsedRequests) {
-    const request = recordValue(item);
-    const field = String(request.field || "") as CreativeChoiceField;
-    const value = String(request.value || "");
-    const evidence = String(request.evidence || "").trim();
-    if (!(field in creativeChoiceValues) || !creativeChoiceValues[field].has(value as never) || !evidence) {
-      conflicts.push({ field: field || "creativeBrief", kind: "invalid-request", message: "One extracted choice request is incomplete or unsupported", request });
-      continue;
-    }
-    normalizedRequests.push({ field, value, evidence });
-    const values = groupedRequests.get(field) || new Map<string, string[]>();
-    values.set(value, [...(values.get(value) || []), evidence]);
-    groupedRequests.set(field, values);
-  }
-
-  for (const [field, values] of groupedRequests) {
-    if (values.size > 1) {
-      conflicts.push({
-        field,
-        kind: "contradiction",
-        message: `${creativeChoiceLabels[field]} is requested in conflicting ways (${[...values.keys()].join(" and ")})`,
-        requests: [...values.entries()].map(([value, evidence]) => ({ value, evidence })),
-      });
-    }
-  }
-
+  const briefPath = String(execution.config.briefPath || "creativeBrief").trim();
+  const policyPath = String(execution.config.policyPath || "creativeDirectionPolicy").trim();
+  const rawBrief = String(pathValue(settings, briefPath) || "").trim();
+  const maximumBriefCharacters = Math.min(20_000, Math.max(100, Number(execution.config.maxBriefCharacters || 5_000)));
+  if (rawBrief.length > maximumBriefCharacters) throw new Error(`Creative direction is ${rawBrief.length.toLocaleString()} characters; this step allows ${maximumBriefCharacters.toLocaleString()}`);
+  const policy = normalizedCreativeDirectionPolicy(pathValue(settings, policyPath));
+  if (!new Set(["strict", "propose", "auto-explicit"]).has(policy)) throw new Error("Choose a supported creative direction policy");
   const sourceSlides = Array.isArray(source.slides) ? source.slides : [];
-  const sourceIndexes = new Set(sourceSlides.map((item, position) => Number(recordValue(item).index || position + 1)));
+  const sourceSlideIndexes = sourceSlides.map((item, position) => Number(recordValue(item).index || position + 1));
+  if (!sourceSlideIndexes.length || sourceSlideIndexes.some((index) => !Number.isSafeInteger(index) || index < 1) || new Set(sourceSlideIndexes).size !== sourceSlideIndexes.length) {
+    throw new Error("The connected source must contain unique positive slide indexes");
+  }
+  const clauses = splitAutomationCreativeDirection(rawBrief);
+  const maximumClauses = Math.min(40, Math.max(1, Number(execution.config.maxClauses || 16)));
+  if (clauses.length > maximumClauses) throw new Error(`Creative direction contains ${clauses.length} clauses; this step allows ${maximumClauses}`);
+  const maximumClauseCharacters = Math.min(2_000, Math.max(100, Number(execution.config.maxClauseCharacters || 1_000)));
+  if (clauses.some((clause) => clause.text.length > maximumClauseCharacters)) throw new Error(`Each creative-direction clause must be at most ${maximumClauseCharacters.toLocaleString()} characters`);
+  return { request: {
+    contractVersion: 2,
+    briefHash: contentHash(rawBrief),
+    rawBrief,
+    clauses,
+    settings: structuredClone(settings),
+    controls,
+    policy,
+    sourceSlideIndexes,
+    minConfidence: Math.min(1, Math.max(0.5, Number(execution.config.minConfidence || 0.9))),
+    maxRequirements: Math.min(80, Math.max(1, Number(execution.config.maxRequirements || 24))),
+    maxClauseCharacters: maximumClauseCharacters,
+    allowIgnoredClauses: execution.config.allowIgnoredClauses === true,
+  } };
+}
+
+function creativeDirectionAnalysisSchema(request: Record<string, unknown>) {
+  const clauses = Array.isArray(request.clauses) ? request.clauses : [];
+  const controls = automationCreativeControls(request.controls);
+  const controlIds = controls.map((control) => control.id);
+  const optionIds = [...new Set(controls.flatMap((control) => control.options.map((option) => option.id)))];
+  const maximumClauseCharacters = Math.min(2_000, Math.max(100, Number(request.maxClauseCharacters || 1_000)));
+  return {
+    type: "object", additionalProperties: false, required: ["briefHash", "clauseResults"], properties: {
+      briefHash: { type: "string", enum: [String(request.briefHash || "")] },
+      clauseResults: { type: "array", minItems: clauses.length, maxItems: clauses.length, items: {
+        type: "object", additionalProperties: false, required: ["clauseId", "items"], properties: {
+          clauseId: { type: "string", enum: clauses.map((item) => String(recordValue(item).id || "")) },
+          items: { type: "array", minItems: 1, maxItems: 16, items: {
+            type: "object", additionalProperties: false,
+            required: ["kind", "evidence", "evidenceStart", "evidenceEnd", "controlId", "optionId", "instruction", "category", "placement", "slideIndexes", "confidence", "reason"],
+            properties: {
+              kind: { type: "string", enum: ["choice", "requirement", "ambiguity", "ignore"] },
+              evidence: { type: "string", minLength: 1, maxLength: maximumClauseCharacters },
+              evidenceStart: { type: "integer", minimum: 0, maximum: maximumClauseCharacters },
+              evidenceEnd: { type: "integer", minimum: 1, maximum: maximumClauseCharacters },
+              controlId: { type: "string", enum: ["", ...controlIds] },
+              optionId: { type: "string", enum: ["", ...optionIds] },
+              instruction: { type: "string", maxLength: 2_000 },
+              category: { type: "string", enum: ["", "audience", "offer", "tone", "visual", "copy", "subject", "product", "pacing", "other"] },
+              placement: { type: "string", enum: ["", "preserve", "change", "avoid"] },
+              slideIndexes: { type: "array", maxItems: 40, items: { type: "integer", minimum: 1 } },
+              confidence: { type: "number", minimum: 0, maximum: 1 },
+              reason: { type: "string", maxLength: 2_000 },
+            },
+          } },
+        },
+      } },
+    },
+  };
+}
+
+async function interpretCreativeDirection(execution: AutomationNodeExecution) {
+  const request = recordValue(execution.inputs.request);
+  if (request.contractVersion !== 2) throw new Error("Creative direction request uses an unsupported contract version");
+  if (Array.isArray(request.clauses) && request.clauses.length === 0) {
+    return { analysis: { briefHash: request.briefHash, clauseResults: [] }, __usage: { chargedCredits: 0, costUsd: 0 }, __skipped: "No written creative direction" };
+  }
+  const response = await aiTask({
+    ...execution,
+    inputs: { primary: request },
+    config: {
+      ...execution.config,
+      systemPrompt: AUTOMATION_CREATIVE_DIRECTION_SYSTEM_PROMPT,
+      userPrompt: AUTOMATION_CREATIVE_DIRECTION_USER_PROMPT,
+      outputMode: "structured",
+      responseSchema: creativeDirectionAnalysisSchema(request),
+      creativity: "consistent",
+      runWhen: "always",
+    },
+  });
+  return { analysis: response.result, __usage: response.__usage };
+}
+
+function selectedControlOption(settings: Record<string, unknown>, control: AutomationCreativeControl) {
+  return control.options.find((option) => isDeepStrictEqual(option.value, pathValue(settings, control.path)));
+}
+
+function normalizedRecognitionText(value: string) {
+  return value.normalize("NFKC").toLocaleLowerCase().replace(/[^\p{L}\p{N}]+/gu, " ").trim().replace(/\s+/g, " ");
+}
+
+function evidenceRecognizesOption(evidence: string, option: AutomationCreativeControl["options"][number]) {
+  const normalizedEvidence = normalizedRecognitionText(evidence);
+  const negativeCues = ["do not", "dont", "never", "not", "without", "no", "не", "без", "никогда"];
+  const evidenceIsNegative = negativeCues.some((cue) => normalizedEvidence.includes(cue));
+  const matching = option.matchPhrases.map(normalizedRecognitionText).filter((phrase) => phrase && normalizedEvidence.includes(phrase));
+  return matching.length > 0 && (!evidenceIsNegative || matching.some((phrase) => negativeCues.some((cue) => phrase.includes(cue))));
+}
+
+async function resolveCreativeDirection(execution: AutomationNodeExecution) {
+  const request = recordValue(execution.inputs.request);
+  const direction = recordValue(execution.inputs.analysis);
+  const settings = recordValue(request.settings);
+  const rawBrief = String(request.rawBrief || "");
+  const policy = normalizedCreativeDirectionPolicy(request.policy);
+  const conflicts: Array<Record<string, unknown>> = [];
+  const clauses = Array.isArray(request.clauses) ? request.clauses.map(recordValue) : [];
+  const clausesById = new Map(clauses.map((clause) => [String(clause.id || ""), clause]));
+  const controls = automationCreativeControls(request.controls);
+  const controlsById = new Map(controls.map((control) => [control.id, control]));
+  const sourceIndexes = new Set(Array.isArray(request.sourceSlideIndexes) ? request.sourceSlideIndexes.map(Number) : []);
+  const minConfidence = Number(request.minConfidence || 0.9);
+  if (request.contractVersion !== 2 || direction.briefHash !== request.briefHash || contentHash(rawBrief) !== request.briefHash) {
+    conflicts.push({ field: "creativeBrief", kind: "contract-mismatch", message: "The interpretation does not belong to the current creative direction" });
+  }
+  const results = Array.isArray(direction.clauseResults) ? direction.clauseResults.map(recordValue) : [];
+  const resultIds = results.map((result) => String(result.clauseId || ""));
+  if (resultIds.length !== clauses.length || new Set(resultIds).size !== resultIds.length || resultIds.some((id) => !clausesById.has(id)) || clauses.some((clause) => !resultIds.includes(String(clause.id)))) {
+    conflicts.push({ field: "creativeBrief", kind: "coverage", message: "The model did not classify every creative-direction clause exactly once" });
+  }
+  const groupedRequests = new Map<string, Map<string, string[]>>();
+  const normalizedRequests: Array<{ controlId: string; optionId: string; evidence: string; clauseId: string; confidence: number }> = [];
   const allowedCategories = new Set(["audience", "offer", "tone", "visual", "copy", "subject", "product", "pacing", "other"]);
   const allowedPlacements = new Set(["preserve", "change", "avoid"]);
   const requirements: Array<{ id: string; instruction: string; evidence: string; category: string; placement: string; slideIndexes: number[] }> = [];
-  const parsedRequirements = Array.isArray(direction.requirements) ? direction.requirements : [];
-  for (const [index, item] of parsedRequirements.entries()) {
-    const requirement = recordValue(item);
-    const instruction = String(requirement.instruction || "").trim();
-    const evidence = String(requirement.evidence || "").trim();
-    const category = String(requirement.category || "");
-    const placement = String(requirement.placement || "");
-    const slideIndexes = Array.isArray(requirement.slideIndexes)
-      ? [...new Set(requirement.slideIndexes.map(Number).filter((value) => Number.isSafeInteger(value) && value > 0))]
-      : [];
-    const invalidIndexes = slideIndexes.filter((slideIndex) => !sourceIndexes.has(slideIndex));
-    if (!instruction || !evidence || !allowedCategories.has(category) || !allowedPlacements.has(placement)) {
-      conflicts.push({ field: "creativeBrief", kind: "invalid-requirement", message: `Creative requirement ${index + 1} is incomplete`, requirement });
-      continue;
+  const ignored: Array<{ clauseId: string; evidence: string; reason: string }> = [];
+  const seenItems = new Set<string>();
+  for (const result of results) {
+    const clauseId = String(result.clauseId || "");
+    const clause = clausesById.get(clauseId);
+    const clauseText = String(clause?.text || "");
+    const items = Array.isArray(result.items) ? result.items.map(recordValue) : [];
+    const evidenceRanges: Array<[number, number]> = [];
+    if (!items.length) conflicts.push({ field: "creativeBrief", kind: "coverage", message: `${clauseId || "A clause"} has no classification` });
+    for (const item of items) {
+      const kind = String(item.kind || "");
+      const evidence = String(item.evidence || "");
+      const evidenceStart = Number(item.evidenceStart);
+      const evidenceEnd = Number(item.evidenceEnd);
+      const confidence = Number(item.confidence);
+      const itemKey = `${clauseId}\u0000${kind}\u0000${evidence}\u0000${String(item.controlId || "")}\u0000${String(item.optionId || "")}\u0000${String(item.instruction || "")}`;
+      if (seenItems.has(itemKey)) conflicts.push({ field: "creativeBrief", kind: "duplicate", message: `${clauseId} contains a duplicated interpretation`, evidence });
+      seenItems.add(itemKey);
+      if (!clauseText || !evidence || !Number.isSafeInteger(evidenceStart) || !Number.isSafeInteger(evidenceEnd) || evidenceStart < 0 || evidenceEnd <= evidenceStart || clauseText.slice(evidenceStart, evidenceEnd) !== evidence) {
+        conflicts.push({ field: "creativeBrief", kind: "unsupported-evidence", message: `${clauseId} contains evidence that is not an exact phrase from the comment`, evidence });
+        continue;
+      }
+      evidenceRanges.push([evidenceStart, evidenceEnd]);
+      if (!Number.isFinite(confidence) || confidence < minConfidence) {
+        conflicts.push({ field: "creativeBrief", kind: "low-confidence", message: `${clauseId} could not be interpreted with enough confidence`, evidence, confidence });
+        continue;
+      }
+      if (kind === "ambiguity") {
+        conflicts.push({ field: "creativeBrief", kind: "ambiguous", message: String(item.reason || "The comment needs clarification"), clauseId, evidence });
+        continue;
+      }
+      if (kind === "ignore") {
+        const reason = String(item.reason || "").trim();
+        if (!request.allowIgnoredClauses || !reason) conflicts.push({ field: "creativeBrief", kind: "ignored-clause", message: `${clauseId} was not converted into an actionable instruction`, evidence });
+        else ignored.push({ clauseId, evidence, reason });
+        continue;
+      }
+      if (kind === "choice") {
+        const controlId = String(item.controlId || "");
+        const optionId = String(item.optionId || "");
+        const control = controlsById.get(controlId);
+        const option = control?.options.find((candidate) => candidate.id === optionId);
+        if (!control || !option || !evidenceRecognizesOption(evidence, option) || String(item.instruction || "") || String(item.category || "") || String(item.placement || "") || (Array.isArray(item.slideIndexes) && item.slideIndexes.length)) {
+          conflicts.push({ field: "creativeBrief", kind: "invalid-choice", message: `${clauseId} requests a choice that is not configured or not supported by its recognition phrases`, evidence, controlId, optionId });
+          continue;
+        }
+        normalizedRequests.push({ controlId, optionId, evidence, clauseId, confidence });
+        const values = groupedRequests.get(controlId) || new Map<string, string[]>();
+        values.set(optionId, [...(values.get(optionId) || []), evidence]);
+        groupedRequests.set(controlId, values);
+        continue;
+      }
+      if (kind !== "requirement") {
+        conflicts.push({ field: "creativeBrief", kind: "invalid-kind", message: `${clauseId} uses an unsupported interpretation kind`, evidence });
+        continue;
+      }
+      const instruction = String(item.instruction || "").trim();
+      const category = String(item.category || "");
+      const placement = String(item.placement || "");
+      const slideIndexes = Array.isArray(item.slideIndexes) ? [...new Set(item.slideIndexes.map(Number))] : [];
+      const invalidIndexes = slideIndexes.filter((slideIndex) => !Number.isSafeInteger(slideIndex) || !sourceIndexes.has(slideIndex));
+      if (instruction !== evidence || String(item.controlId || "") || String(item.optionId || "") || !allowedCategories.has(category) || !allowedPlacements.has(placement)) {
+        conflicts.push({ field: "creativeBrief", kind: "invalid-requirement", message: `${clauseId} contains an incomplete creative requirement`, evidence });
+        continue;
+      }
+      if (invalidIndexes.length) {
+        conflicts.push({ field: "creativeBrief", kind: "invalid-slide", message: `${clauseId} refers to unavailable slide ${invalidIndexes.join(", ")}`, evidence });
+        continue;
+      }
+      const id = `creative-direction-${contentHash(`${clauseId}\u0000${evidence}\u0000${instruction}\u0000${placement}\u0000${slideIndexes.join(",")}`).slice(0, 16)}`;
+      requirements.push({ id, instruction: evidence, evidence, category, placement, slideIndexes });
     }
-    if (invalidIndexes.length) {
-      conflicts.push({ field: "creativeBrief", kind: "invalid-slide", message: `Creative requirement ${index + 1} refers to unavailable slide ${invalidIndexes.join(", ")}`, requirement });
-      continue;
-    }
-    requirements.push({ id: `creative-direction-${index + 1}`, instruction, evidence, category, placement, slideIndexes });
+    const connectorWords = new Set(["and", "but", "then", "also", "or", "и", "а", "но", "потом", "также", "или"]);
+    const uncoveredWords = [...clauseText.matchAll(/[\p{L}\p{N}]+/gu)].filter((match) => {
+      const start = match.index || 0;
+      const end = start + match[0].length;
+      return !connectorWords.has(match[0].toLocaleLowerCase()) && !evidenceRanges.some(([rangeStart, rangeEnd]) => start >= rangeStart && end <= rangeEnd);
+    }).map((match) => match[0]);
+    if (uncoveredWords.length) conflicts.push({ field: "creativeBrief", kind: "incomplete-coverage", message: `${clauseId} left meaningful words unclassified: ${uncoveredWords.join(", ")}` });
   }
-
+  if (requirements.length > Number(request.maxRequirements || 24)) conflicts.push({ field: "creativeBrief", kind: "too-many-requirements", message: `Creative direction produced ${requirements.length} requirements, above the configured limit` });
   const resolved = structuredClone(settings);
-  const appliedOverrides: Array<{ field: CreativeChoiceField; previous: string; next: string; evidence: string[] }> = [];
-  for (const [field, values] of groupedRequests) {
-    if (values.size !== 1) continue;
-    const [requested, evidence] = [...values.entries()][0];
-    const selected = creativeChoiceSelectedValue(settings, field);
-    if (selected === requested) continue;
-    if (policy === "require-agreement") {
+  const appliedOverrides: Array<{ controlId: string; previousOptionId: string; nextOptionId: string; evidence: string[] }> = [];
+  for (const [controlId, values] of groupedRequests) {
+    const control = controlsById.get(controlId)!;
+    if (values.size > 1) {
+      conflicts.push({ field: control.path, kind: "contradiction", message: `${control.label} is requested in conflicting ways`, requests: [...values.entries()].map(([optionId, evidence]) => ({ optionId, evidence })) });
+      continue;
+    }
+    const [nextOptionId, evidence] = [...values.entries()][0];
+    const selected = selectedControlOption(settings, control);
+    const next = control.options.find((option) => option.id === nextOptionId)!;
+    if (!selected) {
+      conflicts.push({ field: control.path, kind: "invalid-current-choice", message: `${control.label} has no configured current option` });
+      continue;
+    }
+    if (selected.id === next.id) continue;
+    if (policy !== "auto-explicit") {
       conflicts.push({
-        field,
-        kind: "choice-conflict",
-        message: `${creativeChoiceLabels[field]} is set to ${selected}, while the comment explicitly requests ${requested}`,
-        selected,
-        requested,
+        field: control.path,
+        kind: policy === "propose" ? "proposed-change" : "choice-conflict",
+        message: policy === "propose"
+          ? `${control.label} would change from ${selected.label} to ${next.label}; confirm it in the visible choices and run again`
+          : `${control.label} is ${selected.label}, while the comment requests ${next.label}`,
+        selected: selected.id,
+        requested: next.id,
         evidence,
       });
       continue;
     }
-    applyCreativeChoice(resolved, field, requested);
-    appliedOverrides.push({ field, previous: selected, next: requested, evidence });
+    setSafePath(resolved, control.path, structuredClone(next.value));
+    appliedOverrides.push({ controlId, previousOptionId: selected.id, nextOptionId: next.id, evidence });
   }
-
   if (conflicts.length) return creativeDirectionConflict(settings, direction, conflicts);
   return {
     resolved: {
@@ -329,10 +481,13 @@ async function resolveCreativeDirection(execution: AutomationNodeExecution) {
       creativeBrief: rawBrief,
       direction: {
         raw: rawBrief,
-        summary: String(direction.summary || "").trim(),
+        contractVersion: 2,
+        briefHash: request.briefHash,
+        clauses,
         requirements,
         choiceRequests: normalizedRequests,
         appliedOverrides,
+        ignored,
       },
     },
   };
@@ -1216,12 +1371,14 @@ export function coreAutomationNodeHandlers(): AutomationNodeHandlers {
     "input.creative-settings@1": creativeSettings,
     "input.workflow-data@1": workflowData,
     "ai.structured-task@2": aiTask,
+    "ai.interpret-creative-direction@1": interpretCreativeDirection,
     "logic.transform@1": transform,
     "logic.select-one@1": selectOne,
     "logic.retry-gate@1": retryGate,
     "logic.select-path@1": selectPath,
     "logic.condition@1": condition,
-    "logic.resolve-creative-direction@1": resolveCreativeDirection,
+    "logic.prepare-creative-direction@1": prepareCreativeDirection,
+    "logic.resolve-creative-direction@2": resolveCreativeDirection,
     "logic.merge@1": merge,
     "logic.limit-batch@1": limitBatch,
     "logic.run-subworkflow@1": runSubworkflow,

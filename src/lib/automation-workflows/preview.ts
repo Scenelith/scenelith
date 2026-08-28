@@ -2,6 +2,7 @@ import { evaluateAutomationCondition } from "./condition";
 import { automationNodeDefinition, automationNodeInputPorts } from "./registry";
 import type { AutomationNode, AutomationWorkflowGraph } from "./types";
 import { topologicalAutomationNodeIds } from "./validation";
+import { automationCreativeControls, splitAutomationCreativeDirection } from "./creative-direction-contract";
 
 const unknownPreviewValue = Symbol("automation-preview-value");
 
@@ -54,17 +55,49 @@ export function previewAutomationPaths(graph: AutomationWorkflowGraph, runtimeIn
         newLocation: config.newLocation !== false,
         textStrategy: String(config.textStrategy || "rewrite"),
         creativeBrief: String(config.creativeBrief || ""),
-        creativeDirectionPolicy: String(config.creativeDirectionPolicy || "override-explicit"),
+        creativeDirectionPolicy: String(config.creativeDirectionPolicy || "propose"),
       });
       continue;
     }
+    if (node.type === "logic.prepare-creative-direction") {
+      const settingsEdges = incomingByPort.get("settings") || [];
+      const settings = settingsEdges[0] ? edgeValue(settingsEdges[0].source, settingsEdges[0].sourcePort) : undefined;
+      if (settings && settings !== unknownPreviewValue && typeof settings === "object" && !Array.isArray(settings)) {
+        const record = settings as Record<string, unknown>;
+        const rawBrief = String(record[String(config.briefPath || "creativeBrief")] || "").trim();
+        outputs.set(`${node.id}:request`, {
+          contractVersion: 2,
+          briefHash: rawBrief ? "preview-nonempty" : "preview-empty",
+          rawBrief,
+          clauses: splitAutomationCreativeDirection(rawBrief),
+          settings: record,
+          controls: automationCreativeControls(config.controls),
+          policy: String(record[String(config.policyPath || "creativeDirectionPolicy")] || "propose"),
+          sourceSlideIndexes: [],
+        });
+      } else outputs.set(`${node.id}:request`, unknownPreviewValue);
+      continue;
+    }
+    if (node.type === "ai.interpret-creative-direction") {
+      const requestEdges = incomingByPort.get("request") || [];
+      const request = requestEdges[0] ? edgeValue(requestEdges[0].source, requestEdges[0].sourcePort) : undefined;
+      const clauses = request && request !== unknownPreviewValue && typeof request === "object" && !Array.isArray(request)
+        ? (request as Record<string, unknown>).clauses
+        : null;
+      if (request && request !== unknownPreviewValue && typeof request === "object" && !Array.isArray(request) && Array.isArray(clauses) && !clauses.length) {
+        outputs.set(`${node.id}:analysis`, { briefHash: (request as Record<string, unknown>).briefHash, clauseResults: [] });
+      } else outputs.set(`${node.id}:analysis`, unknownPreviewValue);
+      continue;
+    }
     if (node.type === "logic.resolve-creative-direction") {
-      const connectedSettings = inputPorts.find((port) => port.id === "settings");
-      const settingsEdges = connectedSettings ? incomingByPort.get(connectedSettings.id) || [] : [];
-      const selected = settingsEdges[0] ? edgeValue(settingsEdges[0].source, settingsEdges[0].sourcePort) : undefined;
-      if (selected && selected !== unknownPreviewValue && typeof selected === "object" && !Array.isArray(selected)
-        && !String((selected as Record<string, unknown>).creativeBrief || "").trim()) {
-        outputs.set(`${node.id}:resolved`, selected);
+      const requestEdges = incomingByPort.get("request") || [];
+      const request = requestEdges[0] ? edgeValue(requestEdges[0].source, requestEdges[0].sourcePort) : undefined;
+      const requestClauses = request && request !== unknownPreviewValue && typeof request === "object" && !Array.isArray(request)
+        ? (request as Record<string, unknown>).clauses
+        : null;
+      if (request && request !== unknownPreviewValue && typeof request === "object" && !Array.isArray(request)
+        && Array.isArray(requestClauses) && !requestClauses.length) {
+        outputs.set(`${node.id}:resolved`, (request as Record<string, unknown>).settings);
       } else {
         outputs.set(`${node.id}:resolved`, unknownPreviewValue);
         outputs.set(`${node.id}:conflict`, unknownPreviewValue);

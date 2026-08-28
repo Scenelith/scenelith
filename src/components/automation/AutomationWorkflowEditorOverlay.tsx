@@ -70,6 +70,7 @@ import { generatorRatiosFor, generatorResolutionsFor, type GeneratorModelOption 
 import { InspectorSelect } from "@/components/InspectorSelect";
 import { tiktokAutomationPlanningModels } from "@/lib/assistant-models";
 import { automationMergeInputs, automationNodeDefinition, automationNodeDefinitions, automationNodeInputPorts, type AutomationMergeInput } from "@/lib/automation-workflows/registry";
+import { automationCreativeControls, type AutomationCreativeControl } from "@/lib/automation-workflows/creative-direction-contract";
 import type { PersonaRecord } from "@/lib/types";
 import type { TikTokSlideshowSource } from "@/lib/tiktok-slideshow-sources";
 import type {
@@ -199,6 +200,8 @@ const automationNodeIcons = {
   "select-one": Route,
   "select-path": ListFilter,
   condition: GitBranch,
+  "prepare-direction": ListTree,
+  "interpret-direction": Sparkles,
   "resolve-direction": WandSparkles,
   limit: Gauge,
   merge: Merge,
@@ -905,6 +908,35 @@ function SimpleValueEditor({ value, disabled, placeholder, onChange }: { value: 
   />;
 }
 
+function CreativeControlsEditor({ value, disabled, onChange }: { value: unknown; disabled: boolean; onChange: (value: AutomationCreativeControl[]) => void }) {
+  const controls = automationCreativeControls(value);
+  const updateControl = (index: number, next: AutomationCreativeControl) => onChange(controls.map((control, current) => current === index ? next : control));
+  return <section className="automation-creative-controls">
+    <header><span><b>Choices the comment may affect</b><small>Each group maps model-visible option names to one real setting path and stored value.</small></span><em>{controls.length} choices</em></header>
+    <div>{controls.map((control, controlIndex) => <article key={control.id}>
+      <header><i>{controlIndex + 1}</i><label><span>Choice label</span><input disabled={disabled} value={control.label} onChange={(event) => updateControl(controlIndex, { ...control, label: event.target.value })} /></label>{!disabled && <button type="button" disabled={controls.length <= 1} aria-label={`Remove ${control.label}`} onClick={() => onChange(controls.filter((_, current) => current !== controlIndex))}><Trash2 size={12} /></button>}</header>
+      <div className="automation-creative-control-address">
+        <label><span>Stable id</span><input disabled={disabled} value={control.id} onChange={(event) => updateControl(controlIndex, { ...control, id: event.target.value.toLowerCase().replace(/[^a-z0-9-]/g, "-").replace(/^[^a-z]+/, "") })} /></label>
+        <label><span>Setting path</span><input disabled={disabled} value={control.path} onChange={(event) => updateControl(controlIndex, { ...control, path: event.target.value.replace(/[^a-zA-Z0-9_.-]/g, "") })} /></label>
+      </div>
+      <div className="automation-creative-control-options">{control.options.map((option, optionIndex) => <div key={`${control.id}:${option.id}`}>
+        <i>{optionIndex + 1}</i>
+        <label><span>Option</span><input disabled={disabled} value={option.label} onChange={(event) => updateControl(controlIndex, { ...control, options: control.options.map((candidate, current) => current === optionIndex ? { ...candidate, label: event.target.value } : candidate) })} /></label>
+        <label><span>Option id</span><input disabled={disabled} value={option.id} onChange={(event) => updateControl(controlIndex, { ...control, options: control.options.map((candidate, current) => current === optionIndex ? { ...candidate, id: event.target.value.toLowerCase().replace(/[^a-z0-9-]/g, "-").replace(/^[^a-z]+/, "") } : candidate) })} /></label>
+        <label><span>Stored value</span><SimpleValueEditor disabled={disabled} value={option.value} onChange={(storedValue) => updateControl(controlIndex, { ...control, options: control.options.map((candidate, current) => current === optionIndex ? { ...candidate, value: storedValue as string | number | boolean | null } : candidate) })} /></label>
+        <label><span>Recognize phrases</span><input disabled={disabled} value={option.matchPhrases.join(", ")} placeholder="same room, keep the location" onChange={(event) => updateControl(controlIndex, { ...control, options: control.options.map((candidate, current) => current === optionIndex ? { ...candidate, matchPhrases: event.target.value.split(",").map((phrase) => phrase.trim()).filter(Boolean) } : candidate) })} /></label>
+        {!disabled && <button type="button" disabled={control.options.length <= 2} aria-label={`Remove ${option.label}`} onClick={() => updateControl(controlIndex, { ...control, options: control.options.filter((_, current) => current !== optionIndex) })}><Trash2 size={11} /></button>}
+      </div>)}</div>
+      {!disabled && <button type="button" className="automation-creative-control-add" disabled={control.options.length >= 12} onClick={() => updateControl(controlIndex, { ...control, options: [...control.options, { id: `option-${control.options.length + 1}`, label: `Option ${control.options.length + 1}`, value: `option-${control.options.length + 1}`, matchPhrases: [`option ${control.options.length + 1}`] }] })}><Plus size={12} /> Add option</button>}
+    </article>)}</div>
+    {!disabled && <button type="button" className="automation-creative-control-add" disabled={controls.length >= 24} onClick={() => {
+      const suffix = globalThis.crypto.randomUUID().slice(0, 8);
+      onChange([...controls, { id: `choice-${suffix}`, label: "New choice", path: `custom.${suffix}`, options: [{ id: "first", label: "First option", value: "first", matchPhrases: ["first option"] }, { id: "second", label: "Second option", value: "second", matchPhrases: ["second option"] }] }]);
+    }}><Plus size={13} /> Add controllable choice</button>}
+    <small>The resolver accepts only these exact IDs and values. Unknown or contradictory requests stop instead of guessing.</small>
+  </section>;
+}
+
 function FieldEditor({ field, node, disabled, options, referencePicker, onConfig, onBinding, onRequired }: {
   field: AutomationNodeFieldDefinition;
   node: AutomationNode;
@@ -1591,6 +1623,10 @@ export function AutomationWorkflowEditorOverlay({ workspaceId, projectId, workfl
     if (selectedNode?.type === "logic.merge" && field.id === "inputs") {
       return <MergeInputsEditor key={`${selectedNode.id}:${field.id}`} node={selectedNode} graph={graph!} disabled={Boolean(readOnly)} onChange={(value) => updateSelectedFieldConfig(field, value)} />;
     }
+    if (field.kind === "creative-controls") {
+      const fieldValue = selectedNode?.config[field.id] ?? field.defaultValue;
+      return <CreativeControlsEditor key={`${selectedNode?.id}:${field.id}`} value={fieldValue} disabled={Boolean(readOnly)} onChange={(value) => updateSelectedFieldConfig(field, value)} />;
+    }
     const fieldValue = selectedNode?.bindings[field.id]?.mode === "fixed" && selectedNode.bindings[field.id]?.value !== undefined
       ? selectedNode.bindings[field.id]?.value
       : selectedNode?.config[field.id] ?? field.defaultValue;
@@ -1599,7 +1635,7 @@ export function AutomationWorkflowEditorOverlay({ workspaceId, projectId, workfl
       key={`${selectedNode?.id}:${field.id}`}
       field={field}
       node={selectedNode!}
-      disabled={Boolean(readOnly)}
+      disabled={Boolean(readOnly || field.readOnly)}
       options={selectedFieldOptions(field)}
       referencePicker={field.kind === "references" ? <AutomationReferencePicker
         workspaceId={workspaceId}

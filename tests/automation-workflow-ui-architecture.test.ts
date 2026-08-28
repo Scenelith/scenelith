@@ -264,7 +264,7 @@ test("every registered node type owns hand-written user help and technical notes
   assert.match(registrySource, /Missing help content for automation node type/);
   const registeredTypes = [...registrySource.matchAll(/^\s+type: "([^"]+)"/gm)].map((match) => match[1]);
   const helpedTypes = [...registrySource.matchAll(/^\s+"([^"]+)": \{/gm)].map((match) => match[1]);
-  assert.equal(new Set(registeredTypes).size, 22);
+  assert.equal(new Set(registeredTypes).size, 24);
   assert.deepEqual(new Set(helpedTypes), new Set(registeredTypes));
   for (const definition of automationNodeDefinitions()) {
     assert.ok(definition.description.trim(), `${definition.type} needs a plain-language description`);
