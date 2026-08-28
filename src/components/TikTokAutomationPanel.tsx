@@ -65,6 +65,7 @@ export function TikTokAutomationPanel({
   onSourceSelected,
   onRuntimeValuesChange,
 }: {
+  workspaceId?: string;
   projectId: string;
   workflowId: string;
   setWorkflowId: (value: string) => void;
