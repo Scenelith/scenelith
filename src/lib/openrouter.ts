@@ -1,4 +1,5 @@
 import { readStorageObject, signedStorageReadUrl } from "./storage";
+import { imageGenerationPromptJsonSchema } from "./generation-prompt-contract";
 import { AsyncLocalStorage } from "node:async_hooks";
 import { requireInstanceSecret } from "@/platform/secrets";
 import { DEFAULT_ASSISTANT_MODEL_ID, getAssistantModel } from "./assistant-models";
@@ -531,60 +532,7 @@ export async function composeGenerationPrompt(input: GenerationPromptContext) {
       json_schema: {
         name: "reference_image_generation_prompt",
         strict: true,
-        schema: {
-          type: "object",
-          properties: {
-            title: { type: "string", maxLength: 100 },
-            task: { type: "string", maxLength: 420 },
-            reference_plan: {
-              type: "array",
-              items: {
-                type: "object",
-                properties: {
-                  token: { type: "string" },
-                  title: { type: "string" },
-                  role: { type: "string" },
-                  instruction: { type: "string" },
-                },
-                required: ["token", "title", "role", "instruction"],
-                additionalProperties: false,
-              },
-            },
-            subject: {
-              type: "object",
-              properties: {
-                identity: { type: "string" },
-                appearance: { type: "array", items: { type: "string" } },
-                pose: { type: "string" },
-                expression: { type: "string" },
-              },
-              required: ["identity", "appearance", "pose", "expression"],
-              additionalProperties: false,
-            },
-            scene: {
-              type: "object",
-              properties: {
-                environment: { type: "string" },
-                composition: { type: "string" },
-                lighting: { type: "string" },
-                camera: { type: "string" },
-              },
-              required: ["environment", "composition", "lighting", "camera"],
-              additionalProperties: false,
-            },
-            preserve: { type: "array", items: { type: "string" } },
-            change: { type: "array", items: { type: "string" } },
-            avoid: { type: "array", items: { type: "string" } },
-            output: {
-              type: "object",
-              properties: { format: { type: "string" }, style: { type: "string" } },
-              required: ["format", "style"],
-              additionalProperties: false,
-            },
-          },
-          required: ["title", "task", "reference_plan", "subject", "scene", "preserve", "change", "avoid", "output"],
-          additionalProperties: false,
-        },
+        schema: imageGenerationPromptJsonSchema,
       },
     },
   });

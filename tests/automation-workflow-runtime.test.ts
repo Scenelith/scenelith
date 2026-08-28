@@ -2,6 +2,8 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 import { executeAutomationGraph, type AutomationNodeHandlers } from "../src/lib/automation-workflows/runtime";
 import { buildAutomationGenerationPrompt, coreAutomationNodeHandlers } from "../src/lib/automation-workflows/node-handlers";
+import { createDefaultTikTokWorkflowGraph } from "../src/lib/automation-workflows/default-tiktok";
+import { AUTOMATION_IDENTITY_REFERENCE_INSTRUCTION, AUTOMATION_NO_TEXT_AVOID_INSTRUCTION, AUTOMATION_SOURCE_REFERENCE_INSTRUCTION } from "../src/lib/generation-prompt-contract";
 import { validateAutomationStructuredValue } from "../src/lib/automation-workflows/json-schema";
 import type { AutomationWorkflowGraph } from "../src/lib/automation-workflows/types";
 
@@ -179,19 +181,206 @@ test("runtime cancellation interrupts an active node instead of waiting for it t
   await assert.rejects(execution, (error: unknown) => (error as { code?: string }).code === "RUN_CANCELLED");
 });
 
-test("generation prompt gives source and identity references separate responsibilities", () => {
+test("automation generation uses the same structured JSON contract as Canvas Assistant", () => {
   const result = buildAutomationGenerationPrompt(
-    { index: 1, prompt: "Create a kitchen portrait.", overlayText: "Day one" },
+    {
+      index: 1,
+      role: "hook",
+      prompt: {
+        title: "Kitchen portrait",
+        task: "Create a kitchen portrait.",
+        reference_plan: [
+          { token: "@Source_composition_1_1", title: "Source composition 1", role: "source composition", instruction: AUTOMATION_SOURCE_REFERENCE_INSTRUCTION },
+          { token: "@Identity_reference_1_2", title: "Identity reference 1", role: "identity", instruction: AUTOMATION_IDENTITY_REFERENCE_INSTRUCTION },
+        ],
+        subject: { identity: "Maya", appearance: ["new black outfit"], pose: "mirror selfie", expression: "relaxed" },
+        scene: { environment: "same kitchen", composition: "vertical medium portrait", lighting: "window light", camera: "phone camera" },
+        preserve: ["Preserve the exact kitchen."],
+        change: ["Render exactly this on-screen text: \"Day one\"."],
+        avoid: ["Do not copy identity from the source composition."],
+        output: { format: "9:16 image", style: "candid phone photo" },
+      },
+      referenceIds: ["person"],
+      text: { strategy: "rewrite", sourceText: "Last year", overlayText: "Day one", instruction: "Erase old typography and render only Day one." },
+      confidence: 1,
+    },
     [
-      { path: "source.png", mimeType: "image/png", role: "reference-image", label: "Source composition 1" },
-      { path: "person.png", mimeType: "image/png", role: "reference-image", label: "Identity reference 1" },
+      { assetId: "source", path: "source.png", mimeType: "image/png", role: "reference-image", label: "Source composition 1" },
+      { assetId: "person", path: "person.png", mimeType: "image/png", role: "reference-image", label: "Identity reference 1" },
     ],
   );
-  assert.match(result.prompt, /composition, framing, pose and scene structure only/);
-  assert.match(result.prompt, /target person's identity and appearance only/);
-  assert.match(result.prompt, /Render exactly: "Day one"/);
+  const prompt = JSON.parse(result.prompt);
+  assert.deepEqual(Object.keys(prompt), ["title", "task", "reference_plan", "subject", "scene", "preserve", "change", "avoid", "output"]);
+  assert.equal(prompt.reference_plan[0].role, "source composition");
+  assert.equal(prompt.reference_plan[1].role, "identity");
+  assert.equal(prompt.change[0], "Render exactly this on-screen text: \"Day one\".");
   assert.equal(result.references[0].label, "@Source_composition_1_1");
   assert.equal(result.references[1].label, "@Identity_reference_1_2");
+});
+
+test("slide validator carries immutable choices, exact text and reference roles into generation", async () => {
+  const wardrobeInstruction = "Create a visibly new wardrobe on every applicable slide.";
+  const locationInstruction = "Preserve the exact source location and room layout.";
+  const adaptationInstruction = "Keep the source concept and change the person.";
+  const textInstruction = "Remove and erase every existing word; do not render replacement text.";
+  const contract = {
+    sourceAnalysis: { slides: [{ index: 1, visibleText: "last year..." }] },
+    choices: {
+      settings: { mode: "identity", newOutfit: true, newLocation: false, textStrategy: "remove" },
+      adaptation: { value: { adaptation: { mode: "identity", instruction: adaptationInstruction } } },
+      wardrobe: { value: { wardrobe: { mode: "change", instruction: wardrobeInstruction } } },
+      location: { value: { location: { mode: "preserve", instruction: locationInstruction } } },
+    },
+    brief: { decisions: { newOutfit: true, newLocation: false, textStrategy: "remove" } },
+    copy: { selected: { slides: [{ index: 1, sourceText: "last year...", overlayText: "", strategy: "remove", instruction: textInstruction, copyFunction: "hook" }] } },
+    references: { slides: [{ index: 1, references: [{ assetId: "person", title: "Maya identity", role: "identity", instruction: AUTOMATION_IDENTITY_REFERENCE_INSTRUCTION }] }] },
+  };
+  const plans = { slides: [{
+    index: 1,
+    role: "hook",
+    prompt: {
+      title: "Opening",
+      task: "Recreate the opening portrait with the selected identity.",
+      reference_plan: [
+        { token: "@Source_composition_1_1", title: "Source composition 1", role: "source composition", instruction: AUTOMATION_SOURCE_REFERENCE_INSTRUCTION },
+        { token: "@Maya_identity_2", title: "Maya identity", role: "identity", instruction: AUTOMATION_IDENTITY_REFERENCE_INSTRUCTION },
+      ],
+      subject: { identity: "Maya", appearance: ["visibly new outfit"], pose: "source pose", expression: "relaxed" },
+      scene: { environment: "source hallway", composition: "source framing", lighting: "ambient", camera: "phone" },
+      preserve: [adaptationInstruction, locationInstruction],
+      change: [wardrobeInstruction, textInstruction],
+      avoid: [AUTOMATION_NO_TEXT_AVOID_INSTRUCTION],
+      output: { format: "9:16 image", style: "candid phone photo" },
+    },
+    referenceAssetIds: ["person"],
+    text: { strategy: "remove", sourceText: "last year...", overlayText: "", instruction: textInstruction },
+    confidence: 0.95,
+  }] };
+  const validate = coreAutomationNodeHandlers()["logic.validate-slide-plans@1"];
+  const result = await validate({
+    node: { id: "validate", type: "logic.validate-slide-plans", version: 1, name: "Validate", description: "", position: { x: 0, y: 0 }, groupId: null, config: {}, bindings: {}, disabled: false },
+    config: { maxSlides: 40 },
+    inputs: { data: plans, contract, source: { slides: [{ index: 1, assetId: "source" }] }, identity: { assets: [{ id: "person" }] }, references: { assets: [] } },
+    attempt: 1,
+    context,
+    outputsByNode: new Map(),
+  });
+  const validated = result.plans as { decisions: Record<string, unknown>; slides: Array<Record<string, unknown>> };
+  assert.deepEqual(validated.decisions, { newOutfit: true, newLocation: false, textStrategy: "remove" });
+  assert.deepEqual(validated.slides[0].prompt, plans.slides[0].prompt, "validator must not author or rewrite the model prompt");
+  const slide = validated.slides[0] as { prompt: { preserve: string[]; change: string[]; avoid: string[]; reference_plan: unknown[] } };
+  assert.ok(slide.prompt.preserve.includes(locationInstruction));
+  assert.ok(slide.prompt.change.includes(wardrobeInstruction));
+  assert.ok(slide.prompt.change.includes(textInstruction));
+  assert.ok(slide.prompt.avoid.some((value) => /No captions/i.test(value)));
+  assert.deepEqual(slide.prompt.reference_plan[1], { token: "@Maya_identity_2", title: "Maya identity", role: "identity", instruction: AUTOMATION_IDENTITY_REFERENCE_INSTRUCTION });
+  await assert.rejects(validate({
+    node: { id: "validate", type: "logic.validate-slide-plans", version: 1, name: "Validate", description: "", position: { x: 0, y: 0 }, groupId: null, config: {}, bindings: {}, disabled: false },
+    config: { maxSlides: 40 },
+    inputs: { data: { slides: [{ ...plans.slides[0], prompt: { ...plans.slides[0].prompt, change: [textInstruction] } }] }, contract, source: { slides: [{ index: 1, assetId: "source" }] }, identity: { assets: [{ id: "person" }] }, references: { assets: [] } },
+    attempt: 1,
+    context,
+    outputsByNode: new Map(),
+  }), /model omitted the exact wardrobe instruction/);
+});
+
+test("slide validator rejects identity references assigned to wardrobe", async () => {
+  const validate = coreAutomationNodeHandlers()["logic.validate-slide-plans@1"];
+  const contract = {
+    sourceAnalysis: { slides: [{ index: 1, visibleText: "" }] },
+    choices: {
+      settings: { mode: "identity", newOutfit: false, newLocation: false, textStrategy: "keep" },
+      adaptation: { value: { adaptation: { mode: "identity", instruction: "Keep the concept." } } },
+      wardrobe: { value: { wardrobe: { mode: "preserve", instruction: "Preserve wardrobe." } } },
+      location: { value: { location: { mode: "preserve", instruction: "Preserve location." } } },
+    },
+    brief: { decisions: { newOutfit: false, newLocation: false, textStrategy: "keep" } },
+    copy: { selected: { slides: [{ index: 1, sourceText: "", overlayText: "", strategy: "keep", instruction: "Keep no on-screen text.", copyFunction: "visual" }] } },
+    references: { slides: [{ index: 1, references: [{ assetId: "person", title: "Maya", role: "outfit", instruction: "Copy the outfit." }] }] },
+  };
+  const slide = {
+    index: 1, role: "scene",
+    prompt: {
+      title: "Scene", task: "Recreate scene.",
+      reference_plan: [
+        { token: "@Source_composition_1_1", title: "Source composition 1", role: "source composition", instruction: AUTOMATION_SOURCE_REFERENCE_INSTRUCTION },
+        { token: "@Maya_2", title: "Maya", role: "outfit", instruction: "Copy the outfit." },
+      ],
+      subject: { identity: "Maya", appearance: [], pose: "same", expression: "same" },
+      scene: { environment: "same", composition: "same", lighting: "same", camera: "same" },
+      preserve: [], change: [], avoid: [], output: { format: "image", style: "candid" },
+    },
+    referenceAssetIds: ["person"],
+    text: { strategy: "keep", sourceText: "", overlayText: "", instruction: "Keep no on-screen text." },
+    confidence: 1,
+  };
+  await assert.rejects(validate({
+    node: { id: "validate", type: "logic.validate-slide-plans", version: 1, name: "Validate", description: "", position: { x: 0, y: 0 }, groupId: null, config: {}, bindings: {}, disabled: false },
+    config: {}, inputs: { data: { slides: [slide] }, contract, source: { slides: [{ index: 1 }] }, identity: { assets: [{ id: "person" }] }, references: { assets: [] } }, attempt: 1, context, outputsByNode: new Map(),
+  }), /control outfit/);
+});
+
+test("AI workflow steps fail explicitly instead of silently truncating connected data", async () => {
+  const runAi = coreAutomationNodeHandlers()["ai.structured-task@2"];
+  await assert.rejects(runAi({
+    node: { id: "ai", type: "ai.structured-task", version: 2, name: "AI", description: "", position: { x: 0, y: 0 }, groupId: null, config: {}, bindings: {}, disabled: false },
+    config: { modelId: "google/gemini-3.7-flash", userPrompt: "Summarize the connected information." },
+    inputs: { primary: { exactData: "x".repeat(81_000) } },
+    attempt: 1,
+    context,
+    outputsByNode: new Map(),
+  }), (error: unknown) => (error as { code?: string }).code === "AI_CONTEXT_LIMIT");
+});
+
+test("default automation keeps every selected rule through an approved no-repair path", async () => {
+  const wardrobeInstruction = "Create a visibly new wardrobe or visibly new subjects on every applicable slide. Do not reuse the source clothing, accessories or styling, and do not take wardrobe from identity references.";
+  const locationInstruction = "Preserve the exact location, background, environment, room layout and visible setting details from each slide's source image. Identity references must not contribute or replace location.";
+  const textInstruction = "Remove and erase every existing caption, word, letter, number, logo-like typography and watermark from the source image; do not render replacement text.";
+  const handlers = coreAutomationNodeHandlers();
+  let generatedPlans: Record<string, unknown> | null = null;
+  const result = await executeAutomationGraph({
+    graph: createDefaultTikTokWorkflowGraph(),
+    context: {
+      ...context,
+      runtimeInputs: {
+        "tiktok-source.source": "source-1",
+        "identity.identity": "person-identity",
+        "creative-settings.mode": "identity",
+        "creative-settings.newOutfit": true,
+        "creative-settings.newLocation": false,
+        "creative-settings.textStrategy": "remove",
+        "creative-settings.creativeBrief": "",
+        "visual-references.references": [],
+        "generate-images.modelId": "nano-banana-2",
+      },
+    },
+    handlers: {
+      ...handlers,
+      "input.tiktok-source@1": async () => ({ source: { id: "source-1", slides: [{ index: 1, assetId: "source-asset" }] } }),
+      "input.identity@1": async () => ({ identity: { id: "person-identity", assets: [{ id: "person", path: "person.png", mimeType: "image/png" }] } }),
+      "input.visual-references@1": async () => ({ references: { assets: [] } }),
+      "ai.structured-task@2": async ({ node }) => {
+        if (node.id === "analyze-source") return { result: { format: "slideshow", summary: "portrait", theme: "change", narrativeArc: "before to after", language: "English", transformationBoundary: 1, slides: [{ index: 1, role: "hook", visibleText: "last year...", visualBrief: "mirror portrait", faceVisibility: "clear", framing: "vertical", confidence: 1 }] } };
+        if (node.id === "inspect-identity") return { result: { assets: [{ id: "person", faceAngle: "front", framing: "portrait", captureStyle: "phone", identitySignals: ["face"] }] } };
+        if (node.id === "interpret-brief") return { result: { userIntentSummary: "Change person and outfit", requirements: [], globalRules: [], decisions: { newOutfit: true, newLocation: false, textStrategy: "remove" }, campaign: { direction: "identity adaptation", audience: "viewer", tone: "candid" }, sequence: { hook: "portrait", progression: "change", payoff: "new version" }, slides: [{ index: 1, intent: "hook", mustKeep: ["location"], mayChange: ["identity", "wardrobe"] }] } };
+        if (node.id === "remove-copy") return { result: { slides: [{ index: 1, sourceText: "last year...", overlayText: "", strategy: "remove", instruction: textInstruction, copyFunction: "hook" }] } };
+        if (node.id === "bind-references") return { result: { slides: [{ index: 1, references: [{ assetId: "person", title: "Maya identity", role: "identity", instruction: AUTOMATION_IDENTITY_REFERENCE_INSTRUCTION }] }] } };
+        if (node.id === "plan-slides") return { result: { slides: [{ index: 1, role: "hook", prompt: { title: "Opening", task: "Recreate the portrait with the selected identity.", reference_plan: [{ token: "@Source_composition_1_1", title: "Source composition 1", role: "source composition", instruction: AUTOMATION_SOURCE_REFERENCE_INSTRUCTION }, { token: "@Maya_identity_2", title: "Maya identity", role: "identity", instruction: AUTOMATION_IDENTITY_REFERENCE_INSTRUCTION }], subject: { identity: "Maya", appearance: ["new outfit"], pose: "source pose", expression: "relaxed" }, scene: { environment: "source hallway", composition: "source framing", lighting: "ambient", camera: "phone" }, preserve: ["Keep the source concept, hook, sequence and scene intent. Adapt the person or character using the selected identity without inventing a different campaign concept.", locationInstruction], change: [wardrobeInstruction, textInstruction], avoid: [AUTOMATION_NO_TEXT_AVOID_INSTRUCTION], output: { format: "9:16 image", style: "candid phone photo" } }, referenceAssetIds: ["person"], text: { strategy: "remove", sourceText: "last year...", overlayText: "", instruction: textInstruction }, confidence: 1 }] } };
+        if (node.id === "review-series") return { result: { passed: true, summary: "All requirements covered", slides: [{ index: 1, passed: true, issues: [] }], requirementCoverage: [{ requirement: "preserve location", passed: true, slideIndexes: [1], issues: [] }] } };
+        if (node.id === "repair-slides") throw new Error("Approved plans must not be rewritten");
+        throw new Error(`Unexpected AI node ${node.id}`);
+      },
+      "generation.image@1": async ({ inputs }) => { generatedPlans = inputs.plans as Record<string, unknown>; return { assets: { items: [] } }; },
+      "output.add-to-canvas@1": async () => ({ result: { ok: true } }),
+    },
+  });
+  assert.deepEqual(result.outputs.get("add-to-canvas")?.result, { ok: true });
+  assert.ok(generatedPlans);
+  const generatedSlide = (generatedPlans as unknown as { slides: Array<{ prompt: { preserve: string[]; change: string[] }; text: { strategy: string; overlayText: string } }> }).slides[0];
+  assert.ok(generatedSlide.prompt.preserve.includes(locationInstruction));
+  assert.ok(generatedSlide.prompt.change.includes(wardrobeInstruction));
+  assert.ok(generatedSlide.prompt.change.includes(textInstruction));
+  assert.deepEqual(generatedSlide.text, { strategy: "remove", sourceText: "last year...", overlayText: "", instruction: textInstruction });
 });
 
 test("runtime rejects handler output keys outside the versioned node contract", async () => {

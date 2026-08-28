@@ -277,7 +277,7 @@ test("the default workflow teaches first-time users with a non-executable Markdo
   assert.match(defaultWorkflowSource, /Build one executable plan per image/);
   assert.match(defaultWorkflowSource, /Check the whole series before generation/);
   assert.match(defaultWorkflowSource, /Create the assets and return them to the canvas/);
-  assert.match(defaultWorkflowSource, /has three separate named inputs/);
+  assert.match(defaultWorkflowSource, /has five separate named inputs/);
   assert.match(defaultWorkflowSource, /the guide note itself never runs and never enters the data flow/);
   assert.match(workflowEditorSource, /display\.nodes\.some\(\(node\) => node\.data\.kind === "annotation"\)/);
   assert.match(workflowEditorSource, /!\(graph\.annotations \|\| \[\]\)\.length/);

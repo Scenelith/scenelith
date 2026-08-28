@@ -14,7 +14,7 @@ const systemTemplatesSource = readFileSync(new URL("../src/lib/automation-workfl
 
 test("system workflow identity, metadata and graph factory have one public-core registry", () => {
   assert.ok(AUTOMATION_SYSTEM_WORKFLOW_TEMPLATES.length);
-  assert.equal(DEFAULT_TIKTOK_AUTOMATION_TEMPLATE.revision, 28);
+  assert.equal(DEFAULT_TIKTOK_AUTOMATION_TEMPLATE.revision, 29);
   assert.equal(
     new Set(AUTOMATION_SYSTEM_WORKFLOW_TEMPLATES.map((template) => template.key)).size,
     AUTOMATION_SYSTEM_WORKFLOW_TEMPLATES.length,
