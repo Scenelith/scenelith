@@ -70,6 +70,9 @@ test("automation workflow discovery is not restarted by an unstable parent callb
 test("the live automation panel exposes a read-only demo contract for Cloud marketing", () => {
   assert.match(panelSource, /export type TikTokAutomationPanelDemo/);
   assert.match(panelSource, /demo\?: TikTokAutomationPanelDemo/);
+  assert.match(panelSource, /workspaceId\?: string/);
+  assert.match(panelSource, /canvasReferences\?: AutomationReferenceCandidate\[\]/);
+  assert.doesNotMatch(panelSource, /export function TikTokAutomationPanel\(\{[^}]*canvasReferences/s);
   assert.match(panelSource, /if \(demo\) return;/);
 });
 
