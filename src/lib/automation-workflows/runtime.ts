@@ -1,4 +1,5 @@
 import { automationNodeDefinition, automationNodeInputPorts } from "./registry";
+import { parseAutomationSlidePlanSet } from "./slide-plan-contract";
 import { DEFAULT_AUTOMATION_WORKFLOW_SETTINGS, type AutomationNode, type AutomationWorkflowGraph, type AutomationWorkflowSettings } from "./types";
 import { topologicalAutomationNodeIds, validateAutomationWorkflowGraph } from "./validation";
 
@@ -100,6 +101,13 @@ function validatedNodeOutput(node: AutomationNode, value: unknown) {
   }
   const produced = [...allowed].some((key) => Object.prototype.hasOwnProperty.call(output, key) && output[key] !== undefined);
   if (!produced) throw Object.assign(new Error(`“${node.name}” produced no usable output`), { code: "NODE_OUTPUT_CONTRACT" });
+  for (const port of definition?.outputs || []) {
+    if (port.type !== "slide-plan-set" || output[port.id] === undefined) continue;
+    try { parseAutomationSlidePlanSet(output[port.id], `“${node.name}” output “${port.label}”`); }
+    catch (error) {
+      throw Object.assign(error instanceof Error ? error : new Error(String(error)), { code: "NODE_OUTPUT_CONTRACT" });
+    }
+  }
   try {
     if (JSON.stringify(output).length > 5_000_000) throw new Error("too large");
   } catch {

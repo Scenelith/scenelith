@@ -94,6 +94,20 @@ const helpByType: Record<string, AutomationNodeHelp> = {
     tips: ["Do not use an AI step for simple field selection or renaming.", "Keep transformations small so the data contract remains readable."],
     technicalNotes: ["Pure deterministic transform with no provider call.", "Use {{ byNode.step-id }} for a stable named source, {{ inputs.0 }} for ordered inputs, or {{ sources }} to inspect source IDs, names and values."],
   },
+  "logic.select-one": {
+    whenToUse: "Use this after mutually exclusive branches when exactly one completed result must continue unchanged.",
+    setup: ["Connect every mutually exclusive branch to the same input.", "Connect Selected information to the next step.", "Test both branch outcomes before publishing."],
+    exampleFlow: { before: "Approved plan or repaired plan", after: "Validate plans", explanation: "Exactly one completed branch continues with the same value and field names." },
+    tips: ["Use this only for alternatives where one and only one path can complete.", "Use Merge paths when the next step needs several results together."],
+    technicalNotes: ["Fails unless exactly one connected branch produced a value.", "Passes that value unchanged without wrapping, renaming, coercion or fallback."],
+  },
+  "logic.select-path": {
+    whenToUse: "Use this when the next step needs one existing field from a larger result and that field must stay unchanged.",
+    setup: ["Connect the larger result.", "Enter the exact field path, such as plans or campaign.brief.", "Connect Selected information to the next step."],
+    exampleFlow: { before: "Review package", after: "Continue approved plans", explanation: "The existing plans field continues as the same value without rebuilding its JSON." },
+    tips: ["Use Prepare information only when you intentionally need to create a different shape.", "A missing field stops the run with its exact path."],
+    technicalNotes: ["Reads one exact object path and returns the stored value unchanged.", "Does not wrap, rename, parse, stringify, coerce or fall back to another field."],
+  },
   "logic.condition": {
     whenToUse: "Use this when the workflow must choose between two paths based on one visible rule.",
     setup: ["Connect the information to inspect.", "Enter the field to check, such as review.approved.", "Choose the rule and comparison value when needed.", "Connect Rule matches and Rule does not match to different next steps."],
@@ -254,6 +268,16 @@ const rawDefinitions: Array<Omit<AutomationNodeDefinition, "help">> = [
     type: "logic.transform", version: 1, title: "Prepare information", description: "Renames, selects or combines incoming information for the next step.", example: "Take an AI answer with many fields and pass only the slide plans to image generation.", category: "logic", icon: "transform", accent: "neutral",
     inputs: [{ id: "data", label: "Incoming information", type: "data", required: true, multiple: true }], outputs: [{ id: "result", label: "Prepared information", type: "data" }], fields: [
       { id: "template", label: "What the next step should receive", description: "Build a JSON result with variables. Use {{ byNode.step-id }} for a named card or {{ inputs.0 }} for the first connected value.", kind: "json", defaultValue: {} },
+    ],
+  },
+  {
+    type: "logic.select-one", version: 1, title: "Continue one path", description: "Joins mutually exclusive paths and passes the one completed value forward unchanged.", example: "Continue with either the approved plan or the repaired plan, but never both.", category: "logic", icon: "select-one", accent: "neutral",
+    inputs: [{ id: "data", label: "Alternative results", type: "data", required: true, multiple: true }], outputs: [{ id: "result", label: "Selected information", type: "data" }], fields: [],
+  },
+  {
+    type: "logic.select-path", version: 1, title: "Select information", description: "Takes one existing field from incoming information and passes its value forward unchanged.", example: "Continue with the plans field from a larger review package without reconstructing it.", category: "logic", icon: "select-path", accent: "neutral",
+    inputs: [{ id: "data", label: "Incoming information", type: "data", required: true }], outputs: [{ id: "result", label: "Selected information", type: "data" }], fields: [
+      { id: "path", label: "Field to continue", description: "Enter the exact field path, for example plans or campaign.brief. The run stops if that field is missing.", placeholder: "plans", kind: "text", required: true, defaultValue: "" },
     ],
   },
   {

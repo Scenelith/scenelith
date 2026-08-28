@@ -15,13 +15,13 @@ import { settleWithConcurrency } from "@/lib/generation-queue";
 import { runAssistantUsage } from "@/lib/assistant-usage";
 import { readStorageObject, signedStorageReadUrl } from "@/lib/storage";
 import { findTikTokSlideshowSources } from "@/lib/tiktok-slideshow-sources";
-import { referenceMentionToken } from "@/lib/reference-mentions";
-import { AUTOMATION_IDENTITY_REFERENCE_INSTRUCTION, AUTOMATION_NO_TEXT_AVOID_INSTRUCTION, AUTOMATION_SOURCE_REFERENCE_INSTRUCTION, serializeImageGenerationPrompt, type GenerationReferenceRole, type ImageGenerationPromptContract } from "@/lib/generation-prompt-contract";
+import { AUTOMATION_IDENTITY_REFERENCE_INSTRUCTION, AUTOMATION_NO_TEXT_AVOID_INSTRUCTION, AUTOMATION_SOURCE_REFERENCE_INSTRUCTION, serializeImageGenerationPrompt, type GenerationReferenceRole } from "@/lib/generation-prompt-contract";
 import { generationProvider, intelligenceProvider } from "@/platform/providers/registry";
 import type { FrameEdge, FrameNode, ProjectGraph } from "@/lib/types";
 import { validateAutomationStructuredValue } from "./json-schema";
 import { evaluateAutomationCondition } from "./condition";
 import { resolveAutomationCredential } from "./credentials";
+import { parseAutomationSlidePlanCollection, parseAutomationSlidePlanSet, type AutomationSlidePlan } from "./slide-plan-contract";
 import type { AutomationNodeExecution, AutomationNodeHandlers } from "./runtime";
 
 type MultimodalContent = { type: "text"; text: string } | { type: "image_url"; image_url: { url: string } };
@@ -316,6 +316,20 @@ async function transform(execution: AutomationNodeExecution) {
   }) };
 }
 
+async function selectOne(execution: AutomationNodeExecution) {
+  const values = Array.isArray(execution.inputs.data) ? execution.inputs.data : [execution.inputs.data].filter((value) => value !== undefined);
+  if (values.length !== 1) throw new Error(`Continue one path expected exactly one completed input, but received ${values.length}`);
+  return { result: values[0] };
+}
+
+async function selectPath(execution: AutomationNodeExecution) {
+  const path = String(execution.config.path || "").trim();
+  if (!path) throw new Error("Select information needs the exact field path to continue");
+  const result = pathValue(execution.inputs.data, path);
+  if (result === undefined) throw new Error(`Select information could not find “${path}” in the incoming value`);
+  return { result };
+}
+
 async function condition(execution: AutomationNodeExecution) {
   const match = evaluateAutomationCondition(execution.inputs.data, execution.config);
   return match ? { yes: execution.inputs.data } : { no: execution.inputs.data };
@@ -481,15 +495,6 @@ async function httpRequest(execution: AutomationNodeExecution) {
   return { response: result };
 }
 
-type PlannedSlide = {
-  index: number;
-  role: string;
-  prompt: ImageGenerationPromptContract;
-  referenceIds: string[];
-  text: { strategy: "keep" | "rewrite" | "remove"; sourceText: string; overlayText: string; instruction: string };
-  confidence: number;
-};
-
 type GenerationReference = {
   assetId: string;
   path: string;
@@ -498,19 +503,8 @@ type GenerationReference = {
   label: string;
 };
 
-type PlannedSlideSet = {
-  schemaVersion: 2;
-  contract: Record<string, unknown> | null;
-  decisions: { newOutfit: boolean; newLocation: boolean; textStrategy: "keep" | "rewrite" | "remove" } | null;
-  slides: PlannedSlide[];
-};
-
 function recordValue(value: unknown): Record<string, unknown> {
   return value && typeof value === "object" && !Array.isArray(value) ? value as Record<string, unknown> : {};
-}
-
-function exactStringList(value: unknown) {
-  return Array.isArray(value) ? value.map((item) => String(item)) : [];
 }
 
 function textStrategyValue(value: unknown): "keep" | "rewrite" | "remove" {
@@ -518,104 +512,8 @@ function textStrategyValue(value: unknown): "keep" | "rewrite" | "remove" {
   throw new Error(`Unknown on-screen text strategy ${JSON.stringify(value)}`);
 }
 
-function parsePlannedSlide(item: unknown, position: number, requireStructured: boolean): PlannedSlide {
-  const slide = recordValue(item);
-  const index = Number(slide.index || position + 1);
-  if (!Number.isInteger(index) || index < 1) throw new Error(`Slide ${position + 1} needs a stable positive index`);
-  const promptValue = recordValue(slide.prompt);
-  const structured = typeof promptValue.task === "string" && Array.isArray(promptValue.reference_plan) && promptValue.subject && promptValue.scene && promptValue.output && slide.text && Array.isArray(slide.referenceAssetIds);
-  if (requireStructured && !structured) throw new Error(`Slide ${index} must keep the structured generation contract; a plain prompt is not sufficient`);
-  if (!structured) {
-    const legacyPrompt = String(slide.prompt || "").trim();
-    if (!legacyPrompt) throw new Error(`Slide ${index} needs a generation task`);
-    const overlayText = String(slide.overlayText || "");
-    const referenceIds = Array.isArray(slide.referenceIds) ? slide.referenceIds.map(String) : [];
-    return {
-      index,
-      role: String(slide.role || "scene"),
-      prompt: {
-        title: `Slide ${index}`,
-        task: legacyPrompt,
-        reference_plan: [
-          { token: referenceMentionToken(`Source composition ${index}`, 0), title: `Source composition ${index}`, role: "source composition", instruction: AUTOMATION_SOURCE_REFERENCE_INSTRUCTION },
-          ...referenceIds.map((_, referenceIndex) => ({ token: referenceMentionToken(`Reference ${referenceIndex + 1}`, referenceIndex + 1), title: `Reference ${referenceIndex + 1}`, role: "supporting visual", instruction: "Use only as supporting visual evidence." })),
-        ],
-        subject: { identity: "", appearance: [], pose: "", expression: "" },
-        scene: { environment: "", composition: legacyPrompt, lighting: "", camera: "" },
-        preserve: [],
-        change: overlayText ? [`Render exactly this on-screen text: ${JSON.stringify(overlayText)}`] : [],
-        avoid: [],
-        output: { format: "single image", style: "follow the generation task" },
-      },
-      referenceIds,
-      text: { strategy: overlayText ? "rewrite" : "keep", sourceText: "", overlayText, instruction: overlayText ? `Render exactly ${JSON.stringify(overlayText)}.` : "Do not invent on-screen text." },
-      confidence: 1,
-    };
-  }
-  const subject = recordValue(promptValue.subject);
-  const scene = recordValue(promptValue.scene);
-  const textContract = recordValue(slide.text);
-  const output = recordValue(promptValue.output);
-  const rawReferencePlan = Array.isArray(promptValue.reference_plan) ? promptValue.reference_plan : [];
-  const task = String(promptValue.task || "");
-  if (!task.trim()) throw new Error(`Slide ${index} needs a generation task`);
-  return {
-    index,
-    role: String(slide.role || "scene"),
-    prompt: {
-      title: String(promptValue.title || `Slide ${index}`),
-      task,
-      reference_plan: rawReferencePlan.map((item) => {
-        const binding = recordValue(item);
-        return { token: String(binding.token || ""), title: String(binding.title || ""), role: String(binding.role || ""), instruction: String(binding.instruction || "") };
-      }),
-      subject: {
-        identity: String(subject.identity || ""),
-        appearance: exactStringList(subject.appearance),
-        pose: String(subject.pose || ""),
-        expression: String(subject.expression || ""),
-      },
-      scene: {
-        environment: String(scene.environment || ""),
-        composition: String(scene.composition || ""),
-        lighting: String(scene.lighting || ""),
-        camera: String(scene.camera || ""),
-      },
-      preserve: exactStringList(promptValue.preserve),
-      change: exactStringList(promptValue.change),
-      avoid: exactStringList(promptValue.avoid),
-      output: { format: String(output.format || "single image"), style: String(output.style || "") },
-    },
-    referenceIds: Array.isArray(slide.referenceAssetIds) ? slide.referenceAssetIds.map(String) : [],
-    text: {
-      strategy: textStrategyValue(textContract.strategy),
-      sourceText: String(textContract.sourceText || ""),
-      overlayText: String(textContract.overlayText || ""),
-      instruction: String(textContract.instruction || ""),
-    },
-    confidence: Math.max(0, Math.min(1, Number(slide.confidence ?? 0))),
-  };
-}
 
-function plannedSlideSet(value: unknown, requireStructured = false): PlannedSlideSet {
-  let record = recordValue(value);
-  if (Object.prototype.hasOwnProperty.call(record, "selected")) record = recordValue(record.selected);
-  if (Object.prototype.hasOwnProperty.call(record, "value")) record = recordValue(record.value);
-  const source = Array.isArray(record.slides) ? record.slides : Array.isArray(value) ? value : [];
-  const slides = source.map((item, position) => parsePlannedSlide(item, position, requireStructured)).sort((left, right) => left.index - right.index);
-  const indexes = new Set<number>();
-  for (const slide of slides) {
-    if (indexes.has(slide.index)) throw new Error(`Slide index ${slide.index} appears more than once`);
-    indexes.add(slide.index);
-  }
-  const decisionsRecord = recordValue(record.decisions);
-  const decisions = typeof decisionsRecord.newOutfit === "boolean" && typeof decisionsRecord.newLocation === "boolean" && decisionsRecord.textStrategy
-    ? { newOutfit: decisionsRecord.newOutfit, newLocation: decisionsRecord.newLocation, textStrategy: textStrategyValue(decisionsRecord.textStrategy) }
-    : null;
-  return { schemaVersion: 2, contract: Object.keys(recordValue(record.contract)).length ? recordValue(record.contract) : null, decisions, slides };
-}
-
-export function buildAutomationGenerationPrompt(plan: PlannedSlide, references: GenerationReference[]) {
+export function buildAutomationGenerationPrompt(plan: AutomationSlidePlan, references: GenerationReference[]) {
   if (references.length !== plan.prompt.reference_plan.length) throw new Error(`Slide ${plan.index} model-authored reference_plan does not match the attached images`);
   return {
     prompt: serializeImageGenerationPrompt(plan.prompt),
@@ -626,8 +524,13 @@ export function buildAutomationGenerationPrompt(plan: PlannedSlide, references: 
 async function validateSlidePlans(execution: AutomationNodeExecution) {
   const contract = recordValue(execution.inputs.contract);
   const hasContract = Object.keys(contract).length > 0;
-  const planSet = plannedSlideSet(execution.inputs.data, hasContract);
-  let slides = planSet.slides;
+  let slides = parseAutomationSlidePlanCollection(execution.inputs.data).slides;
+  const indexes = new Set<number>();
+  for (const [position, slide] of slides.entries()) {
+    if (indexes.has(slide.index)) throw new Error(`Slide index ${slide.index} appears more than once`);
+    if (position > 0 && slides[position - 1].index >= slide.index) throw new Error("Slide plans must stay in ascending source order");
+    indexes.add(slide.index);
+  }
   const maximum = Math.min(40, Math.max(1, Number(execution.config.maxSlides || 40)));
   if (!slides.length) throw new Error("The plan contains no slides");
   if (slides.length > maximum) throw new Error(`The plan contains ${slides.length} slides; this step allows ${maximum}`);
@@ -648,9 +551,9 @@ async function validateSlidePlans(execution: AutomationNodeExecution) {
   const visualIds = new Set(visualAssets.map((asset) => String(asset.id || "")).filter(Boolean));
   const availableReferences = new Set([...identityIds, ...visualIds]);
   for (const slide of slides) {
-    const duplicate = slide.referenceIds.find((id, index) => slide.referenceIds.indexOf(id) !== index);
+    const duplicate = slide.referenceAssetIds.find((id, index) => slide.referenceAssetIds.indexOf(id) !== index);
     if (duplicate) throw new Error(`Slide ${slide.index} uses reference ${duplicate} more than once`);
-    const unknown = slide.referenceIds.find((id) => !availableReferences.has(id));
+    const unknown = slide.referenceAssetIds.find((id) => !availableReferences.has(id));
     if (unknown) throw new Error(`Slide ${slide.index} requests reference ${unknown}, but it is not available from the connected identity or visual references`);
   }
   if (!hasContract) return { plans: { schemaVersion: 2, contract: null, decisions: null, slides } };
@@ -665,17 +568,17 @@ async function validateSlidePlans(execution: AutomationNodeExecution) {
   if (briefDecisions.newOutfit !== decisions.newOutfit || briefDecisions.newLocation !== decisions.newLocation || briefDecisions.textStrategy !== decisions.textStrategy) {
     throw new Error("The creative brief changed an immutable run choice");
   }
-  const copySlides = Array.isArray(recordValue(recordValue(contract.copy).selected).slides)
-    ? recordValue(recordValue(contract.copy).selected).slides as unknown[]
+  const copySlides = Array.isArray(recordValue(contract.copy).slides)
+    ? recordValue(contract.copy).slides as unknown[]
     : [];
   const copyByIndex = new Map(copySlides.map((item) => [Number(recordValue(item).index), recordValue(item)]));
   const analyzedSlides = Array.isArray(sourceAnalysis.slides) ? sourceAnalysis.slides as unknown[] : [];
   const analyzedByIndex = new Map(analyzedSlides.map((item) => [Number(recordValue(item).index), recordValue(item)]));
   const assignedSlides = Array.isArray(recordValue(contract.references).slides) ? recordValue(contract.references).slides as unknown[] : [];
   const assignmentsByIndex = new Map(assignedSlides.map((item) => [Number(recordValue(item).index), recordValue(item)]));
-  const selectedWardrobe = recordValue(recordValue(choices.wardrobe).value);
-  const selectedLocation = recordValue(recordValue(choices.location).value);
-  const selectedAdaptation = recordValue(recordValue(choices.adaptation).value);
+  const selectedWardrobe = recordValue(choices.wardrobe);
+  const selectedLocation = recordValue(choices.location);
+  const selectedAdaptation = recordValue(choices.adaptation);
   const wardrobeRule = recordValue(selectedWardrobe.wardrobe);
   const locationRule = recordValue(selectedLocation.location);
   const adaptationRule = recordValue(selectedAdaptation.adaptation);
@@ -726,7 +629,7 @@ async function validateSlidePlans(execution: AutomationNodeExecution) {
       return { assetId, title, role, instruction };
     });
     const authoredBindings = authoredReferences.map((binding, position) => ({
-      assetId: slide.referenceIds[position],
+      assetId: slide.referenceAssetIds[position],
       title: binding.title,
       role: binding.role,
       instruction: binding.instruction,
@@ -780,7 +683,7 @@ async function waitForGeneration(runId: string, generationId: string, expectedWo
 }
 
 async function imageGeneration(execution: AutomationNodeExecution) {
-  const planSet = plannedSlideSet(execution.inputs.plans);
+  const planSet = parseAutomationSlidePlanSet(execution.inputs.plans);
   const plans = planSet.slides;
   if (!plans.length) throw new Error("The workflow produced no slide plans");
   const assetLimit = Math.min(5_000, execution.context.policy?.maxGeneratedAssets ?? 200);
@@ -840,13 +743,13 @@ async function imageGeneration(execution: AutomationNodeExecution) {
     const sourceSlide = sourceByIndex.get(plan.index);
     if (!sourceSlide) throw new Error(`Source slide ${plan.index} is missing`);
     const sourceAssetId = String(sourceSlide.assetId || "");
-    const unknownReferenceIds = plan.referenceIds.filter((id) => id !== sourceAssetId && !identityById.has(id) && !visualById.has(id));
+    const unknownReferenceIds = plan.referenceAssetIds.filter((id) => id !== sourceAssetId && !identityById.has(id) && !visualById.has(id));
     if (unknownReferenceIds.length) throw new Error(`Slide ${plan.index} requested unavailable visual reference ${unknownReferenceIds[0]}`);
-    const referenceIds = [...new Set([sourceAssetId, ...plan.referenceIds.filter((id) => id !== sourceAssetId)])].filter(Boolean);
-    if (referenceIds.length > model.maxReferences) {
-      throw new Error(`Slide ${plan.index} needs ${referenceIds.length} references, but ${model.label} supports ${model.maxReferences}`);
+    const referenceAssetIds = [...new Set([sourceAssetId, ...plan.referenceAssetIds.filter((id) => id !== sourceAssetId)])].filter(Boolean);
+    if (referenceAssetIds.length > model.maxReferences) {
+      throw new Error(`Slide ${plan.index} needs ${referenceAssetIds.length} references, but ${model.label} supports ${model.maxReferences}`);
     }
-    const rawReferences: GenerationReference[] = referenceIds.map((assetId, referenceIndex) => {
+    const rawReferences: GenerationReference[] = referenceAssetIds.map((assetId, referenceIndex) => {
       const asset = referenceIndex === 0 ? sourceSlide : identityById.get(assetId) || visualById.get(assetId);
       if (!asset) throw new Error(`Reference ${assetId} is no longer available`);
       return {
@@ -983,7 +886,7 @@ async function addToCanvas(execution: AutomationNodeExecution) {
       const planText = items.map((item, position) => {
         const index = Number(item.index || position + 1);
         const overlay = String(item.overlayText || "").trim();
-        const references = Array.isArray(item.referenceIds) ? item.referenceIds.length : 0;
+        const references = Array.isArray(item.referenceAssetIds) ? item.referenceAssetIds.length : 0;
         return [
           `SLIDE ${String(index).padStart(2, "0")} · ${String(item.role || "scene").toUpperCase()}`,
           String(item.prompt || "No generation instructions were saved."),
@@ -1099,6 +1002,8 @@ export function coreAutomationNodeHandlers(): AutomationNodeHandlers {
     "input.workflow-data@1": workflowData,
     "ai.structured-task@2": aiTask,
     "logic.transform@1": transform,
+    "logic.select-one@1": selectOne,
+    "logic.select-path@1": selectPath,
     "logic.condition@1": condition,
     "logic.merge@1": merge,
     "logic.limit-batch@1": limitBatch,
