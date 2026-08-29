@@ -68,6 +68,7 @@ test("automation semantics come only from visible node configuration", () => {
   assert.match(creativeDirectionSource, /complete primary creative-direction request/i);
   assert.match(registrySource, /The server does not add its own categories/);
   assert.match(registrySource, /The server accepts only these configured ids/);
+  assert.match(nodeHandlersSource, /allowedRatios\(model, resolution, request\.referenceAssetIds\.length > 0\)/);
 });
 
 test("protected system templates expose only primary AI and image model controls with reset", () => {
@@ -311,6 +312,7 @@ test("automation steps separate a plain-language guide from configuration and de
   assert.match(registrySource, /What should the AI do\?/);
   assert.match(registrySource, /advanced: true/);
   assert.match(registrySource, /kind: "value"/);
+  assert.match(workflowEditorSource, /Only models compatible with this step&apos;s locked image shape and quality are available/);
   assert.match(themeSource, /\.automation-node-advanced/);
 });
 

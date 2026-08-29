@@ -39,6 +39,23 @@ export type GenerationAdmissionResult =
   | { ok: true; generationId: string; status: "queued"; queuePosition: number | null; creditCost: number }
   | { ok: false; status: 402 | 404 | 429 | 500; error: string; code: string; retryAfterMs?: number; concurrency?: number; requiredCredits?: number };
 
+export function generationDispatchPayload(input: GenerationAdmissionInput): GenerationDispatchPayload {
+  return {
+    modelId: input.model.id,
+    prompt: input.prompt,
+    references: input.references,
+    aspectRatio: input.aspectRatio,
+    resolution: input.resolution,
+    duration: input.duration,
+    generateAudio: input.generateAudio,
+    providerWorkflow: input.model.id === "grok-image-2" && input.references.length > 0
+      ? { kind: "grok-image-edit", stage: "segment-map" }
+      : undefined,
+    targetClipId: input.targetClipId,
+    targetSourceAssetId: input.targetSourceAssetId,
+  };
+}
+
 /**
  * The single admission boundary used by interactive generations and automation
  * workers. Provider-specific validation happens before this function; durable
@@ -138,20 +155,7 @@ export async function admitGeneration(input: GenerationAdmissionInput): Promise<
   }
 
   try {
-    const payload: GenerationDispatchPayload = {
-      modelId: input.model.id,
-      prompt: input.prompt,
-      references: input.references,
-      aspectRatio: input.aspectRatio,
-      resolution: input.resolution,
-      duration: input.duration,
-      generateAudio: input.generateAudio,
-      providerWorkflow: input.model.id === "grok-image-2" && input.references.length > 0
-        ? { kind: "grok-image-edit", stage: "segment-map" }
-        : undefined,
-      targetClipId: input.targetClipId,
-      targetSourceAssetId: input.targetSourceAssetId,
-    };
+    const payload = generationDispatchPayload(input);
     await db.prepare(
       `INSERT INTO generation_dispatch_jobs
        (generation_id, payload_json, status, attempts, available_at, created_at, updated_at)

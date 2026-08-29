@@ -308,6 +308,13 @@ function providerPrompt(value: string) {
   }
 }
 
+export function kieProviderPrompt(userRequest: string, referenceLabels: string[]) {
+  const referenceHeader = referenceLabels.length
+    ? `REFERENCE_MAP (bindings are exact; never swap images):\n${referenceLabels.map((label, index) => `${index + 1}: ${label}`).join("\n")}\nUSER_REQUEST:\n`
+    : "";
+  return `${referenceHeader}${providerPrompt(userRequest)}`;
+}
+
 export function buildKieInput(modelId: string, input: Omit<StartInput, "modelId" | "references">, uploadedInput: Array<UploadedReference | string>): Record<string, unknown> {
   const model = getKieModel(modelId);
   const ratio = input.aspectRatio || model.defaultRatio || model.ratios[0] || "1:1";
@@ -393,16 +400,16 @@ export function buildKieInput(modelId: string, input: Omit<StartInput, "modelId"
 
 export async function startGeneration(input: StartInput) {
   const model = getKieModel(input.modelId);
+  if (input.references.length > model.maxReferences) {
+    throw new Error(`${model.label} accepts at most ${model.maxReferences} reference inputs`);
+  }
   const references = input.providerWorkflow?.kind === "grok-image-edit" && input.providerWorkflow.stage === "image-edit"
     ? []
-    : input.references.slice(0, model.maxReferences);
+    : input.references;
   const uploaded = await Promise.all(references.map(async (reference) => ({ ...(await uploadKieReference(reference.path, reference.mimeType, reference.label)), role: reference.role })));
-  const referenceHeader = uploaded.length
-    ? `REFERENCE_MAP (bindings are exact; never swap images):\n${uploaded.map((item, index) => `${index + 1}: ${item.label}`).join("\n")}\nUSER_REQUEST:\n`
-    : "";
   const prompt = model.id === "grok-image-2"
     ? providerPrompt(input.prompt)
-    : `${referenceHeader}${providerPrompt(input.prompt)}`;
+    : kieProviderPrompt(input.prompt, uploaded.map((item) => item.label));
   assertKiePromptLength(model.id, prompt);
   const callBackUrl = process.env.PUBLIC_URL ? `${process.env.PUBLIC_URL.replace(/\/$/, "")}/api/webhooks/kie` : undefined;
   let body: Record<string, unknown>;

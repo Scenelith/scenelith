@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { createHmac } from "node:crypto";
 import { test } from "node:test";
-import { allowedKieResolutions, assertKiePromptLength, buildKieInput, getKieModel, kieModels, normalizeKieTask, verifyKieWebhook } from "../src/lib/kie";
+import { allowedKieRatios, allowedKieResolutions, assertKiePromptLength, buildKieInput, getKieModel, kieModels, kieProviderPrompt, normalizeKieTask, startGeneration, verifyKieWebhook } from "../src/lib/kie";
 
 test("legacy saved model IDs resolve to supported Kie models", () => {
   assert.equal(getKieModel("nano-banana-pro-flash").id, "nano-banana-2");
@@ -29,6 +29,31 @@ test("unified Kie task responses and Veo responses normalize identically", () =>
     generated: [],
     error: "Provider rejected the prompt",
   });
+});
+
+test("provider prompt transport preserves the exact automation request and ordered reference labels", () => {
+  const request = '{"task":"Keep this exact request","preserve":["Exact framing"]}';
+  assert.equal(kieProviderPrompt(request, []), request);
+  assert.equal(
+    kieProviderPrompt(request, ["@Source_composition_1_1", "@Main_identity_1_2"]),
+    `REFERENCE_MAP (bindings are exact; never swap images):\n1: @Source_composition_1_1\n2: @Main_identity_1_2\nUSER_REQUEST:\n${request}`,
+  );
+});
+
+test("image format validation distinguishes text-only requests from requests with references", () => {
+  const model = getKieModel("flux-2-flex");
+  assert.equal(allowedKieRatios(model, "1K", true).includes("auto"), true);
+  assert.equal(allowedKieRatios(model, "1K", false).includes("auto"), false);
+});
+
+test("provider dispatch rejects excess references instead of silently truncating them", async () => {
+  await assert.rejects(startGeneration({
+    modelId: "imagen4-fast",
+    prompt: "Exact request",
+    references: [{ path: "reference.png", mimeType: "image/png", label: "Reference" }],
+    aspectRatio: "9:16",
+    resolution: "1K",
+  }), /accepts at most 0 reference inputs/);
 });
 
 test("model adapters use the documented reference fields", () => {

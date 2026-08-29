@@ -1545,10 +1545,8 @@ async function imageGenerationV2(execution: AutomationNodeExecution) {
   if (!requestedResolution) throw new Error("Choose image quality before running this step");
   if (!allowedResolutions.includes(requestedResolution)) throw new Error(`${requestedResolution} is not available for ${model.label}`);
   const resolution = requestedResolution;
-  const allowedRatios = provider.allowedRatios(model, resolution, true);
   const requestedRatio = stringSetting(execution, "ratio").trim();
   if (!requestedRatio) throw new Error("Choose image shape before running this step");
-  if (!allowedRatios.includes(requestedRatio)) throw new Error(`${requestedRatio} is not available for ${model.label} at ${resolution}`);
   const aspectRatio = requestedRatio;
   const configuredConcurrency = integerSetting(execution, "concurrency");
   if (configuredConcurrency < 1 || configuredConcurrency > 8) throw nodeConfigurationError(execution, "concurrency", "a whole number from 1 through 8");
@@ -1571,6 +1569,11 @@ async function imageGenerationV2(execution: AutomationNodeExecution) {
     const promptLengthLimit = provider.promptLengthLimit(model);
     if (request.prompt.length > promptLengthLimit) {
       throw new Error(`Image request ${request.key} is longer than ${model.label}'s ${promptLengthLimit.toLocaleString()} character limit`);
+    }
+    const allowedRatios = provider.allowedRatios(model, resolution, request.referenceAssetIds.length > 0);
+    if (!allowedRatios.includes(aspectRatio)) {
+      const requestMode = request.referenceAssetIds.length ? "with its references" : "without references";
+      throw new Error(`${aspectRatio} is not available for ${model.label} at ${resolution} ${requestMode} in image request ${request.key}`);
     }
     if (request.referenceAssetIds.length > model.maxReferences) throw new Error(`Image request ${request.key} needs ${request.referenceAssetIds.length} references, but ${model.label} supports ${model.maxReferences}`);
     const allowedRoles = new Set((model.inputPorts || []).map((port) => port.id));

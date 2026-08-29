@@ -1285,7 +1285,15 @@ export function AutomationWorkflowEditorOverlay({ workspaceId, projectId, workfl
       ...(!field.required ? [{ value: "", label: "No backup model" }] : []),
       ...assistantModels.map((model) => ({ value: model.id, label: model.label })),
     ];
-    if (field.runtimeValueType === "image-model" || field.modelCapability === "image") return models.filter((model) => model.mediaType === "image" && model.maxReferences > 0).map((model) => ({ value: model.id, label: model.label }));
+    if (field.runtimeValueType === "image-model" || field.modelCapability === "image") return models.filter((model) => {
+      if (model.mediaType !== "image") return false;
+      if (!systemReadOnly) return true;
+      if (model.maxReferences < 1) return false;
+      const resolution = String(selectedNode.config.resolution || "");
+      const ratio = String(selectedNode.config.ratio || "");
+      return generatorResolutionsFor(model, false).includes(resolution)
+        && generatorRatiosFor(model, resolution, true).includes(ratio);
+    }).map((model) => ({ value: model.id, label: model.label }));
     const boundValue = (fieldId: string) => selectedNode.bindings[fieldId]?.mode === "fixed" && selectedNode.bindings[fieldId]?.value !== undefined
       ? selectedNode.bindings[fieldId].value
       : selectedNode.config[fieldId];
@@ -1680,7 +1688,7 @@ export function AutomationWorkflowEditorOverlay({ workspaceId, projectId, workfl
         <span><b>{field.label}</b><button type="button" disabled={saving || !defaultModelId || currentModelId === defaultModelId} title="Restore the model selected by this system template" onClick={() => void saveSystemModel(selectedNode!.id, null)}><RotateCcw size={11} /> Reset to default</button></span>
         {field.description && <small>{field.description}</small>}
         <InspectorSelect label={field.label} disabled={saving} value={currentModelId} options={selectedFieldOptions(field)} onChange={(value) => void saveSystemModel(selectedNode!.id, value)} />
-        <small className="automation-system-model-help">Saved for this workspace. The template structure and every other setting stay locked.</small>
+        <small className="automation-system-model-help">Saved for this workspace. Only models compatible with this step&apos;s locked image shape and quality are available.</small>
       </div>;
     }
     const selectedReferenceIds = Array.isArray(fieldValue) ? fieldValue.filter((item): item is string => typeof item === "string") : [];

@@ -117,6 +117,12 @@ function applySystemModelSelection(graph: AutomationWorkflowGraph, defaults: Aut
       const provider = generationProvider();
       const model = provider.getModel(selectedModelId);
       if (model.mediaType !== "image" || model.maxReferences < 1) return false;
+      if (modelId) {
+        const resolution = String(configurable.node.config.resolution || "");
+        const ratio = String(configurable.node.config.ratio || "");
+        if (!provider.allowedResolutions(model, false).includes(resolution)) return false;
+        if (!provider.allowedRatios(model, resolution, true).includes(ratio)) return false;
+      }
     } catch {
       return false;
     }
@@ -131,15 +137,6 @@ function applySystemModelSelection(graph: AutomationWorkflowGraph, defaults: Aut
     };
     return true;
   }
-  const provider = generationProvider();
-  const model = provider.getModel(selectedModelId);
-  const resolutions = provider.allowedResolutions(model, false);
-  const currentResolution = String(configurable.node.config.resolution || "");
-  const resolution = resolutions.includes(currentResolution) ? currentResolution : model.defaultResolution || resolutions[0] || "";
-  const ratios = provider.allowedRatios(model, resolution, true);
-  const currentRatio = String(configurable.node.config.ratio || "");
-  const ratio = ratios.includes(currentRatio) ? currentRatio : model.defaultRatio && ratios.includes(model.defaultRatio) ? model.defaultRatio : ratios[0] || "";
-  configurable.node.config = { ...configurable.node.config, resolution, ratio };
   return true;
 }
 
@@ -343,7 +340,7 @@ export async function setSystemAutomationModelOverride(input: { userId: string; 
   const overrideModelId = input.modelId && input.modelId !== String(defaultNode?.config.modelId || "") ? input.modelId : null;
   const selectionApplied = applySystemModelSelection(graph, defaults, input.nodeId, overrideModelId);
   if (!selectionApplied && input.modelId !== null) {
-    throw Object.assign(new Error("This system step does not support that model"), { status: 400 });
+    throw Object.assign(new Error("This system step does not support that model with its locked settings"), { status: 400 });
   }
   const graphChanged = selectionApplied && JSON.stringify(graph) !== JSON.stringify(published.graph);
   const validation = graphChanged ? validateAutomationWorkflowGraph(graph) : published.validation;
