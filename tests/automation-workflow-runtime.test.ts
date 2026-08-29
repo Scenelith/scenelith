@@ -61,6 +61,7 @@ const creativePreparationConfig = {
   requirementPlacements: DEFAULT_AUTOMATION_REQUIREMENT_PLACEMENTS,
   briefPath: "creativeBrief",
   policyPath: "creativeDirectionPolicy",
+  resultPath: "direction",
   minConfidence: 0.9,
   maxBriefCharacters: 5_000,
   maxRequirements: 24,
@@ -407,13 +408,13 @@ test("select-information returns the exact nested value and never guesses anothe
 
 test("creative direction accepts only complete exact-evidence contracts and configurable choices", async () => {
   const handlers = coreAutomationNodeHandlers();
-  const prepare = handlers["logic.prepare-creative-direction@2"];
-  const resolve = handlers["logic.resolve-creative-direction@3"];
+  const prepare = handlers["logic.prepare-creative-direction@3"];
+  const resolve = handlers["logic.resolve-creative-direction@4"];
   const base = { attempt: 1, context, outputsByNode: new Map<string, Record<string, unknown>>() };
   const settings = { mode: "concept", newOutfit: false, newLocation: true, textStrategy: "rewrite", creativeBrief: "Keep the same room, remove text and make it warm.", creativeDirectionPolicy: "auto-explicit" };
   const prepared = await prepare({
     ...base,
-    node: { id: "prepare", type: "logic.prepare-creative-direction", version: 2, name: "Prepare", description: "", position: { x: 0, y: 0 }, groupId: null, config: {}, bindings: {}, disabled: false },
+    node: { id: "prepare", type: "logic.prepare-creative-direction", version: 3, name: "Prepare", description: "", position: { x: 0, y: 0 }, groupId: null, config: {}, bindings: {}, disabled: false },
     config: { ...creativePreparationConfig, minConfidence: 0.9, maxRequirements: 24 },
     inputs: { settings, source: { slides: [{ index: 1 }, { index: 2 }] } },
   });
@@ -431,7 +432,7 @@ test("creative direction accepts only complete exact-evidence contracts and conf
   ] }] };
   const execution = {
     ...base,
-    node: { id: "resolve", type: "logic.resolve-creative-direction", version: 3, name: "Resolve", description: "", position: { x: 0, y: 0 }, groupId: null, config: {}, bindings: {}, disabled: false },
+    node: { id: "resolve", type: "logic.resolve-creative-direction", version: 4, name: "Resolve", description: "", position: { x: 0, y: 0 }, groupId: null, config: {}, bindings: {}, disabled: false },
     config: {}, inputs: { request, analysis },
   };
   const result = await resolve(execution);
@@ -446,7 +447,7 @@ test("creative direction accepts only complete exact-evidence contracts and conf
 
   const proposedPrepared = await prepare({
     ...base,
-    node: { id: "prepare", type: "logic.prepare-creative-direction", version: 2, name: "Prepare", description: "", position: { x: 0, y: 0 }, groupId: null, config: {}, bindings: {}, disabled: false },
+    node: { id: "prepare", type: "logic.prepare-creative-direction", version: 3, name: "Prepare", description: "", position: { x: 0, y: 0 }, groupId: null, config: {}, bindings: {}, disabled: false },
     config: creativePreparationConfig,
     inputs: { settings: { ...settings, creativeBrief: "Keep the same room.", creativeDirectionPolicy: "propose" }, source: { slides: [{ index: 1 }] } },
     inputConnections: { settings: [{ sourceNodeId: "choices", sourceNodeName: "Choices", sourcePort: "settings", targetPort: "settings", value: settings }] },
@@ -474,7 +475,7 @@ test("creative direction accepts only complete exact-evidence contracts and conf
   const inventedEvidence = await resolve({ ...execution, inputs: { request, analysis: { ...analysis, clauseResults: [{ clauseId, items: [{ ...analysis.clauseResults[0].items[0], evidence: "keep the same room" }] }] } } });
   assert.match(String((inventedEvidence.conflict as { message: string }).message), /exact phrase/);
 
-  const inventedInstruction = await resolve({ ...execution, inputs: { request, analysis: { ...analysis, clauseResults: [{ clauseId, items: analysis.clauseResults[0].items.map((item) => item.kind === "requirement" ? { ...item, instruction: "Show a 50% discount" } : item) }] } } });
+  const inventedInstruction = await resolve({ ...execution, inputs: { request, analysis: { ...analysis, clauseResults: [{ clauseId, items: analysis.clauseResults[0].items.map((item) => String((item as Record<string, unknown>).kind) === "requirement" ? { ...item, instruction: "Show a 50% discount" } : item) }] } } });
   assert.match(String((inventedInstruction.conflict as { message: string }).message), /incomplete creative requirement/);
 
   const missingCoverage = await resolve({ ...execution, inputs: { request, analysis: { briefHash: request.briefHash, clauseResults: [] } } });
@@ -491,7 +492,7 @@ test("creative direction accepts only complete exact-evidence contracts and conf
 
   await assert.rejects(prepare({
     ...base,
-    node: { id: "prepare", type: "logic.prepare-creative-direction", version: 2, name: "Prepare", description: "", position: { x: 0, y: 0 }, groupId: null, config: {}, bindings: {}, disabled: false },
+    node: { id: "prepare", type: "logic.prepare-creative-direction", version: 3, name: "Prepare", description: "", position: { x: 0, y: 0 }, groupId: null, config: {}, bindings: {}, disabled: false },
     config: creativePreparationConfig,
     inputs: { settings: { ...settings, newLocation: "false" }, source: { slides: [{ index: 1 }] } },
   }), /no single selected option/);
@@ -499,21 +500,38 @@ test("creative direction accepts only complete exact-evidence contracts and conf
   const customControls = [{ id: "language", label: "Output language", path: "campaign.language", options: [{ id: "english", label: "English", value: "en", meaning: "The person wants the resulting creative written in English." }, { id: "french", label: "French", value: "fr", meaning: "The person wants the resulting creative written in French, regardless of the language used to ask for it." }] }];
   const customPrepared = await prepare({
     ...base,
-    node: { id: "prepare", type: "logic.prepare-creative-direction", version: 2, name: "Prepare", description: "", position: { x: 0, y: 0 }, groupId: null, config: {}, bindings: {}, disabled: false },
-    config: { ...creativePreparationConfig, controls: customControls },
-    inputs: { settings: { campaign: { language: "en" }, creativeBrief: "Use French.", creativeDirectionPolicy: "auto-explicit" }, source: { slides: [{ index: 1 }] } },
+    node: { id: "prepare", type: "logic.prepare-creative-direction", version: 3, name: "Prepare", description: "", position: { x: 0, y: 0 }, groupId: null, config: {}, bindings: {}, disabled: false },
+    config: { ...creativePreparationConfig, controls: customControls, briefPath: "campaign.comment", policyPath: "campaign.policy", resultPath: "campaign.resolution" },
+    inputs: { settings: { campaign: { language: "en", comment: "  Use French.  ", policy: "auto-explicit" }, untouched: { value: 7 } }, source: { slides: [{ index: 1 }] } },
   });
-  const customRequest = customPrepared.request as { briefHash: string; clauses: Array<{ id: string; text: string }> };
+  const customRequest = customPrepared.request as { briefHash: string; contractVersion: number; briefPath: string; policyPath: string; resultPath: string; clauses: Array<{ id: string; text: string }> };
+  assert.deepEqual({ contractVersion: customRequest.contractVersion, briefPath: customRequest.briefPath, policyPath: customRequest.policyPath, resultPath: customRequest.resultPath }, { contractVersion: 4, briefPath: "campaign.comment", policyPath: "campaign.policy", resultPath: "campaign.resolution" });
   const customEvidence = customRequest.clauses[0].text;
   const customResult = await resolve({
     ...execution,
     inputs: { request: customRequest, analysis: { briefHash: customRequest.briefHash, clauseResults: [{ clauseId: customRequest.clauses[0].id, items: [{ kind: "choice", evidence: customEvidence, evidenceStart: 0, evidenceEnd: customEvidence.length, controlId: "language", optionId: "french", instruction: "", category: "", placement: "", slideIndexes: [], confidence: 1, reason: "" }] }] } },
   });
-  assert.equal(((customResult.resolved as { campaign: { language: string } }).campaign.language), "fr", "custom user-authored controls must work without hardcoded fields");
+  const customResolved = customResult.resolved as { campaign: { language: string; comment: string; policy: string; resolution: { contractVersion: number } }; untouched: { value: number }; creativeBrief?: unknown; direction?: unknown };
+  assert.equal(customResolved.campaign.language, "fr", "custom user-authored controls must work without hardcoded fields");
+  assert.equal(customResolved.campaign.comment, "  Use French.  ", "the resolver must preserve the exact connected setting instead of replacing it with normalized text");
+  assert.deepEqual(customResolved.untouched, { value: 7 });
+  assert.equal(customResolved.campaign.resolution.contractVersion, 4);
+  assert.equal("creativeBrief" in customResolved, false, "the resolver must not invent a built-in comment field");
+  assert.equal("direction" in customResolved, false, "the resolver must not invent a built-in evidence field");
+
+  const wrongVersion = await resolve({ ...execution, inputs: { request: { ...customRequest, contractVersion: 3 }, analysis: { briefHash: customRequest.briefHash, clauseResults: [] } } });
+  assert.match(String((wrongVersion.conflict as { message: string }).message), /contractVersion must equal 4/);
+
+  await assert.rejects(prepare({
+    ...base,
+    node: { id: "prepare", type: "logic.prepare-creative-direction", version: 3, name: "Prepare", description: "", position: { x: 0, y: 0 }, groupId: null, config: {}, bindings: {}, disabled: false },
+    config: { ...creativePreparationConfig, controls: customControls, briefPath: "campaign.comment", policyPath: "campaign.policy", resultPath: "campaign.language" },
+    inputs: { settings: { campaign: { language: "en", comment: "Use French.", policy: "auto-explicit" } }, source: { slides: [{ index: 1 }] } },
+  }), /overlaps protected setting path/);
 
   const contextualPrepared = await prepare({
     ...base,
-    node: { id: "prepare", type: "logic.prepare-creative-direction", version: 2, name: "Prepare", description: "", position: { x: 0, y: 0 }, groupId: null, config: {}, bindings: {}, disabled: false },
+    node: { id: "prepare", type: "logic.prepare-creative-direction", version: 3, name: "Prepare", description: "", position: { x: 0, y: 0 }, groupId: null, config: {}, bindings: {}, disabled: false },
     config: creativePreparationConfig,
     inputs: { settings: { ...settings, creativeBrief: "Текст оставь как есть, удалять его не нужно." }, source: { slides: [{ index: 1 }] } },
   });
@@ -524,7 +542,7 @@ test("creative direction accepts only complete exact-evidence contracts and conf
 
   const detailedPrepared = await prepare({
     ...base,
-    node: { id: "prepare", type: "logic.prepare-creative-direction", version: 2, name: "Prepare", description: "", position: { x: 0, y: 0 }, groupId: null, config: {}, bindings: {}, disabled: false },
+    node: { id: "prepare", type: "logic.prepare-creative-direction", version: 3, name: "Prepare", description: "", position: { x: 0, y: 0 }, groupId: null, config: {}, bindings: {}, disabled: false },
     config: creativePreparationConfig,
     inputs: { settings: { ...settings, newOutfit: false, creativeBrief: "Одень её в белое льняное платье с длинными рукавами.", creativeDirectionPolicy: "auto-explicit" }, source: { slides: [{ index: 1 }] } },
   });
@@ -750,7 +768,7 @@ test("default automation keeps every selected rule through an approved no-repair
       "input.tiktok-source@2": async () => ({ source: sourceValue("source-1") }),
       "input.identity@1": async () => ({ identity: { id: "person-identity", name: "Maya", notes: "", assets: [{ id: "person", filename: "person.png", role: "reference", path: "person.png", mimeType: "image/png", analysisPath: "person.png", analysisMimeType: "image/png" }] } }),
       "input.visual-references@1": async () => ({ references: { assetIds: [], assets: [] } }),
-      "ai.interpret-creative-direction@2": async ({ inputs }) => {
+      "ai.interpret-creative-direction@3": async ({ inputs }) => {
         const request = inputs.request as { briefHash: string; clauses: Array<{ id: string; text: string }> };
         const evidence = request.clauses[0].text;
         return { analysis: { briefHash: request.briefHash, clauseResults: [{ clauseId: request.clauses[0].id, items: [{ kind: "choice", evidence, evidenceStart: 0, evidenceEnd: evidence.length, controlId: "location-setting", optionId: "preserve", instruction: "", category: "", placement: "", slideIndexes: [], confidence: 1, reason: "" }] }] } };

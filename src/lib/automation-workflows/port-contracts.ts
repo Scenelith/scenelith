@@ -30,7 +30,26 @@ const creativeControlSchema = z.object({
 }).strict();
 const creativeRequirementOptionSchema = z.object({ id: idText, label: boundedText, meaning: boundedText }).strict();
 const creativeClauseSchema = z.object({ id: idText, text: boundedText, start: z.number().int().nonnegative(), end: z.number().int().nonnegative() }).strict();
-const creativeDirectionRequestSchema = z.object({
+const creativeDirectionRequestSchemaV4 = z.object({
+  contractVersion: z.literal(4),
+  briefHash: z.string().length(64),
+  rawBrief: boundedText,
+  clauses: z.array(creativeClauseSchema).max(1),
+  settings: z.record(z.string(), jsonValue),
+  settingsNodeId: z.string().max(240),
+  briefPath: idText,
+  policyPath: idText,
+  resultPath: idText,
+  controls: z.array(creativeControlSchema).min(1).max(24),
+  requirementCategories: z.array(creativeRequirementOptionSchema).min(1).max(24),
+  requirementPlacements: z.array(creativeRequirementOptionSchema).min(1).max(24),
+  policy: z.enum(["strict", "propose", "auto-explicit"]),
+  sourceSlideIndexes: z.array(z.number().int().positive()).min(1).max(5_000),
+  minConfidence: z.number().finite().min(0.5).max(1),
+  maxRequirements: z.number().int().min(1).max(80),
+  allowIgnoredClauses: z.boolean(),
+}).strict();
+const creativeDirectionRequestSchemaV3 = z.object({
   contractVersion: z.literal(3),
   briefHash: z.string().length(64),
   rawBrief: boundedText,
@@ -188,7 +207,7 @@ const contracts: Partial<Record<AutomationPortType, z.ZodTypeAny>> = {
     creativeBrief: boundedText,
     creativeDirectionPolicy: z.enum(["strict", "propose", "auto-explicit"]),
   }).strict(),
-  "creative-direction-request": z.union([creativeDirectionRequestSchema, legacyCreativeDirectionRequestSchema]),
+  "creative-direction-request": z.union([creativeDirectionRequestSchemaV4, creativeDirectionRequestSchemaV3, legacyCreativeDirectionRequestSchema]),
   "creative-direction-analysis": creativeDirectionAnalysisSchema,
   "resolved-creative-settings": z.record(z.string(), jsonValue),
   "generated-assets": z.union([generatedAssetsSchema, legacyGeneratedAssetsSchema]),

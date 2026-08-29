@@ -1,10 +1,13 @@
 import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
 import { test } from "node:test";
 import { assistantModels } from "../src/lib/assistant-models";
 import { createDefaultTikTokWorkflowGraph } from "../src/lib/automation-workflows/default-tiktok";
 import { coreAutomationNodeHandlers, isUnsafeAutomationHttpAddress } from "../src/lib/automation-workflows/node-handlers";
 import { automationNodeDefinition, automationNodeDefinitions } from "../src/lib/automation-workflows/registry";
 import { automationRunInputFields, topologicalAutomationNodeIds, validateAutomationConnection, validateAutomationRunInputs, validateAutomationWorkflowGraph } from "../src/lib/automation-workflows/validation";
+
+const nodeContractAudit = readFileSync(new URL("../docs/AUTOMATION_NODE_CONTRACT_AUDIT.md", import.meta.url), "utf8");
 
 test("default TikTok workflow exposes every AI request and validates", () => {
   const graph = createDefaultTikTokWorkflowGraph();
@@ -51,9 +54,10 @@ test("current node catalogue exposes latest semantics while historical handlers 
   assert.equal(definitions.find((definition) => definition.type === "input.tiktok-source")?.version, 2);
   assert.equal(definitions.find((definition) => definition.type === "logic.condition")?.version, 2);
   assert.equal(definitions.find((definition) => definition.type === "generation.image")?.version, 2);
-  assert.equal(definitions.find((definition) => definition.type === "logic.prepare-creative-direction")?.version, 2);
-  assert.equal(definitions.find((definition) => definition.type === "ai.interpret-creative-direction")?.version, 2);
-  assert.equal(definitions.find((definition) => definition.type === "logic.resolve-creative-direction")?.version, 3);
+  assert.equal(definitions.find((definition) => definition.type === "logic.validate-slide-plans")?.version, 2);
+  assert.equal(definitions.find((definition) => definition.type === "logic.prepare-creative-direction")?.version, 3);
+  assert.equal(definitions.find((definition) => definition.type === "ai.interpret-creative-direction")?.version, 3);
+  assert.equal(definitions.find((definition) => definition.type === "logic.resolve-creative-direction")?.version, 4);
   const handlers = coreAutomationNodeHandlers();
   assert.equal(typeof handlers["input.tiktok-source@1"], "function");
   assert.equal(typeof handlers["input.tiktok-source@2"], "function");
@@ -61,21 +65,29 @@ test("current node catalogue exposes latest semantics while historical handlers 
   assert.equal(typeof handlers["logic.condition@2"], "function");
   assert.equal(typeof handlers["generation.image@1"], "function");
   assert.equal(typeof handlers["generation.image@2"], "function");
+  assert.equal(typeof handlers["logic.validate-slide-plans@1"], "function");
+  assert.equal(typeof handlers["logic.validate-slide-plans@2"], "function");
   assert.equal(typeof handlers["logic.prepare-creative-direction@1"], "function");
   assert.equal(typeof handlers["logic.prepare-creative-direction@2"], "function");
+  assert.equal(typeof handlers["logic.prepare-creative-direction@3"], "function");
   assert.equal(typeof handlers["ai.interpret-creative-direction@1"], "function");
   assert.equal(typeof handlers["ai.interpret-creative-direction@2"], "function");
+  assert.equal(typeof handlers["ai.interpret-creative-direction@3"], "function");
   assert.equal(typeof handlers["logic.resolve-creative-direction@2"], "function");
   assert.equal(typeof handlers["logic.resolve-creative-direction@3"], "function");
+  assert.equal(typeof handlers["logic.resolve-creative-direction@4"], "function");
   assert.deepEqual(automationNodeDefinition("generation.image", 1)?.inputs.map((port) => port.id), ["plans", "source", "identity", "references"]);
   assert.deepEqual(automationNodeDefinition("generation.image", 2)?.inputs.map((port) => port.id), ["requests"]);
+  assert.equal(automationNodeDefinition("logic.prepare-creative-direction", 2)?.inputs.find((port) => port.id === "settings")?.type, "creative-settings");
+  assert.equal(automationNodeDefinition("logic.prepare-creative-direction", 3)?.inputs.find((port) => port.id === "settings")?.type, "data", "current custom controls must accept user-authored settings objects instead of only the built-in TikTok choice shape");
   const graph = createDefaultTikTokWorkflowGraph();
   assert.equal(graph.nodes.find((node) => node.id === "tiktok-source")?.version, 2);
   assert.ok(graph.nodes.filter((node) => node.type === "logic.condition").every((node) => node.version === 2));
   assert.equal(graph.nodes.find((node) => node.id === "generate-images")?.version, 2);
-  assert.equal(graph.nodes.find((node) => node.id === "prepare-user-direction")?.version, 2);
-  assert.equal(graph.nodes.find((node) => node.id === "interpret-user-direction")?.version, 2);
-  assert.equal(graph.nodes.find((node) => node.id === "resolve-user-direction")?.version, 3);
+  assert.equal(graph.nodes.find((node) => node.id === "validate-slide-plans")?.version, 2);
+  assert.equal(graph.nodes.find((node) => node.id === "prepare-user-direction")?.version, 3);
+  assert.equal(graph.nodes.find((node) => node.id === "interpret-user-direction")?.version, 3);
+  assert.equal(graph.nodes.find((node) => node.id === "resolve-user-direction")?.version, 4);
 });
 
 test("every AI node exposes the full Canvas Assistant model catalogue", () => {
@@ -252,6 +264,15 @@ test("deployment slot names cannot collide across secret kinds or workflow bindi
 test("every node exposed in the editor has a server runtime handler", () => {
   const handlers = coreAutomationNodeHandlers();
   assert.deepEqual(automationNodeDefinitions().filter((definition) => !handlers[`${definition.type}@${definition.version}`]).map((definition) => `${definition.type}@${definition.version}`), []);
+  assert.deepEqual(Object.keys(handlers).filter((key) => {
+    const separator = key.lastIndexOf("@");
+    return separator < 1 || !automationNodeDefinition(key.slice(0, separator), Number(key.slice(separator + 1)));
+  }), [], "every current or historical handler must have a registered versioned definition");
+});
+
+test("the settings-to-runtime audit covers every current node version", () => {
+  const missing = automationNodeDefinitions().map((definition) => `${definition.type}@${definition.version}`).filter((key) => !nodeContractAudit.includes(`\`${key}\``));
+  assert.deepEqual(missing, []);
 });
 
 test("validation rejects incompatible ports and cycles", () => {

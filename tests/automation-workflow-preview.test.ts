@@ -98,6 +98,19 @@ test("written direction exposes the smart resolver before its runtime choice is 
   assert.equal(result.activeNodeIds.has("direction-conflict"), true, "the visible conflict path remains possible until the parser returns a deterministic contract");
 });
 
+test("path preview uses the same versioned defaults as execution", () => {
+  const graph = createDefaultTikTokWorkflowGraph();
+  const choices = graph.nodes.find((node) => node.id === "creative-settings")!;
+  choices.config = {};
+  choices.bindings = {};
+  const result = previewAutomationPaths(graph, { "tiktok-source.source": "source-1" });
+  assert.equal(result.activeNodeIds.has("rebuild-concept-mode"), true, "default mode must be concept");
+  assert.equal(result.activeNodeIds.has("allow-wardrobe-change"), true, "default wardrobe choice must allow change");
+  assert.equal(result.activeNodeIds.has("allow-location-change"), true, "default location choice must allow change");
+  assert.equal(result.activeNodeIds.has("decompose-copy"), true, "default text strategy must use rewrite");
+  assert.equal(result.activeNodeIds.has("direction-conflict"), false, "the default empty direction must not invent an unresolved parser branch");
+});
+
 test("condition preview compares nested JSON values without Node-only runtime APIs", () => {
   const data = { selection: { roles: ["source", { type: "identity", required: true }] } };
   const equal = evaluateAutomationConditionV2(data, {

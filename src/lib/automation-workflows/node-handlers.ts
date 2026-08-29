@@ -27,7 +27,7 @@ import { parseAutomationImageGenerationRequestBatch } from "./image-generation-r
 import { parseAutomationGeneratedAssets } from "./port-contracts";
 import { automationMergeInputs } from "./registry";
 import { parseAutomationTriggerEnvelope } from "./trigger-envelope";
-import { automationValueAtPath } from "./value-path";
+import { automationValueAtPath, automationValuePathIssues } from "./value-path";
 import { printAutomationValue, renderAutomationTemplate } from "./template-contract";
 import {
   AUTOMATION_CREATIVE_DIRECTION_SYSTEM_PROMPT,
@@ -439,7 +439,11 @@ async function interpretCreativeDirectionV1(execution: AutomationNodeExecution) 
   return { analysis: response.result, __usage: response.__usage };
 }
 
-async function prepareCreativeDirectionV2(execution: AutomationNodeExecution) {
+function creativeDirectionPathsOverlap(first: string, second: string) {
+  return first === second || first.startsWith(`${second}.`) || second.startsWith(`${first}.`);
+}
+
+async function prepareCreativeDirectionCurrent(execution: AutomationNodeExecution, contractVersion: 3 | 4) {
   const settings = recordValue(execution.inputs.settings);
   const source = recordValue(execution.inputs.source);
   const rawControls = jsonSetting(execution, "controls");
@@ -454,6 +458,17 @@ async function prepareCreativeDirectionV2(execution: AutomationNodeExecution) {
   const briefPath = stringSetting(execution, "briefPath").trim();
   const policyPath = stringSetting(execution, "policyPath").trim();
   if (!briefPath || !policyPath) throw nodeConfigurationError(execution, !briefPath ? "briefPath" : "policyPath", "a non-empty field path");
+  const resultPath = contractVersion === 4 ? stringSetting(execution, "resultPath").trim() : "direction";
+  for (const [fieldId, path] of [["briefPath", briefPath], ["policyPath", policyPath], ["resultPath", resultPath]] as const) {
+    const issues = automationValuePathIssues(path);
+    if (issues.length) throw nodeConfigurationError(execution, fieldId, `a safe field path (${issues.join("; ")})`);
+  }
+  if (contractVersion === 4) {
+    const protectedPaths = [briefPath, policyPath, ...controls.map((control) => control.path)];
+    const overlap = protectedPaths.find((path) => creativeDirectionPathsOverlap(resultPath, path));
+    if (overlap) throw new Error(`Creative direction result path “${resultPath}” overlaps protected setting path “${overlap}”`);
+    if (automationValueAtPath(settings, resultPath) !== undefined) throw new Error(`Creative direction result path “${resultPath}” already contains a value; choose an empty destination`);
+  }
   const rawBriefValue = automationValueAtPath(settings, briefPath);
   const rawPolicyValue = automationValueAtPath(settings, policyPath);
   if (typeof rawBriefValue !== "string") throw new Error(`Creative direction field “${briefPath}” must contain text`);
@@ -483,12 +498,13 @@ async function prepareCreativeDirectionV2(execution: AutomationNodeExecution) {
   const maxRequirements = integerSetting(execution, "maxRequirements");
   if (!Number.isSafeInteger(maxRequirements) || maxRequirements < 1 || maxRequirements > 80) throw new Error("Prepare creative direction requires a visible requirement limit between 1 and 80");
   return { request: {
-    contractVersion: 3,
+    contractVersion,
     briefHash: contentHash(rawBrief),
     rawBrief,
     clauses,
     settings: structuredClone(settings),
     settingsNodeId,
+    ...(contractVersion === 4 ? { briefPath, policyPath, resultPath } : {}),
     controls,
     requirementCategories: automationCreativeRequirementOptions(rawCategories),
     requirementPlacements: automationCreativeRequirementOptions(rawPlacements),
@@ -500,7 +516,15 @@ async function prepareCreativeDirectionV2(execution: AutomationNodeExecution) {
   } };
 }
 
-function creativeDirectionRequestIssues(request: Record<string, unknown>) {
+async function prepareCreativeDirectionV2(execution: AutomationNodeExecution) {
+  return await prepareCreativeDirectionCurrent(execution, 3);
+}
+
+async function prepareCreativeDirectionV3(execution: AutomationNodeExecution) {
+  return await prepareCreativeDirectionCurrent(execution, 4);
+}
+
+function creativeDirectionRequestIssues(request: Record<string, unknown>, expectedVersion: 3 | 4 = 3) {
   const issues: string[] = [];
   const rawBrief = typeof request.rawBrief === "string" ? request.rawBrief : null;
   const clauses = Array.isArray(request.clauses) ? request.clauses.map(recordValue) : [];
@@ -508,7 +532,7 @@ function creativeDirectionRequestIssues(request: Record<string, unknown>) {
   const minConfidence = request.minConfidence;
   const maxRequirements = request.maxRequirements;
   const sourceIndexes = Array.isArray(request.sourceSlideIndexes) ? request.sourceSlideIndexes : [];
-  if (request.contractVersion !== 3) issues.push("contractVersion must equal 3");
+  if (request.contractVersion !== expectedVersion) issues.push(`contractVersion must equal ${expectedVersion}`);
   if (rawBrief === null) issues.push("rawBrief must be text");
   else if (contentHash(rawBrief) !== request.briefHash) issues.push("briefHash must match rawBrief");
   if (rawBrief === "" && clauses.length !== 0) issues.push("an empty comment must have no evidence span");
@@ -518,6 +542,7 @@ function creativeDirectionRequestIssues(request: Record<string, unknown>) {
     || clauses[0].start !== 0
     || clauses[0].end !== rawBrief.length)) issues.push("the complete comment must be preserved as one exact evidence span");
   if (!request.settings || typeof request.settings !== "object" || Array.isArray(request.settings)) issues.push("settings must be an object");
+  if (typeof request.settingsNodeId !== "string" || request.settingsNodeId.length > 240) issues.push("settingsNodeId must be text no longer than 240 characters");
   const controlIssues = automationCreativeControlIssues(request.controls);
   if (controlIssues.length) issues.push(`controls are invalid: ${controlIssues.join("; ")}`);
   const taxonomyIssues = [
@@ -530,6 +555,22 @@ function creativeDirectionRequestIssues(request: Record<string, unknown>) {
   if (typeof maxRequirements !== "number" || !Number.isSafeInteger(maxRequirements) || maxRequirements < 1 || maxRequirements > 80) issues.push("maxRequirements must be between 1 and 80");
   if (typeof request.allowIgnoredClauses !== "boolean") issues.push("allowIgnoredClauses must be boolean");
   if (!sourceIndexes.length || sourceIndexes.some((index) => typeof index !== "number" || !Number.isSafeInteger(index) || index < 1) || new Set(sourceIndexes).size !== sourceIndexes.length) issues.push("sourceSlideIndexes must contain unique positive integers");
+  if (expectedVersion === 4) {
+    const pathEntries = [["briefPath", request.briefPath], ["policyPath", request.policyPath], ["resultPath", request.resultPath]] as const;
+    for (const [field, value] of pathEntries) {
+      if (typeof value !== "string") issues.push(`${field} must be a safe field path`);
+      else {
+        const pathIssues = automationValuePathIssues(value);
+        if (pathIssues.length) issues.push(`${field} is invalid: ${pathIssues.join("; ")}`);
+      }
+    }
+    if (typeof request.resultPath === "string") {
+      const protectedPaths = [request.briefPath, request.policyPath, ...automationCreativeControls(request.controls).map((control) => control.path)].filter((value): value is string => typeof value === "string");
+      const overlap = protectedPaths.find((path) => creativeDirectionPathsOverlap(request.resultPath as string, path));
+      if (overlap) issues.push(`resultPath overlaps protected setting path ${overlap}`);
+      if (request.settings && typeof request.settings === "object" && !Array.isArray(request.settings) && automationValueAtPath(request.settings, request.resultPath) !== undefined) issues.push("resultPath must point to an empty destination");
+    }
+  }
   return issues;
 }
 
@@ -571,9 +612,9 @@ function creativeDirectionAnalysisSchemaV2(request: Record<string, unknown>) {
   };
 }
 
-async function interpretCreativeDirectionV2(execution: AutomationNodeExecution) {
+async function interpretCreativeDirectionCurrent(execution: AutomationNodeExecution, expectedVersion: 3 | 4) {
   const request = recordValue(execution.inputs.request);
-  const requestIssues = creativeDirectionRequestIssues(request);
+  const requestIssues = creativeDirectionRequestIssues(request, expectedVersion);
   if (requestIssues.length) throw new Error(`Creative direction request is invalid: ${requestIssues.join("; ")}`);
   if (Array.isArray(request.clauses) && request.clauses.length === 0) {
     return { analysis: { briefHash: request.briefHash, clauseResults: [] }, __usage: { chargedCredits: 0, costUsd: 0 }, __skipped: "No written creative direction" };
@@ -598,13 +639,21 @@ async function interpretCreativeDirectionV2(execution: AutomationNodeExecution) 
   return { analysis: response.result, __usage: response.__usage };
 }
 
+async function interpretCreativeDirectionV2(execution: AutomationNodeExecution) {
+  return await interpretCreativeDirectionCurrent(execution, 3);
+}
+
+async function interpretCreativeDirectionV3(execution: AutomationNodeExecution) {
+  return await interpretCreativeDirectionCurrent(execution, 4);
+}
+
 function selectedControlOption(settings: Record<string, unknown>, control: AutomationCreativeControl) {
   return control.options.find((option) => isDeepStrictEqual(option.value, automationValueAtPath(settings, control.path)));
 }
 
-async function resolveCreativeDirectionV3(execution: AutomationNodeExecution) {
+async function resolveCreativeDirection(execution: AutomationNodeExecution, expectedVersion: 2 | 3 | 4) {
   const request = recordValue(execution.inputs.request);
-  const legacyContract = request.contractVersion === 2;
+  const legacyContract = expectedVersion === 2;
   const direction = recordValue(execution.inputs.analysis);
   const settings = recordValue(request.settings);
   const rawBrief = String(request.rawBrief || "");
@@ -617,11 +666,14 @@ async function resolveCreativeDirectionV3(execution: AutomationNodeExecution) {
   const sourceIndexes = new Set(Array.isArray(request.sourceSlideIndexes) ? request.sourceSlideIndexes.map(Number) : []);
   const minConfidence = Number(request.minConfidence);
   const maxRequirements = Number(request.maxRequirements);
-  const requestIssues = legacyContract
-    ? contentHash(rawBrief) === request.briefHash ? [] : ["briefHash must match rawBrief"]
-    : creativeDirectionRequestIssues(request);
+  const briefField = expectedVersion === 4 && typeof request.briefPath === "string" ? request.briefPath : "creativeBrief";
+  const requestIssues = request.contractVersion !== expectedVersion
+    ? [`contractVersion must equal ${expectedVersion}`]
+    : legacyContract
+      ? contentHash(rawBrief) === request.briefHash ? [] : ["briefHash must match rawBrief"]
+      : creativeDirectionRequestIssues(request, expectedVersion);
   if (requestIssues.length || direction.briefHash !== request.briefHash) conflicts.push({
-    field: "creativeBrief",
+    field: briefField,
     kind: "contract-mismatch",
     message: requestIssues.length
       ? `The prepared creative-direction request is invalid: ${requestIssues.join("; ")}`
@@ -630,7 +682,7 @@ async function resolveCreativeDirectionV3(execution: AutomationNodeExecution) {
   const results = Array.isArray(direction.clauseResults) ? direction.clauseResults.map(recordValue) : [];
   const resultIds = results.map((result) => String(result.clauseId || ""));
   if (resultIds.length !== clauses.length || new Set(resultIds).size !== resultIds.length || resultIds.some((id) => !clausesById.has(id)) || clauses.some((clause) => !resultIds.includes(String(clause.id)))) {
-    conflicts.push({ field: "creativeBrief", kind: "coverage", message: "The model did not classify every creative-direction clause exactly once" });
+    conflicts.push({ field: briefField, kind: "coverage", message: "The model did not classify every creative-direction clause exactly once" });
   }
   const groupedRequests = new Map<string, Map<string, string[]>>();
   const normalizedRequests: Array<{ controlId: string; optionId: string; evidence: string; clauseId: string; confidence: number }> = [];
@@ -649,7 +701,7 @@ async function resolveCreativeDirectionV3(execution: AutomationNodeExecution) {
     const clauseText = String(clause?.text || "");
     const items = Array.isArray(result.items) ? result.items.map(recordValue) : [];
     const evidenceRanges: Array<[number, number]> = [];
-    if (!items.length) conflicts.push({ field: "creativeBrief", kind: "coverage", message: `${clauseId || "A clause"} has no classification` });
+    if (!items.length) conflicts.push({ field: briefField, kind: "coverage", message: `${clauseId || "A clause"} has no classification` });
     for (const item of items) {
       const kind = String(item.kind || "");
       const evidence = String(item.evidence || "");
@@ -657,24 +709,24 @@ async function resolveCreativeDirectionV3(execution: AutomationNodeExecution) {
       const evidenceEnd = Number(item.evidenceEnd);
       const confidence = Number(item.confidence);
       const itemKey = `${clauseId}\u0000${kind}\u0000${evidence}\u0000${String(item.controlId || "")}\u0000${String(item.optionId || "")}\u0000${String(item.instruction || "")}`;
-      if (seenItems.has(itemKey)) conflicts.push({ field: "creativeBrief", kind: "duplicate", message: `${clauseId} contains a duplicated interpretation`, evidence });
+      if (seenItems.has(itemKey)) conflicts.push({ field: briefField, kind: "duplicate", message: `${clauseId} contains a duplicated interpretation`, evidence });
       seenItems.add(itemKey);
       if (!clauseText || !evidence || !Number.isSafeInteger(evidenceStart) || !Number.isSafeInteger(evidenceEnd) || evidenceStart < 0 || evidenceEnd <= evidenceStart || clauseText.slice(evidenceStart, evidenceEnd) !== evidence) {
-        conflicts.push({ field: "creativeBrief", kind: "unsupported-evidence", message: `${clauseId} contains evidence that is not an exact phrase from the comment`, evidence });
+        conflicts.push({ field: briefField, kind: "unsupported-evidence", message: `${clauseId} contains evidence that is not an exact phrase from the comment`, evidence });
         continue;
       }
       evidenceRanges.push([evidenceStart, evidenceEnd]);
       if (!Number.isFinite(confidence) || !Number.isFinite(minConfidence) || confidence < minConfidence) {
-        conflicts.push({ field: "creativeBrief", kind: "low-confidence", message: `${clauseId} could not be interpreted with enough confidence`, evidence, confidence });
+        conflicts.push({ field: briefField, kind: "low-confidence", message: `${clauseId} could not be interpreted with enough confidence`, evidence, confidence });
         continue;
       }
       if (kind === "ambiguity") {
-        conflicts.push({ field: "creativeBrief", kind: "ambiguous", message: String(item.reason || "The comment needs clarification"), clauseId, evidence });
+        conflicts.push({ field: briefField, kind: "ambiguous", message: String(item.reason || "The comment needs clarification"), clauseId, evidence });
         continue;
       }
       if (kind === "ignore") {
         const reason = String(item.reason || "").trim();
-        if (!request.allowIgnoredClauses || !reason) conflicts.push({ field: "creativeBrief", kind: "ignored-clause", message: `${clauseId} was not converted into an actionable instruction`, evidence });
+        if (!request.allowIgnoredClauses || !reason) conflicts.push({ field: briefField, kind: "ignored-clause", message: `${clauseId} was not converted into an actionable instruction`, evidence });
         else ignored.push({ clauseId, evidence, reason });
         continue;
       }
@@ -684,7 +736,7 @@ async function resolveCreativeDirectionV3(execution: AutomationNodeExecution) {
         const control = controlsById.get(controlId);
         const option = control?.options.find((candidate) => candidate.id === optionId);
         if (!control || !option || String(item.instruction || "") || String(item.category || "") || String(item.placement || "") || (Array.isArray(item.slideIndexes) && item.slideIndexes.length)) {
-          conflicts.push({ field: "creativeBrief", kind: "invalid-choice", message: `${clauseId} requests a choice that is not configured in this node`, evidence, controlId, optionId });
+          conflicts.push({ field: briefField, kind: "invalid-choice", message: `${clauseId} requests a choice that is not configured in this node`, evidence, controlId, optionId });
           continue;
         }
         normalizedRequests.push({ controlId, optionId, evidence, clauseId, confidence });
@@ -694,7 +746,7 @@ async function resolveCreativeDirectionV3(execution: AutomationNodeExecution) {
         continue;
       }
       if (kind !== "requirement") {
-        conflicts.push({ field: "creativeBrief", kind: "invalid-kind", message: `${clauseId} uses an unsupported interpretation kind`, evidence });
+        conflicts.push({ field: briefField, kind: "invalid-kind", message: `${clauseId} uses an unsupported interpretation kind`, evidence });
         continue;
       }
       const instruction = String(item.instruction || "").trim();
@@ -703,11 +755,11 @@ async function resolveCreativeDirectionV3(execution: AutomationNodeExecution) {
       const slideIndexes = Array.isArray(item.slideIndexes) ? [...new Set(item.slideIndexes.map(Number))] : [];
       const invalidIndexes = slideIndexes.filter((slideIndex) => !Number.isSafeInteger(slideIndex) || !sourceIndexes.has(slideIndex));
       if (instruction !== evidence || String(item.controlId || "") || String(item.optionId || "") || !allowedCategories.has(category) || !allowedPlacements.has(placement)) {
-        conflicts.push({ field: "creativeBrief", kind: "invalid-requirement", message: `${clauseId} contains an incomplete creative requirement`, evidence });
+        conflicts.push({ field: briefField, kind: "invalid-requirement", message: `${clauseId} contains an incomplete creative requirement`, evidence });
         continue;
       }
       if (invalidIndexes.length) {
-        conflicts.push({ field: "creativeBrief", kind: "invalid-slide", message: `${clauseId} refers to unavailable slide ${invalidIndexes.join(", ")}`, evidence });
+        conflicts.push({ field: briefField, kind: "invalid-slide", message: `${clauseId} refers to unavailable slide ${invalidIndexes.join(", ")}`, evidence });
         continue;
       }
       const id = `creative-direction-${contentHash(`${clauseId}\u0000${evidence}\u0000${instruction}\u0000${placement}\u0000${slideIndexes.join(",")}`).slice(0, 16)}`;
@@ -720,7 +772,7 @@ async function resolveCreativeDirectionV3(execution: AutomationNodeExecution) {
         const end = start + match[0].length;
         return !ignoredJoinersV1.has(match[0].toLocaleLowerCase()) && !evidenceRanges.some(([rangeStart, rangeEnd]) => start >= rangeStart && end <= rangeEnd);
       }).map((match) => match[0]);
-      if (uncoveredWords.length) conflicts.push({ field: "creativeBrief", kind: "incomplete-coverage", message: `${clauseId} left meaningful words unclassified: ${uncoveredWords.join(", ")}` });
+      if (uncoveredWords.length) conflicts.push({ field: briefField, kind: "incomplete-coverage", message: `${clauseId} left meaningful words unclassified: ${uncoveredWords.join(", ")}` });
     } else {
       const uncoveredCharacters = [...clauseText.matchAll(/\S/gu)].filter((match) => {
         const start = match.index || 0;
@@ -728,14 +780,14 @@ async function resolveCreativeDirectionV3(execution: AutomationNodeExecution) {
         return !evidenceRanges.some(([rangeStart, rangeEnd]) => start >= rangeStart && end <= rangeEnd);
       });
       if (uncoveredCharacters.length) conflicts.push({
-        field: "creativeBrief",
+        field: briefField,
         kind: "incomplete-coverage",
         message: `${clauseId} left ${uncoveredCharacters.length} non-whitespace character${uncoveredCharacters.length === 1 ? "" : "s"} outside its exact evidence ranges`,
         firstUncoveredOffset: uncoveredCharacters[0]?.index ?? 0,
       });
     }
   }
-  if (Number.isSafeInteger(maxRequirements) && requirements.length > maxRequirements) conflicts.push({ field: "creativeBrief", kind: "too-many-requirements", message: `Creative direction produced ${requirements.length} requirements, above the configured limit` });
+  if (Number.isSafeInteger(maxRequirements) && requirements.length > maxRequirements) conflicts.push({ field: briefField, kind: "too-many-requirements", message: `Creative direction produced ${requirements.length} requirements, above the configured limit` });
   const resolved = structuredClone(settings);
   const appliedOverrides: Array<{ controlId: string; previousOptionId: string; nextOptionId: string; evidence: string[] }> = [];
   for (const [controlId, values] of groupedRequests) {
@@ -775,26 +827,33 @@ async function resolveCreativeDirectionV3(execution: AutomationNodeExecution) {
     appliedOverrides.push({ controlId, previousOptionId: selected.id, nextOptionId: next.id, evidence });
   }
   if (conflicts.length) return creativeDirectionConflict(settings, direction, conflicts);
-  return {
-    resolved: {
-      ...resolved,
-      creativeBrief: rawBrief,
-      direction: {
-        raw: rawBrief,
-        contractVersion: legacyContract ? 2 : 3,
-        briefHash: request.briefHash,
-        clauses,
-        requirements,
-        choiceRequests: normalizedRequests,
-        appliedOverrides,
-        ignored,
-      },
-    },
+  const resolution = {
+    raw: rawBrief,
+    contractVersion: expectedVersion,
+    briefHash: request.briefHash,
+    clauses,
+    requirements,
+    choiceRequests: normalizedRequests,
+    appliedOverrides,
+    ignored,
   };
+  if (expectedVersion === 4) {
+    setSafePath(resolved, String(request.resultPath), resolution);
+    return { resolved };
+  }
+  return { resolved: { ...resolved, creativeBrief: rawBrief, direction: resolution } };
 }
 
 async function resolveCreativeDirectionV2(execution: AutomationNodeExecution) {
-  return await resolveCreativeDirectionV3(execution);
+  return await resolveCreativeDirection(execution, 2);
+}
+
+async function resolveCreativeDirectionV3(execution: AutomationNodeExecution) {
+  return await resolveCreativeDirection(execution, 3);
+}
+
+async function resolveCreativeDirectionV4(execution: AutomationNodeExecution) {
+  return await resolveCreativeDirection(execution, 4);
 }
 
 async function workflowData(execution: AutomationNodeExecution) {
@@ -1395,6 +1454,11 @@ async function validateSlidePlans(execution: AutomationNodeExecution) {
   return { plans: { schemaVersion: 2, contract, decisions, slides } };
 }
 
+async function validateSlidePlansV2(execution: AutomationNodeExecution) {
+  enumSetting(execution, "profile", ["recreate-tiktok-v1"] as const);
+  return await validateSlidePlans(execution);
+}
+
 async function assertAutomationRunActive(runId: string, expectedWorkerId?: string, deadlineAt?: string) {
   if (deadlineAt && Date.now() >= new Date(deadlineAt).getTime()) throw Object.assign(new Error("Workflow exceeded its configured timeout"), { code: "WORKFLOW_TIMEOUT" });
   const row = await db.prepare("SELECT status, worker_id FROM automation_runs WHERE id = ?").get(runId) as { status: string; worker_id: string | null } | undefined;
@@ -1694,7 +1758,7 @@ async function addToCanvas(execution: AutomationNodeExecution) {
           `SLIDE ${String(index).padStart(2, "0")} · ${item.presentation.role.toUpperCase()}`,
           item.prompt,
           overlay ? `On-screen text: ${overlay}` : "On-screen text: none",
-          `Identity references: ${references}`,
+          `Attached references: ${references}`,
         ].join("\n");
       }).join("\n\n").slice(0, 29_500);
       const note: FrameNode = {
@@ -1809,6 +1873,7 @@ export function coreAutomationNodeHandlers(): AutomationNodeHandlers {
     "ai.structured-task@2": aiTask,
     "ai.interpret-creative-direction@1": interpretCreativeDirectionV1,
     "ai.interpret-creative-direction@2": interpretCreativeDirectionV2,
+    "ai.interpret-creative-direction@3": interpretCreativeDirectionV3,
     "logic.transform@1": transform,
     "logic.select-one@1": selectOne,
     "logic.retry-gate@1": retryGate,
@@ -1817,14 +1882,17 @@ export function coreAutomationNodeHandlers(): AutomationNodeHandlers {
     "logic.condition@2": conditionV2,
     "logic.prepare-creative-direction@1": prepareCreativeDirectionV1,
     "logic.prepare-creative-direction@2": prepareCreativeDirectionV2,
+    "logic.prepare-creative-direction@3": prepareCreativeDirectionV3,
     "logic.resolve-creative-direction@2": resolveCreativeDirectionV2,
     "logic.resolve-creative-direction@3": resolveCreativeDirectionV3,
+    "logic.resolve-creative-direction@4": resolveCreativeDirectionV4,
     "logic.merge@1": merge,
     "logic.limit-batch@1": limitBatch,
     "logic.run-subworkflow@1": runSubworkflow,
     "logic.map-subworkflow@1": mapSubworkflow,
     "integration.http-request@1": httpRequest,
     "logic.validate-slide-plans@1": validateSlidePlans,
+    "logic.validate-slide-plans@2": validateSlidePlansV2,
     "logic.prepare-slideshow-image-requests@1": prepareSlideshowImageRequests,
     "generation.image@1": imageGenerationV1,
     "generation.image@2": imageGenerationV2,

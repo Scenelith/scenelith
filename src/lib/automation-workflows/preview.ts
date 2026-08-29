@@ -3,16 +3,21 @@ import { automationNodeDefinition, automationNodeInputPorts } from "./registry";
 import type { AutomationNode, AutomationWorkflowGraph } from "./types";
 import { topologicalAutomationNodeIds } from "./validation";
 import { automationCreativeControls, automationCreativeRequirementOptions, splitAutomationCreativeDirection } from "./creative-direction-contract";
+import { automationValueAtPath } from "./value-path";
 
 const unknownPreviewValue = Symbol("automation-preview-value");
 
 function resolvedPreviewConfig(node: AutomationNode, runtimeInputs: Record<string, unknown>) {
-  const config = { ...node.config };
+  const definition = automationNodeDefinition(node.type, node.version);
+  const config: Record<string, unknown> = {
+    ...Object.fromEntries((definition?.fields || []).filter((field) => field.defaultValue !== undefined).map((field) => [field.id, structuredClone(field.defaultValue)])),
+    ...structuredClone(node.config),
+  };
   for (const [fieldId, binding] of Object.entries(node.bindings)) {
+    const runtimeKey = `${node.id}.${fieldId}`;
     if (binding.mode === "ask-on-run") {
-      const runtimeKey = `${node.id}.${fieldId}`;
-      config[fieldId] = runtimeKey in runtimeInputs ? runtimeInputs[runtimeKey] : binding.value ?? config[fieldId];
-    } else if (binding.value !== undefined) config[fieldId] = binding.value;
+      if (runtimeKey in runtimeInputs) config[fieldId] = runtimeInputs[runtimeKey];
+    } else if (binding.mode === "fixed" && binding.value !== undefined) config[fieldId] = binding.value;
   }
   return config;
 }
@@ -50,12 +55,12 @@ export function previewAutomationPaths(graph: AutomationWorkflowGraph, runtimeIn
 
     if (node.type === "input.creative-settings") {
       outputs.set(`${node.id}:settings`, {
-        mode: String(config.mode || "concept"),
-        newOutfit: config.newOutfit !== false,
-        newLocation: config.newLocation !== false,
-        textStrategy: String(config.textStrategy || "rewrite"),
-        creativeBrief: String(config.creativeBrief || ""),
-        creativeDirectionPolicy: String(config.creativeDirectionPolicy || "propose"),
+        mode: config.mode,
+        newOutfit: config.newOutfit,
+        newLocation: config.newLocation,
+        textStrategy: config.textStrategy,
+        creativeBrief: config.creativeBrief,
+        creativeDirectionPolicy: config.creativeDirectionPolicy,
       });
       continue;
     }
@@ -64,18 +69,32 @@ export function previewAutomationPaths(graph: AutomationWorkflowGraph, runtimeIn
       const settings = settingsEdges[0] ? edgeValue(settingsEdges[0].source, settingsEdges[0].sourcePort) : undefined;
       if (settings && settings !== unknownPreviewValue && typeof settings === "object" && !Array.isArray(settings)) {
         const record = settings as Record<string, unknown>;
-        const rawBrief = String(record[String(config.briefPath || "creativeBrief")] || "").trim();
+        const briefPath = String(config.briefPath ?? "").trim();
+        const policyPath = String(config.policyPath ?? "").trim();
+        const resultPath = node.version >= 3 ? String(config.resultPath ?? "").trim() : "direction";
+        const rawBriefValue = automationValueAtPath(record, briefPath);
+        const policyValue = automationValueAtPath(record, policyPath);
+        if (typeof rawBriefValue !== "string" || typeof policyValue !== "string") {
+          outputs.set(`${node.id}:request`, unknownPreviewValue);
+          continue;
+        }
+        const rawBrief = rawBriefValue.trim();
         outputs.set(`${node.id}:request`, {
-          contractVersion: 3,
+          contractVersion: node.version >= 3 ? 4 : node.version >= 2 ? 3 : 2,
           briefHash: rawBrief ? "preview-nonempty" : "preview-empty",
           rawBrief,
           clauses: splitAutomationCreativeDirection(rawBrief),
           settings: record,
+          settingsNodeId: settingsEdges[0]?.source || "",
+          ...(node.version >= 3 ? { briefPath, policyPath, resultPath } : {}),
           controls: automationCreativeControls(config.controls),
           requirementCategories: automationCreativeRequirementOptions(config.requirementCategories),
           requirementPlacements: automationCreativeRequirementOptions(config.requirementPlacements),
-          policy: String(record[String(config.policyPath || "creativeDirectionPolicy")] || "propose"),
+          policy: policyValue,
           sourceSlideIndexes: [],
+          minConfidence: config.minConfidence,
+          maxRequirements: config.maxRequirements,
+          allowIgnoredClauses: config.allowIgnoredClauses,
         });
       } else outputs.set(`${node.id}:request`, unknownPreviewValue);
       continue;

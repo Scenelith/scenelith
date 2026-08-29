@@ -228,17 +228,17 @@ export function createDefaultTikTokWorkflowGraph(): AutomationWorkflowGraph {
     }),
     node({
       id: "prepare-user-direction", type: "logic.prepare-creative-direction", name: "Prepare the written direction", description: "Freeze the exact comment, configured choices and real source indexes into one typed request.", groupId: "group-adapt", position: { x: 760, y: 648 },
-      version: 2,
-      config: { controls: DEFAULT_AUTOMATION_CREATIVE_CONTROLS, requirementCategories: DEFAULT_AUTOMATION_REQUIREMENT_CATEGORIES, requirementPlacements: DEFAULT_AUTOMATION_REQUIREMENT_PLACEMENTS, briefPath: "creativeBrief", policyPath: "creativeDirectionPolicy", minConfidence: 0.9, maxBriefCharacters: 5000, maxRequirements: 24, allowIgnoredClauses: false },
+      version: 3,
+      config: { controls: DEFAULT_AUTOMATION_CREATIVE_CONTROLS, requirementCategories: DEFAULT_AUTOMATION_REQUIREMENT_CATEGORIES, requirementPlacements: DEFAULT_AUTOMATION_REQUIREMENT_PLACEMENTS, briefPath: "creativeBrief", policyPath: "creativeDirectionPolicy", resultPath: "direction", minConfidence: 0.9, maxBriefCharacters: 5000, maxRequirements: 24, allowIgnoredClauses: false },
     }),
     node({
       id: "interpret-user-direction", type: "ai.interpret-creative-direction", name: "Understand the written direction", description: "Classify the complete comment and return exact evidence spans under the visible creative-direction contract.", groupId: "group-adapt", position: { x: 1090, y: 648 },
-      version: 2,
+      version: 3,
       config: { modelId: defaultPlanningModel, systemInstructions: AUTOMATION_CREATIVE_DIRECTION_SYSTEM_PROMPT, taskInstructions: AUTOMATION_CREATIVE_DIRECTION_USER_PROMPT, creativity: "consistent", maxAttempts: 2, fallbackModelId: "", failureMode: "stop" },
       bindings: {},
     }),
     node({
-      id: "resolve-user-direction", type: "logic.resolve-creative-direction", version: 3, name: "Resolve comments against choices", description: "Verify exact evidence and coverage, then apply only policy-approved configured choices.", groupId: "group-adapt", position: { x: 1420, y: 648 },
+      id: "resolve-user-direction", type: "logic.resolve-creative-direction", version: 4, name: "Resolve comments against choices", description: "Verify exact evidence and coverage, change only configured choices, then write evidence to the configured direction path.", groupId: "group-adapt", position: { x: 1420, y: 648 },
     }),
     node({
       id: "direction-conflict", type: "output.finish", name: "Stop for conflicting direction", description: "Show the exact settings and phrases that need clarification before generation.", groupId: "group-adapt", position: { x: 2080, y: 824 },
@@ -426,8 +426,8 @@ export function createDefaultTikTokWorkflowGraph(): AutomationWorkflowGraph {
       config: { maxRetries: 2, feedbackPath: "plans" },
     }),
     node({
-      id: "validate-slide-plans", type: "logic.validate-slide-plans", name: "Check every immutable requirement", description: "Pass valid plans forward or send the exact deterministic error to the visible repair path.", position: { x: 6370, y: 296 },
-      config: { maxSlides: 40, failureMode: "error-output" },
+      id: "validate-slide-plans", type: "logic.validate-slide-plans", version: 2, name: "Check every immutable requirement", description: "Enforce the visible Recreate TikTok v1 contract or send the exact deterministic error to the repair path.", position: { x: 6370, y: 296 },
+      config: { profile: "recreate-tiktok-v1", maxSlides: 40, failureMode: "error-output" },
     }),
     aiNode({
       id: "repair-validation", name: "Repair validator failures", description: "Fix only the exact contract failures returned by the deterministic validator.", groupId: null, position: { x: 6700, y: 560 },

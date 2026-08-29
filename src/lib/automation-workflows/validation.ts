@@ -268,6 +268,7 @@ export function validateAutomationWorkflowGraph(value: unknown): AutomationValid
     if (node.type === "logic.prepare-creative-direction") {
       validatePathSetting("briefPath", false);
       validatePathSetting("policyPath", false);
+      if (node.version >= 3) validatePathSetting("resultPath", false);
     }
     if (node.type === "ai.structured-task") {
       validateTemplates("userPrompt", effectiveSetting("userPrompt"), ["primary", "context", "identity", "connected", "run", "trigger"]);
