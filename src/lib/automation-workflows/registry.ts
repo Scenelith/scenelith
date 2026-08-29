@@ -235,6 +235,9 @@ const helpOverridesByVersion: Record<string, Partial<AutomationNodeHelp>> = {
   "logic.condition@1": {
     technicalNotes: ["Historical predicate contract: yes/no rules use JavaScript truthiness, so non-empty text such as false counts as yes.", "Use version 2 for exact booleans and typed empty rules. The original incoming value is still passed unchanged."],
   },
+  "logic.condition@2": {
+    technicalNotes: ["Historical typed-boolean contract: true and false are exact, while numeric comparisons still accept numeric text and text containment stringifies its comparison value.", "Use version 3 when every comparison must preserve its JSON type."],
+  },
   "logic.prepare-creative-direction@1": {
     whenToUse: "Use this only to execute a saved historical creative-direction graph that uses request contract v2.",
     setup: ["Connect the historical Creative choices and TikTok Source inputs.", "Review its fixed field paths, clause limits and configured controls.", "Connect the same request to Interpret v1 and Resolve v2."],
@@ -272,6 +275,9 @@ const helpOverridesByVersion: Record<string, Partial<AutomationNodeHelp>> = {
   },
   "output.add-to-canvas@1": {
     technicalNotes: ["Historical output accepts both historical and canonical generated-assets shapes and normalizes missing legacy reference labels and effective settings.", "Use version 2 when the workflow must reject non-canonical generator output. Preview/test runs remain side-effect free."],
+  },
+  "output.add-to-canvas@2": {
+    technicalNotes: ["Historical canonical output creates one plan note and truncates its text at the Canvas note limit.", "Use version 3 to preserve the complete plan across as many bounded Canvas notes as required."],
   },
 };
 
@@ -442,6 +448,22 @@ const rawDefinitions: Array<Omit<AutomationNodeDefinition, "help">> = [
         { value: "less-than", label: "Is less than" },
       ] },
       { id: "compareValue", label: "Compare with", placeholder: "Example: approved, 10, or true", kind: "value", defaultValue: null, description: "Type ordinary text, a number, true, false, or leave it empty.", visibleWhen: { fieldId: "operator", values: ["equals", "not-equals", "contains", "greater-than", "less-than"] } },
+    ],
+  },
+  {
+    type: "logic.condition", version: 3, title: "Choose a path", description: "Checks one explicit JSON-typed rule without silently converting text, numbers or booleans.", example: "If review status equals true, generate images. Otherwise, send the plan back for repair.", category: "logic", icon: "condition", accent: "amber", retrySafe: true,
+    inputs: [{ id: "data", label: "Information to check", type: "data", required: true }], outputs: [
+      { id: "yes", label: "Rule matches", type: "data", required: true }, { id: "no", label: "Rule does not match", type: "data", required: true },
+    ], fields: [
+      { id: "path", label: "What should be checked?", placeholder: "Example: review.approved", kind: "text", defaultValue: "", description: "Enter the field name from the incoming result. Leave empty to check the whole result." },
+      { id: "operator", label: "What must match?", description: "True, false and numeric rules require values of the same real JSON type; text is never converted for comparison.", kind: "select", defaultValue: "is-true", options: [
+        { value: "is-true", label: "Is exactly true" }, { value: "is-false", label: "Is exactly false" },
+        { value: "is-empty", label: "Is empty" }, { value: "is-not-empty", label: "Is not empty" },
+        { value: "equals", label: "Equals this value" }, { value: "not-equals", label: "Does not equal this value" },
+        { value: "contains", label: "Contains this value" }, { value: "greater-than", label: "Is greater than" },
+        { value: "less-than", label: "Is less than" },
+      ] },
+      { id: "compareValue", label: "Compare with", placeholder: "Example: approved, 10, or true", kind: "value", defaultValue: null, description: "Use text for text rules, a real number for numeric rules, or true/false for boolean equality.", visibleWhen: { fieldId: "operator", values: ["equals", "not-equals", "contains", "greater-than", "less-than"] } },
     ],
   },
   {
@@ -715,6 +737,15 @@ const rawDefinitions: Array<Omit<AutomationNodeDefinition, "help">> = [
         { value: "beside-source", label: "Beside the source" }, { value: "new-row", label: "On a new row" },
       ] },
       { id: "includePlanNote", label: "Show the plan beside the images", description: "Adds a note explaining what each generated slide was meant to do.", kind: "boolean", defaultValue: true },
+    ],
+  },
+  {
+    type: "output.add-to-canvas", version: 3, title: "Add slideshow to canvas", description: "Places canonical generated-image results on the content canvas and preserves the complete plan without silent truncation.", example: "Put the new slideshow beside its TikTok source so you can compare, edit and continue from either version.", category: "output", icon: "canvas", accent: "mint", terminal: true,
+    inputs: [{ id: "assets", label: "Created images", type: "generated-assets", required: true }, { id: "source", label: "Original source", type: "tiktok-source" }], outputs: [{ id: "result", label: "Canvas update receipt", type: "canvas-result", connectable: false }], fields: [
+      { id: "layout", label: "Where should results appear?", description: "Choose whether to keep the new branch beside the source or place it on a separate row.", kind: "select", defaultValue: "beside-source", options: [
+        { value: "beside-source", label: "Beside the source" }, { value: "new-row", label: "On a new row" },
+      ] },
+      { id: "includePlanNote", label: "Show the plan beside the images", description: "Adds as many bounded notes as needed to preserve the complete generation plan.", kind: "boolean", defaultValue: true },
     ],
   },
   {

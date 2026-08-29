@@ -96,13 +96,13 @@
         "path": "Selects one exact existing nested field and fails when it is missing."
       }
     },
-    "logic.condition@2": {
+    "logic.condition@3": {
       "inputs": ["data"],
       "outputs": ["yes", "no"],
       "settings": {
         "path": "Selects the exact field inspected by the condition.",
-        "operator": "Selects one explicit typed comparison and never evaluates code.",
-        "compareValue": "Supplies the exact comparison value for operators that require one."
+        "operator": "Selects one explicit JSON-typed comparison and never evaluates code or coerces values.",
+        "compareValue": "Supplies the exact same-type comparison value for operators that require one."
       }
     },
     "logic.prepare-creative-direction@3": {
@@ -217,12 +217,12 @@
       "outputs": ["requests"],
       "settings": {}
     },
-    "output.add-to-canvas@2": {
+    "output.add-to-canvas@3": {
       "inputs": ["assets", "source"],
       "outputs": ["result"],
       "settings": {
         "layout": "Selects beside-source or new-row placement.",
-        "includePlanNote": "Selects whether an editable plan note is created beside generated images."
+        "includePlanNote": "Selects whether the complete plan is preserved across bounded editable notes beside generated images."
       }
     },
     "output.finish@1": {

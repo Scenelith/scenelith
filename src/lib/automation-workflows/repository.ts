@@ -116,7 +116,7 @@ function applySystemModelSelection(graph: AutomationWorkflowGraph, defaults: Aut
     try {
       const provider = generationProvider();
       const model = provider.getModel(selectedModelId);
-      if (model.mediaType !== "image" || model.maxReferences < 1) return false;
+      if (model.id !== selectedModelId || model.mediaType !== "image" || model.maxReferences < 1) return false;
       if (modelId) {
         const resolution = String(configurable.node.config.resolution || "");
         const ratio = String(configurable.node.config.ratio || "");

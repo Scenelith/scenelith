@@ -20,7 +20,7 @@ import { AUTOMATION_IDENTITY_REFERENCE_INSTRUCTION, AUTOMATION_NO_TEXT_AVOID_INS
 import { generationProvider, intelligenceProvider } from "@/platform/providers/registry";
 import type { FrameEdge, FrameNode, ProjectGraph } from "@/lib/types";
 import { validateAutomationStructuredValue } from "./json-schema";
-import { evaluateAutomationCondition, evaluateAutomationConditionV2 } from "./condition";
+import { evaluateAutomationCondition, evaluateAutomationConditionV2, evaluateAutomationConditionV3 } from "./condition";
 import { resolveAutomationCredential } from "./credentials";
 import { parseAutomationSlidePlanCollection, parseAutomationSlidePlanSet, type AutomationSlidePlan } from "./slide-plan-contract";
 import { parseAutomationImageGenerationRequestBatch } from "./image-generation-request";
@@ -1070,6 +1070,11 @@ async function conditionV2(execution: AutomationNodeExecution) {
   return match ? { yes: execution.inputs.data } : { no: execution.inputs.data };
 }
 
+async function conditionV3(execution: AutomationNodeExecution) {
+  const match = evaluateAutomationConditionV3(execution.inputs.data, execution.config);
+  return match ? { yes: execution.inputs.data } : { no: execution.inputs.data };
+}
+
 async function merge(execution: AutomationNodeExecution) {
   const configuredInputs = automationMergeInputs({ ...execution.node, config: execution.config });
   const branches = configuredInputs.map((input) => execution.inputs[input.id]).filter((value) => value !== undefined);
@@ -1550,6 +1555,12 @@ async function imageGenerationV2(execution: AutomationNodeExecution) {
   const modelId = stringSetting(execution, "modelId").trim();
   if (!modelId) throw new Error("Choose an image model before running this step");
   const model = provider.getModel(modelId);
+  if (model.id !== modelId) {
+    throw Object.assign(new Error(`${modelId} is a retired image model id; choose ${model.label} explicitly before running this step`), {
+      code: "MODEL_SELECTION_RETIRED",
+      automationRetryable: false,
+    });
+  }
   if (model.mediaType !== "image") throw new Error(`${model.label} is not an image model`);
   const allowedResolutions = provider.allowedResolutions(model, false);
   const requestedResolution = stringSetting(execution, "resolution").trim();
@@ -1724,7 +1735,38 @@ async function imageGenerationV1(execution: AutomationNodeExecution) {
   });
 }
 
-async function addToCanvas(execution: AutomationNodeExecution) {
+type AutomationCanvasPlanItem = {
+  prompt: string;
+  referenceAssetIds: string[];
+  presentation: { index?: number | null; role: string; overlayText: string };
+};
+
+export function buildAutomationCanvasPlanNotes(items: AutomationCanvasPlanItem[]) {
+  const planText = items.map((item, position) => {
+    const index = item.presentation.index ?? position + 1;
+    const overlay = item.presentation.overlayText.trim();
+    return [
+      `SLIDE ${String(index).padStart(2, "0")} · ${item.presentation.role.toUpperCase()}`,
+      item.prompt,
+      overlay ? `On-screen text: ${overlay}` : "On-screen text: none",
+      `Attached references: ${item.referenceAssetIds.length}`,
+    ].join("\n");
+  }).join("\n\n");
+  const chunks: string[] = [];
+  for (let offset = 0; offset < planText.length;) {
+    let end = Math.min(planText.length, offset + 29_000);
+    if (end < planText.length && /[\uD800-\uDBFF]/.test(planText[end - 1] || "")) end -= 1;
+    chunks.push(planText.slice(offset, end));
+    offset = end;
+  }
+  if (!chunks.length) chunks.push("");
+  return chunks.map((chunk, index) => {
+    const part = chunks.length > 1 ? ` Part ${index + 1} of ${chunks.length}.` : "";
+    return `This note records what the workflow asked the image model to create.${part}\n\n${chunk}`;
+  });
+}
+
+async function addToCanvas(execution: AutomationNodeExecution, planNoteMode: "truncate" | "preserve" = "truncate") {
   const assets = parseAutomationGeneratedAssets(execution.inputs.assets);
   const items = assets.items;
   const failures = assets.failures;
@@ -1744,6 +1786,10 @@ async function addToCanvas(execution: AutomationNodeExecution) {
   }
 
   const noteId = `automation-note-${execution.context.runId}`;
+  const fullPlanNotes = includePlanNote && planNoteMode === "preserve" ? buildAutomationCanvasPlanNotes(items) : [];
+  const noteIds = includePlanNote
+    ? (planNoteMode === "preserve" ? fullPlanNotes.map((_, index) => index === 0 ? noteId : `${noteId}-${index + 1}`) : [noteId])
+    : [];
   const nodeIds = items.map((item) => item.nodeId);
   const mutate = process.env.COLLABORATION_INTERNAL_SECRET
     ? (mutator: (graph: ProjectGraph) => ProjectGraph) => mutateCollaborativeGraph(execution.context.projectId, mutator)
@@ -1751,7 +1797,7 @@ async function addToCanvas(execution: AutomationNodeExecution) {
   await assertAutomationRunActive(execution.context.runId, execution.context.workerId, execution.context.deadlineAt);
   await mutate((graph) => {
     const existingIds = new Set((graph.nodes || []).map((node) => node.id));
-    if (nodeIds.every((id) => existingIds.has(id))) return graph;
+    if ([...nodeIds, ...noteIds].every((id) => existingIds.has(id))) return graph;
     const nodes = [...(graph.nodes || [])];
     const edges = [...(graph.edges || [])];
     const minX = nodes.length ? Math.min(...nodes.map((node) => node.position.x)) : 0;
@@ -1763,7 +1809,7 @@ async function addToCanvas(execution: AutomationNodeExecution) {
         ? sourceNode.position.x + Number(sourceNode.measured?.width || sourceNode.width || sourceNode.data.nodeWidth || 580) + 180
         : minX;
     const blockTop = layout === "new-row" ? bottom + 180 : sourceNode?.position.y || bottom + 180;
-    if (includePlanNote && !existingIds.has(noteId)) {
+    if (includePlanNote && planNoteMode === "truncate" && !existingIds.has(noteId)) {
       const planText = items.map((item, position) => {
         const index = item.presentation.index ?? position + 1;
         const overlay = item.presentation.overlayText.trim();
@@ -1794,6 +1840,31 @@ async function addToCanvas(execution: AutomationNodeExecution) {
       };
       nodes.push(note);
       existingIds.add(noteId);
+    }
+    if (includePlanNote && planNoteMode === "preserve") {
+      for (const [noteIndex, noteText] of fullPlanNotes.entries()) {
+        const currentNoteId = noteIds[noteIndex];
+        if (existingIds.has(currentNoteId)) continue;
+        const note: FrameNode = {
+          id: currentNoteId,
+          type: "frameNode",
+          position: { x: blockLeft, y: blockTop + noteIndex * 1_040 },
+          data: {
+            kind: "note",
+            title: fullPlanNotes.length > 1 ? `Slideshow generation plan · ${noteIndex + 1}/${fullPlanNotes.length}` : "Slideshow generation plan",
+            subtitle: `${items.length} generated slide${items.length === 1 ? "" : "s"}`,
+            noteColor: "gray",
+            noteText,
+            nodeWidth: 420,
+            nodeHeight: Math.min(980, Math.max(420, 250 + items.length * 150)),
+            automationKind: "tiktok-slideshow",
+            automationSourceNodeId: sourceNodeId,
+            automationRunId: execution.context.runId,
+          },
+        };
+        nodes.push(note);
+        existingIds.add(currentNoteId);
+      }
     }
     for (const [position, item] of items.entries()) {
       const index = item.presentation.index ?? position + 1;
@@ -1872,6 +1943,11 @@ async function addToCanvasV2(execution: AutomationNodeExecution) {
   return await addToCanvas(execution);
 }
 
+async function addToCanvasV3(execution: AutomationNodeExecution) {
+  parseCurrentAutomationGeneratedAssets(execution.inputs.assets);
+  return await addToCanvas(execution, "preserve");
+}
+
 async function finishWorkflow(execution: AutomationNodeExecution) {
   const renderedMessage = renderAutomationTemplate(stringSetting(execution, "message"), { data: execution.inputs.data, run: execution.context.runtimeInputs, trigger: execution.context.triggerPayload });
   const message = printAutomationValue(renderedMessage);
@@ -1900,6 +1976,7 @@ export function coreAutomationNodeHandlers(): AutomationNodeHandlers {
     "logic.select-path@1": selectPath,
     "logic.condition@1": condition,
     "logic.condition@2": conditionV2,
+    "logic.condition@3": conditionV3,
     "logic.prepare-creative-direction@1": prepareCreativeDirectionV1,
     "logic.prepare-creative-direction@2": prepareCreativeDirectionV2,
     "logic.prepare-creative-direction@3": prepareCreativeDirectionV3,
@@ -1918,6 +1995,7 @@ export function coreAutomationNodeHandlers(): AutomationNodeHandlers {
     "generation.image@2": imageGenerationV2,
     "output.add-to-canvas@1": addToCanvas,
     "output.add-to-canvas@2": addToCanvasV2,
+    "output.add-to-canvas@3": addToCanvasV3,
     "output.finish@1": finishWorkflow,
   };
 }

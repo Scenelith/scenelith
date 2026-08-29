@@ -245,7 +245,7 @@ export function createDefaultTikTokWorkflowGraph(): AutomationWorkflowGraph {
       config: { outcome: "failed", message: "{{ data.message }}" },
     }),
     node({
-      id: "adaptation-mode-choice", type: "logic.condition", version: 2, name: "Rebuild the concept?", description: "Choose the real workflow path that matches the selected adaptation mode.", groupId: "group-adapt", position: { x: 760, y: 384 },
+      id: "adaptation-mode-choice", type: "logic.condition", version: 3, name: "Rebuild the concept?", description: "Choose the real workflow path that matches the selected adaptation mode.", groupId: "group-adapt", position: { x: 760, y: 384 },
       config: { path: "mode", operator: "equals", compareValue: "concept" },
     }),
     node({
@@ -260,7 +260,7 @@ export function createDefaultTikTokWorkflowGraph(): AutomationWorkflowGraph {
       id: "select-adaptation", type: "logic.select-one", name: "Continue with the selected adaptation", description: "Pass the one active adaptation contract forward without asking AI to reconstruct the choice.", groupId: "group-adapt", position: { x: 1420, y: 472 },
     }),
     node({
-      id: "wardrobe-choice", type: "logic.condition", version: 2, name: "Change the wardrobe or subjects?", description: "Route the brief through Change or Preserve using the resolved run choice.", groupId: "group-adapt", position: { x: 1090, y: 1088 },
+      id: "wardrobe-choice", type: "logic.condition", version: 3, name: "Change the wardrobe or subjects?", description: "Route the brief through Change or Preserve using the resolved run choice.", groupId: "group-adapt", position: { x: 1090, y: 1088 },
       config: { path: "newOutfit", operator: "equals", compareValue: true },
     }),
     node({
@@ -275,7 +275,7 @@ export function createDefaultTikTokWorkflowGraph(): AutomationWorkflowGraph {
       id: "select-wardrobe", type: "logic.select-one", name: "Continue with the selected wardrobe rule", description: "Pass the one active wardrobe contract forward unchanged.", groupId: "group-adapt", position: { x: 1750, y: 1088 },
     }),
     node({
-      id: "location-choice", type: "logic.condition", version: 2, name: "Change the location?", description: "Route the brief through Change or Preserve using the resolved run choice.", groupId: "group-adapt", position: { x: 1090, y: 1440 },
+      id: "location-choice", type: "logic.condition", version: 3, name: "Change the location?", description: "Route the brief through Change or Preserve using the resolved run choice.", groupId: "group-adapt", position: { x: 1090, y: 1440 },
       config: { path: "newLocation", operator: "equals", compareValue: true },
     }),
     node({
@@ -299,11 +299,11 @@ export function createDefaultTikTokWorkflowGraph(): AutomationWorkflowGraph {
       ] },
     }),
     node({
-      id: "text-route-rewrite", type: "logic.condition", version: 2, name: "Write new on-screen text?", description: "Choose the rewrite route when the run asks for new wording.", groupId: "group-adapt", position: { x: 1750, y: 120 },
+      id: "text-route-rewrite", type: "logic.condition", version: 3, name: "Write new on-screen text?", description: "Choose the rewrite route when the run asks for new wording.", groupId: "group-adapt", position: { x: 1750, y: 120 },
       config: { path: "textStrategy", operator: "equals", compareValue: "rewrite" },
     }),
     node({
-      id: "text-route-keep", type: "logic.condition", version: 2, name: "Keep the original text?", description: "Choose Keep when selected; otherwise continue to Remove.", groupId: "group-adapt", position: { x: 2080, y: 472 },
+      id: "text-route-keep", type: "logic.condition", version: 3, name: "Keep the original text?", description: "Choose Keep when selected; otherwise continue to Remove.", groupId: "group-adapt", position: { x: 2080, y: 472 },
       config: { path: "textStrategy", operator: "equals", compareValue: "keep" },
     }),
     aiNode({
@@ -404,7 +404,7 @@ export function createDefaultTikTokWorkflowGraph(): AutomationWorkflowGraph {
       ] },
     }),
     node({
-      id: "review-passed", type: "logic.condition", version: 2, name: "Did every requirement pass?", description: "Use approved plans unchanged or repair only when QA found an actual failure.", groupId: "group-review", position: { x: 5050, y: 296 },
+      id: "review-passed", type: "logic.condition", version: 3, name: "Did every requirement pass?", description: "Use approved plans unchanged or repair only when QA found an actual failure.", groupId: "group-review", position: { x: 5050, y: 296 },
       config: { path: "review.passed", operator: "equals", compareValue: true },
     }),
     node({
@@ -456,7 +456,7 @@ export function createDefaultTikTokWorkflowGraph(): AutomationWorkflowGraph {
       config: { modelId: "nano-banana-2", ratio: "9:16", resolution: "1K", concurrency: 3, maxAttempts: 3, partialFailure: "keep-successful" },
     }),
     node({
-      id: "add-to-canvas", type: "output.add-to-canvas", version: 2, name: "Add slideshow to canvas", description: "Place canonical generated images beside their source without legacy format guessing.", position: { x: 7360, y: 120 },
+      id: "add-to-canvas", type: "output.add-to-canvas", version: 3, name: "Add slideshow to canvas", description: "Place canonical generated images beside their source and preserve the complete plan without truncation.", position: { x: 7360, y: 120 },
       config: { layout: "beside-source", includePlanNote: true },
     }),
   ];

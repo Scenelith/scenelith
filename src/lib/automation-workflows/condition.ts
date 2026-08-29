@@ -18,7 +18,7 @@ function equalAutomationValue(left: unknown, right: unknown): boolean {
       && equalAutomationValue(leftRecord[key], rightRecord[key]));
 }
 
-function evaluateCondition(data: unknown, config: Record<string, unknown>, booleanOperators: readonly string[]) {
+function evaluateCondition(data: unknown, config: Record<string, unknown>, booleanOperators: readonly string[], strictComparisonTypes = false) {
   if (typeof config.path !== "string") throw Object.assign(new Error("Condition field path must be text"), { code: "NODE_CONFIGURATION_INVARIANT", automationRetryable: false });
   const path = config.path.trim();
   const value = automationValueAtPath(data, path);
@@ -40,6 +40,9 @@ function evaluateCondition(data: unknown, config: Record<string, unknown>, boole
   if (operator === "not-equals") return !equalAutomationValue(value, expected);
   if (operator === "contains") {
     if (expected === undefined || expected === null) throw Object.assign(new Error("Contains requires a comparison value"), { code: "CONDITION_COMPARISON_INVALID", automationRetryable: false });
+    if (strictComparisonTypes && typeof value === "string" && typeof expected !== "string") {
+      throw Object.assign(new Error("Text containment requires a text comparison value"), { code: "CONDITION_COMPARISON_INVALID", automationRetryable: false });
+    }
     return typeof value === "string"
     ? value.includes(String(expected))
     : Array.isArray(value) && value.some((item) => equalAutomationValue(item, expected));
@@ -47,6 +50,9 @@ function evaluateCondition(data: unknown, config: Record<string, unknown>, boole
   if (operator === "greater-than" || operator === "less-than") {
     if (expected === undefined || expected === null || expected === "" || value === undefined || value === null || value === "") {
       throw Object.assign(new Error("Numeric comparison requires both values"), { code: "CONDITION_COMPARISON_INVALID", automationRetryable: false });
+    }
+    if (strictComparisonTypes && (typeof value !== "number" || typeof expected !== "number")) {
+      throw Object.assign(new Error("Numeric comparison requires actual number values"), { code: "CONDITION_COMPARISON_INVALID", automationRetryable: false });
     }
     const left = Number(value);
     const right = Number(expected);
@@ -64,4 +70,9 @@ export function evaluateAutomationCondition(data: unknown, config: Record<string
 /** Current @2 semantics. Boolean routes never coerce text or numbers. */
 export function evaluateAutomationConditionV2(data: unknown, config: Record<string, unknown>) {
   return evaluateCondition(data, config, ["is-true", "is-false"]);
+}
+
+/** Current @3 semantics. Boolean, text and numeric comparisons preserve JSON types. */
+export function evaluateAutomationConditionV3(data: unknown, config: Record<string, unknown>) {
+  return evaluateCondition(data, config, ["is-true", "is-false"], true);
 }

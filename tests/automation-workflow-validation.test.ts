@@ -3,7 +3,7 @@ import { readFileSync } from "node:fs";
 import { test } from "node:test";
 import { assistantModels } from "../src/lib/assistant-models";
 import { createDefaultTikTokWorkflowGraph } from "../src/lib/automation-workflows/default-tiktok";
-import { coreAutomationNodeHandlers, isUnsafeAutomationHttpAddress } from "../src/lib/automation-workflows/node-handlers";
+import { buildAutomationCanvasPlanNotes, coreAutomationNodeHandlers, isUnsafeAutomationHttpAddress } from "../src/lib/automation-workflows/node-handlers";
 import { automationNodeDefinition, automationNodeDefinitions } from "../src/lib/automation-workflows/registry";
 import { automationRunInputFields, topologicalAutomationNodeIds, validateAutomationConnection, validateAutomationRunInputs, validateAutomationWorkflowGraph } from "../src/lib/automation-workflows/validation";
 
@@ -57,13 +57,13 @@ test("current node catalogue exposes latest semantics while historical handlers 
   const definitions = automationNodeDefinitions();
   assert.equal(definitions.find((definition) => definition.type === "input.tiktok-source")?.version, 2);
   assert.equal(definitions.find((definition) => definition.type === "input.identity")?.version, 2);
-  assert.equal(definitions.find((definition) => definition.type === "logic.condition")?.version, 2);
+  assert.equal(definitions.find((definition) => definition.type === "logic.condition")?.version, 3);
   assert.equal(definitions.find((definition) => definition.type === "generation.image")?.version, 2);
   assert.equal(definitions.find((definition) => definition.type === "logic.validate-slide-plans")?.version, 2);
   assert.equal(definitions.find((definition) => definition.type === "logic.prepare-creative-direction")?.version, 3);
   assert.equal(definitions.find((definition) => definition.type === "ai.interpret-creative-direction")?.version, 3);
   assert.equal(definitions.find((definition) => definition.type === "logic.resolve-creative-direction")?.version, 4);
-  assert.equal(definitions.find((definition) => definition.type === "output.add-to-canvas")?.version, 2);
+  assert.equal(definitions.find((definition) => definition.type === "output.add-to-canvas")?.version, 3);
   const handlers = coreAutomationNodeHandlers();
   assert.equal(typeof handlers["input.tiktok-source@1"], "function");
   assert.equal(typeof handlers["input.tiktok-source@2"], "function");
@@ -71,6 +71,7 @@ test("current node catalogue exposes latest semantics while historical handlers 
   assert.equal(typeof handlers["input.identity@2"], "function");
   assert.equal(typeof handlers["logic.condition@1"], "function");
   assert.equal(typeof handlers["logic.condition@2"], "function");
+  assert.equal(typeof handlers["logic.condition@3"], "function");
   assert.equal(typeof handlers["generation.image@1"], "function");
   assert.equal(typeof handlers["generation.image@2"], "function");
   assert.equal(typeof handlers["logic.validate-slide-plans@1"], "function");
@@ -86,6 +87,7 @@ test("current node catalogue exposes latest semantics while historical handlers 
   assert.equal(typeof handlers["logic.resolve-creative-direction@4"], "function");
   assert.equal(typeof handlers["output.add-to-canvas@1"], "function");
   assert.equal(typeof handlers["output.add-to-canvas@2"], "function");
+  assert.equal(typeof handlers["output.add-to-canvas@3"], "function");
   assert.deepEqual(automationNodeDefinition("generation.image", 1)?.inputs.map((port) => port.id), ["plans", "source", "identity", "references"]);
   assert.deepEqual(automationNodeDefinition("generation.image", 2)?.inputs.map((port) => port.id), ["requests"]);
   assert.equal(automationNodeDefinition("logic.prepare-creative-direction", 2)?.inputs.find((port) => port.id === "settings")?.type, "creative-settings");
@@ -93,13 +95,21 @@ test("current node catalogue exposes latest semantics while historical handlers 
   const graph = createDefaultTikTokWorkflowGraph();
   assert.equal(graph.nodes.find((node) => node.id === "tiktok-source")?.version, 2);
   assert.equal(graph.nodes.find((node) => node.id === "identity")?.version, 2);
-  assert.ok(graph.nodes.filter((node) => node.type === "logic.condition").every((node) => node.version === 2));
+  assert.ok(graph.nodes.filter((node) => node.type === "logic.condition").every((node) => node.version === 3));
   assert.equal(graph.nodes.find((node) => node.id === "generate-images")?.version, 2);
   assert.equal(graph.nodes.find((node) => node.id === "validate-slide-plans")?.version, 2);
   assert.equal(graph.nodes.find((node) => node.id === "prepare-user-direction")?.version, 3);
   assert.equal(graph.nodes.find((node) => node.id === "interpret-user-direction")?.version, 3);
   assert.equal(graph.nodes.find((node) => node.id === "resolve-user-direction")?.version, 4);
-  assert.equal(graph.nodes.find((node) => node.id === "add-to-canvas")?.version, 2);
+  assert.equal(graph.nodes.find((node) => node.id === "add-to-canvas")?.version, 3);
+});
+
+test("current canvas output preserves long plans across bounded notes", () => {
+  const prompt = `Start ${"x".repeat(58_000)} End`;
+  const notes = buildAutomationCanvasPlanNotes([{ prompt, referenceAssetIds: ["ref-1"], presentation: { index: 1, role: "scene", overlayText: "Caption" } }]);
+  assert.ok(notes.length >= 3);
+  assert.ok(notes.every((note) => note.length <= 30_000));
+  assert.equal(notes.map((note) => note.slice(note.indexOf("\n\n") + 2)).join(""), `SLIDE 01 · SCENE\n${prompt}\nOn-screen text: Caption\nAttached references: 1`);
 });
 
 test("every AI node exposes the full Canvas Assistant model catalogue", () => {
@@ -311,11 +321,13 @@ test("historical node guides describe their own version instead of current seman
   assert.match(automationNodeDefinition("input.identity", 1)!.help.technicalNotes!.join(" "), /empty assets list/);
   assert.match(automationNodeDefinition("input.identity", 2)!.help.technicalNotes!.join(" "), /applies only when no identity is selected/i);
   assert.match(automationNodeDefinition("logic.condition", 1)!.help.technicalNotes!.join(" "), /truthiness/);
+  assert.match(automationNodeDefinition("logic.condition", 2)!.help.technicalNotes!.join(" "), /numeric text/);
   assert.match(automationNodeDefinition("logic.prepare-creative-direction", 2)!.help.technicalNotes!.join(" "), /fixed direction field/);
   assert.match(automationNodeDefinition("logic.resolve-creative-direction", 3)!.help.technicalNotes!.join(" "), /fixed creativeBrief and direction fields/);
   assert.match(automationNodeDefinition("generation.image", 1)!.help.technicalNotes!.join(" "), /Historical combined adapter\/generator/);
   assert.match(automationNodeDefinition("output.add-to-canvas", 1)!.help.technicalNotes!.join(" "), /accepts both historical and canonical/);
-  assert.match(automationNodeDefinition("output.add-to-canvas", 2)!.description, /without guessing an older output format/);
+  assert.match(automationNodeDefinition("output.add-to-canvas", 2)!.help.technicalNotes!.join(" "), /truncates its text/);
+  assert.match(automationNodeDefinition("output.add-to-canvas", 3)!.description, /without silent truncation/);
 });
 
 test("validation rejects incompatible ports and cycles", () => {

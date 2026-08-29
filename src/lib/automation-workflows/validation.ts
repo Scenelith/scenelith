@@ -313,7 +313,8 @@ export function validateAutomationWorkflowGraph(value: unknown): AutomationValid
         && (comparison === undefined || comparison === null || comparison === "")) {
         issues.push(issue("MISSING_CONDITION_COMPARISON", `“${node.name}” needs a comparison value for this rule.`, { nodeId: node.id }));
       }
-      if (["greater-than", "less-than"].includes(String(operator)) && comparison !== undefined && comparison !== null && comparison !== "" && !Number.isFinite(Number(comparison))) {
+      if (["greater-than", "less-than"].includes(String(operator)) && comparison !== undefined && comparison !== null && comparison !== ""
+        && (node.version >= 3 ? typeof comparison !== "number" || !Number.isFinite(comparison) : !Number.isFinite(Number(comparison)))) {
         issues.push(issue("INVALID_CONDITION_COMPARISON", `“${node.name}” needs a numeric comparison value for this rule.`, { nodeId: node.id }));
       }
     }

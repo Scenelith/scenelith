@@ -7,7 +7,7 @@ import { AUTOMATION_IDENTITY_REFERENCE_INSTRUCTION, AUTOMATION_NO_TEXT_AVOID_INS
 import { validateAutomationStructuredValue } from "../src/lib/automation-workflows/json-schema";
 import { parseAutomationSlidePlanSet } from "../src/lib/automation-workflows/slide-plan-contract";
 import { parseAutomationImageGenerationRequestBatch } from "../src/lib/automation-workflows/image-generation-request";
-import type { AutomationWorkflowGraph } from "../src/lib/automation-workflows/types";
+import { DEFAULT_AUTOMATION_WORKFLOW_SETTINGS, type AutomationWorkflowGraph } from "../src/lib/automation-workflows/types";
 import { validateAutomationWorkflowGraph } from "../src/lib/automation-workflows/validation";
 import { DEFAULT_AUTOMATION_CREATIVE_CONTROLS, DEFAULT_AUTOMATION_REQUIREMENT_CATEGORIES, DEFAULT_AUTOMATION_REQUIREMENT_PLACEMENTS } from "../src/lib/automation-workflows/creative-direction-contract";
 import { parseAutomationGeneratedAssets, parseAutomationPortValue, parseCurrentAutomationGeneratedAssets } from "../src/lib/automation-workflows/port-contracts";
@@ -357,6 +357,26 @@ test("image generation accepts one canonical request contract and rejects altern
   assert.throws(() => parseAutomationImageGenerationRequestBatch({ images: exact.requests }), /supported contract/);
   assert.throws(() => parseAutomationImageGenerationRequestBatch({ schemaVersion: 1, requests: [{ ...exact.requests[0], references: [], referenceAssetIds: undefined }] }), /supported contract|does not match its port contract/);
   assert.throws(() => parseAutomationImageGenerationRequestBatch({ schemaVersion: 1, requests: [{ ...exact.requests[0], referenceRoles: [] }] }), /exactly one role and label/);
+});
+
+test("current image generation never aliases a retired model selection", async () => {
+  const handler = coreAutomationNodeHandlers()["generation.image@2"];
+  const node = {
+    id: "generate", type: "generation.image", version: 2, name: "Image Generator", description: "", position: { x: 0, y: 0 }, groupId: null,
+    config: {}, bindings: {}, disabled: false,
+  } as const;
+  await assert.rejects(handler({
+    node,
+    config: { modelId: "nano-banana-pro-flash", ratio: "9:16", resolution: "1K", partialFailure: "stop", concurrency: 1, maxAttempts: 1, failureMode: "stop" },
+    inputs: { requests: checkedImageRequestBatch() },
+    attempt: 1,
+    context: { ...context, policy: DEFAULT_AUTOMATION_WORKFLOW_SETTINGS },
+    outputsByNode: new Map<string, Record<string, unknown>>(),
+  }), (error: unknown) => {
+    assert.equal((error as { code?: string }).code, "MODEL_SELECTION_RETIRED");
+    assert.match((error as Error).message, /choose Nano Banana 2 explicitly/);
+    return true;
+  });
 });
 
 test("continue-one-path passes one result unchanged and rejects ambiguous joins", async () => {
@@ -787,7 +807,7 @@ test("default automation keeps every selected rule through an approved no-repair
         throw new Error(`Unexpected AI node ${node.id}`);
       },
       "generation.image@2": async ({ inputs }) => { generatedRequests = inputs.requests as Record<string, unknown>; return { assets: generatedAssetsValue() }; },
-      "output.add-to-canvas@2": async () => ({ result: canvasResultValue() }),
+      "output.add-to-canvas@3": async () => ({ result: canvasResultValue() }),
     },
   });
   assert.deepEqual(result.outputs.get("add-to-canvas")?.result, canvasResultValue());
@@ -970,6 +990,19 @@ test("condition v2 requires real booleans while historical v1 keeps its publishe
   assert.deepEqual(await handlers["logic.condition@2"]({ ...base, config: { path: "value", operator: "is-false" }, inputs: { data: { value: "false" } } }), { no: { value: "false" } });
   assert.deepEqual(await handlers["logic.condition@2"]({ ...base, config: { path: "value", operator: "is-false" }, inputs: { data: { value: false } } }), { yes: { value: false } });
   assert.deepEqual(await handlers["logic.condition@1"]({ ...base, node: { ...base.node, version: 1 }, config: { path: "value", operator: "is-truthy" }, inputs: { data: { value: "false" } } }), { yes: { value: "false" } });
+});
+
+test("condition v3 preserves number and text types instead of coercing them", async () => {
+  const handler = coreAutomationNodeHandlers()["logic.condition@3"];
+  const base = {
+    node: { id: "gate", type: "logic.condition", version: 3, name: "Gate", description: "", position: { x: 0, y: 0 }, groupId: null, config: {}, bindings: {}, disabled: false },
+    attempt: 1,
+    context,
+    outputsByNode: new Map<string, Record<string, unknown>>(),
+  };
+  assert.deepEqual(await handler({ ...base, config: { path: "score", operator: "greater-than", compareValue: 9 }, inputs: { data: { score: 12 } } }), { yes: { score: 12 } });
+  await assert.rejects(handler({ ...base, config: { path: "score", operator: "greater-than", compareValue: 9 }, inputs: { data: { score: "12" } } }), /actual number values/);
+  await assert.rejects(handler({ ...base, config: { path: "label", operator: "contains", compareValue: 12 }, inputs: { data: { label: "slide 12" } } }), /text comparison value/);
 });
 
 test("merge paths creates one stable named package from completed routes", async () => {

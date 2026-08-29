@@ -142,6 +142,11 @@ test("system templates allow only explicit primary model overrides and reset to 
     /does not support that model/i,
     "a system model override must not silently change the locked 1K quality",
   );
+  await assert.rejects(
+    repository.setSystemAutomationModelOverride({ userId: owner.userId, workflowId: system.id, nodeId: imageNode.id, modelId: "nano-banana-pro-flash" }),
+    /does not support that model/i,
+    "a retired model id must not silently alias to a different current model",
+  );
   const storedOverrides = await db.prepare("SELECT node_id, model_id FROM automation_system_model_overrides WHERE workflow_id = ? ORDER BY node_id")
     .all(system.id) as Array<{ node_id: string; model_id: string }>;
   assert.deepEqual(new Map(storedOverrides.map((row) => [row.node_id, row.model_id])), new Map([[aiNode.id, "qwen/qwen3.8-max"], [imageNode.id, "nano-banana-pro"]]));
