@@ -281,7 +281,7 @@ export type AutomationNodeDefinition = {
   example?: string;
   category: "trigger" | "input" | "ai" | "logic" | "integration" | "generation" | "output";
   icon: "play" | "source" | "identity" | "references" | "choices" | "inbox" | "ai" | "transform" | "select-one" | "select-path" | "condition" | "prepare-direction" | "interpret-direction" | "resolve-direction" | "limit" | "merge" | "workflow" | "repeat" | "retry" | "http" | "validate" | "generate" | "canvas" | "finish";
-  accent: "mint" | "amber" | "blue" | "rose" | "neutral";
+  accent: "mint" | "amber" | "blue" | "rose" | "image" | "neutral";
   inputs: AutomationNodePortDefinition[];
   outputs: AutomationNodePortDefinition[];
   fields: AutomationNodeFieldDefinition[];

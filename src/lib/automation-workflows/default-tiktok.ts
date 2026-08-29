@@ -183,7 +183,7 @@ Each card performs one visible job. A line starts at an output socket and ends a
 - **Check every immutable requirement** receives the one selected final plan set plus the original contract, source, optional identity and optional visual references. It verifies indexes, exact text operation, resolved choices, every accepted written requirement, reference roles and required JSON fields. It never writes or repairs the prompt; an incomplete model-authored contract stops here.
 
 ### 6. Create the assets and return them to the canvas
-- **Create the images** receives the validated plans, original source, optional identity and optional visual references. It serializes each slide into the same structured JSON fields used by Canvas Assistant and keeps successful results if one slide needs a retry.
+- **Image Generator** receives the validated plans, original source, optional identity and optional visual references. It serializes each slide into the same structured JSON fields used by Canvas Assistant and keeps successful results if one slide needs a retry.
 - **Add slideshow to canvas** receives the generated assets plus the original source. It places the finished branch beside the source so every result stays editable and connected.
 - The workflow ends here. The output is now regular canvas content; the guide note itself never runs and never enters the data flow.
 
@@ -444,9 +444,8 @@ export function createDefaultTikTokWorkflowGraph(): AutomationWorkflowGraph {
       config: { outcome: "failed", message: "{{ data.message }}" },
     }),
     node({
-      id: "generate-images", type: "generation.image", name: "Create the images", description: "Create the checked slides from the same structured JSON contract used by Canvas Assistant.", position: { x: 7030, y: 120 },
+      id: "generate-images", type: "generation.image", name: "Image Generator", description: "Create the checked slides from the same structured JSON contract used by Canvas Assistant.", position: { x: 7030, y: 120 },
       config: { modelId: "nano-banana-2", ratio: "9:16", resolution: "1K", concurrency: 3, maxAttempts: 3, partialFailure: "keep-successful" },
-      bindings: { modelId: { mode: "ask-on-run", label: "Image model", required: true } },
     }),
     node({
       id: "add-to-canvas", type: "output.add-to-canvas", name: "Add slideshow to canvas", description: "Place the finished images beside their source so you can keep editing them.", position: { x: 7360, y: 120 },

@@ -130,11 +130,13 @@ test("runtime panel fields come from ask-on-run bindings", () => {
     "creative-settings.creativeBrief",
     "creative-settings.creativeDirectionPolicy",
     "visual-references.references",
-    "generate-images.modelId",
   ]);
   const references = fields.find((field) => field.key === "visual-references.references");
   assert.equal(references?.valueType, "visual-references");
   assert.equal(references?.selectionLimit, 8);
+  const generator = createDefaultTikTokWorkflowGraph().nodes.find((node) => node.id === "generate-images");
+  assert.equal(generator?.config.modelId, "nano-banana-2");
+  assert.equal(generator?.bindings.modelId, undefined, "the image model belongs to the generator node settings, not the run panel");
 });
 
 test("runtime inputs are derived from node contracts rather than built-in node ids", () => {

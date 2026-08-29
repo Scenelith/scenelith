@@ -39,7 +39,7 @@ import {
   GitBranch,
   Globe2,
   History,
-  ImagePlus,
+  Image as ImageIcon,
   Images,
   Inbox,
   Layers3,
@@ -210,7 +210,7 @@ const automationNodeIcons = {
   retry: RotateCcw,
   http: Globe2,
   validate: ShieldCheck,
-  generate: ImagePlus,
+  generate: ImageIcon,
   canvas: Layers3,
   finish: Flag,
 } as const;

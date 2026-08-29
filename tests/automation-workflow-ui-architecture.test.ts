@@ -43,6 +43,17 @@ test("automation AI settings reuse the complete Canvas Assistant model catalogue
   assert.doesNotMatch(panelSource, /tiktokAutomationPlanningModels/);
 });
 
+test("automation image generation matches the Canvas Image Generator identity and owns its model setting", () => {
+  const definition = automationNodeDefinitions().find((candidate) => candidate.type === "generation.image");
+  assert.equal(definition?.title, "Image Generator");
+  assert.equal(definition?.icon, "generate");
+  assert.equal(definition?.accent, "image");
+  assert.match(workflowEditorSource, /generate: ImageIcon/);
+  assert.match(themeSource, /automation-flow-node\.is-image/);
+  assert.doesNotMatch(defaultWorkflowSource, /bindings: \{ modelId: \{ mode: "ask-on-run"/);
+  assert.match(defaultWorkflowSource, /config: \{ modelId: "nano-banana-2"/);
+});
+
 test("visual references are configured on their node from canvas, Library or Identities", () => {
   assert.match(referencePickerSource, />Canvas</);
   assert.match(referencePickerSource, /Library/);

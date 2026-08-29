@@ -563,7 +563,6 @@ test("default automation keeps every selected rule through an approved no-repair
         "creative-settings.creativeBrief": "Keep the exact source location.",
         "creative-settings.creativeDirectionPolicy": "auto-explicit",
         "visual-references.references": [],
-        "generate-images.modelId": "nano-banana-2",
       },
     },
     handlers: {

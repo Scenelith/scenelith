@@ -148,7 +148,7 @@ const helpByType: Record<string, AutomationNodeHelp> = {
   "logic.limit-batch": {
     whenToUse: "Use this immediately before a costly repeated operation to prevent an unexpectedly large list from consuming time or credits.",
     setup: ["Connect the list you want to protect.", "Set the largest acceptable item count.", "Connect Allowed items to the expensive step.", "Optionally connect Count summary to logging or review."],
-    exampleFlow: { before: "Planned slides", after: "Create slideshow images", explanation: "Normal lists continue; an oversized list stops with a clear limit error before generation begins." },
+    exampleFlow: { before: "Planned slides", after: "Image Generator", explanation: "Normal lists continue; an oversized list stops with a clear limit error before generation begins." },
     tips: ["Set the limit from the real product constraint, not an arbitrary high number.", "Use workflow-wide safety limits as a second line of protection."],
     technicalNotes: ["Validates array length before forwarding data.", "Outputs the unchanged allowed items plus a count summary."],
   },
@@ -183,7 +183,7 @@ const helpByType: Record<string, AutomationNodeHelp> = {
   "logic.validate-slide-plans": {
     whenToUse: "Use this as the final deterministic gate before image generation when the workflow creates structured slide plans.",
     setup: ["Connect the completed slide plans.", "Also connect the original slideshow and optional identity so indexes and reference IDs can be checked.", "Set the maximum number of slides.", "Connect Checked plans to image creation.", "When repair is allowed, set failure behavior to Send the error and connect the error to a repair step and bounded Retry gate."],
-    exampleFlow: { before: "Plan and review slides", after: "Create slideshow images", explanation: "Only complete, ordered and bounded plans reach the image provider." },
+    exampleFlow: { before: "Plan and review slides", after: "Image Generator", explanation: "Only complete, ordered and bounded plans reach the image provider." },
     tips: ["Keep this check even when an AI review step already approved the content.", "AI review judges quality; this step enforces the mechanical contract."],
     technicalNotes: ["Validates the model-authored slide-plan-set contract without adding, rewriting or repairing prompt fields.", "Rejects missing JSON fields, mismatched indexes, changed run choices, altered text operations, invalid reference roles, unavailable references and excessive slide counts. Model reference capacity is checked by generation because the model can be chosen at run time.", "Error output contains the exact deterministic failure and never substitutes a fallback plan."],
   },
@@ -447,14 +447,14 @@ const rawDefinitions: Array<Omit<AutomationNodeDefinition, "help">> = [
     ],
   },
   {
-    type: "generation.image", version: 1, title: "Create slideshow images", description: "Creates one image for every checked slideshow plan with its source composition and selected identity references.", example: "Create one 9:16 image for each reviewed slide plan while keeping the selected identity consistent.", category: "generation", icon: "generate", accent: "mint",
+    type: "generation.image", version: 1, title: "Image Generator", description: "Creates one image for every checked slideshow plan with its source composition and selected identity references.", example: "Create one 9:16 image for each reviewed slide plan while keeping the selected identity consistent.", category: "generation", icon: "generate", accent: "image",
     inputs: [
       { id: "plans", label: "Image plans", type: "slide-plan-set", required: true },
       { id: "source", label: "Original slideshow", type: "tiktok-source", required: true },
       { id: "identity", label: "Person or character", type: "identity" },
       { id: "references", label: "Visual references", type: "visual-references" },
     ], outputs: [{ id: "assets", label: "Created images", type: "generated-assets" }, { id: "error", label: "Error path", type: "error" }], fields: [
-      { id: "modelId", label: "Image model", description: "Choose the provider model that should create the images.", kind: "model", runtimeBindable: true, runtimeValueType: "image-model", modelCapability: "image", required: true },
+      { id: "modelId", label: "Image model", description: "Choose this step's image model independently from the same models available to Canvas Image Generator.", kind: "model", runtimeBindable: true, runtimeValueType: "image-model", modelCapability: "image", required: true },
       { id: "ratio", label: "Image shape", description: "Choose the format required by the destination, for example 9:16 for TikTok.", kind: "select", runtimeBindable: true, runtimeValueType: "aspect-ratio" },
       { id: "resolution", label: "Image quality", description: "Higher resolutions may cost more and take longer, depending on the provider.", kind: "select", runtimeBindable: true, runtimeValueType: "resolution" },
       { id: "partialFailure", label: "If only some images fail", description: "Keep the successful images, or stop without adding any result to the canvas.", kind: "select", defaultValue: "keep-successful", options: [
