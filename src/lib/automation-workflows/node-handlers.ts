@@ -234,6 +234,7 @@ async function prepareCreativeDirection(execution: AutomationNodeExecution) {
   const maximumBriefCharacters = Math.min(20_000, Math.max(100, Number(execution.config.maxBriefCharacters || 5_000)));
   if (rawBrief.length > maximumBriefCharacters) throw new Error(`Creative direction is ${rawBrief.length.toLocaleString()} characters; this step allows ${maximumBriefCharacters.toLocaleString()}`);
   const policy = normalizedCreativeDirectionPolicy(pathValue(settings, policyPath));
+  const settingsNodeId = execution.inputConnections?.settings?.[0]?.sourceNodeId || "";
   if (!new Set(["strict", "propose", "auto-explicit"]).has(policy)) throw new Error("Choose a supported creative direction policy");
   const sourceSlides = Array.isArray(source.slides) ? source.slides : [];
   const sourceSlideIndexes = sourceSlides.map((item, position) => Number(recordValue(item).index || position + 1));
@@ -251,6 +252,7 @@ async function prepareCreativeDirection(execution: AutomationNodeExecution) {
     rawBrief,
     clauses,
     settings: structuredClone(settings),
+    settingsNodeId,
     controls,
     policy,
     sourceSlideIndexes,
@@ -448,13 +450,19 @@ async function resolveCreativeDirection(execution: AutomationNodeExecution) {
     if (selected.id === next.id) continue;
     if (policy !== "auto-explicit") {
       conflicts.push({
+        controlId: control.id,
+        label: control.label,
         field: control.path,
         kind: policy === "propose" ? "proposed-change" : "choice-conflict",
         message: policy === "propose"
           ? `${control.label} would change from ${selected.label} to ${next.label}; confirm it in the visible choices and run again`
           : `${control.label} is ${selected.label}, while the comment requests ${next.label}`,
         selected: selected.id,
+        selectedLabel: selected.label,
         requested: next.id,
+        requestedLabel: next.label,
+        requestedValue: structuredClone(next.value),
+        runtimeInputKey: request.settingsNodeId ? `${String(request.settingsNodeId)}.${control.path}` : "",
         evidence,
       });
       continue;

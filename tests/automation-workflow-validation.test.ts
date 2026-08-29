@@ -35,22 +35,8 @@ test("default TikTok workflow exposes every AI request and validates", () => {
   assert.ok(graph.edges.filter((edge) => edge.role === "data").length >= 8);
   assert.ok(graph.edges.some((edge) => edge.role === "flow"));
 
-  const visualReferences = graph.nodes.find((node) => node.id === "visual-references");
-  assert.equal(visualReferences?.type, "input.visual-references");
-  assert.equal(visualReferences?.config.maxItems, 8);
-  assert.equal(visualReferences?.bindings.references.mode, "ask-on-run");
-  assert.deepEqual(
-    graph.edges
-      .filter((edge) => edge.source === "visual-references")
-      .map((edge) => `${edge.target}.${edge.targetPort}`)
-      .sort(),
-    [
-      "bind-references.context",
-      "generate-images.references",
-      "interpret-brief.context",
-      "validate-slide-plans.references",
-    ],
-  );
+  assert.equal(graph.nodes.some((node) => node.id === "visual-references"), false, "the base template must not expose an unused optional input");
+  assert.ok(automationNodeDefinitions().some((definition) => definition.type === "input.visual-references"), "custom workflows must still be able to add a visual-reference input");
 });
 
 test("the product exposes one current AI contract", () => {
@@ -129,11 +115,7 @@ test("runtime panel fields come from ask-on-run bindings", () => {
     "creative-settings.textStrategy",
     "creative-settings.creativeBrief",
     "creative-settings.creativeDirectionPolicy",
-    "visual-references.references",
   ]);
-  const references = fields.find((field) => field.key === "visual-references.references");
-  assert.equal(references?.valueType, "visual-references");
-  assert.equal(references?.selectionLimit, 8);
   const generator = createDefaultTikTokWorkflowGraph().nodes.find((node) => node.id === "generate-images");
   assert.equal(generator?.config.modelId, "nano-banana-2");
   assert.equal(generator?.bindings.modelId, undefined, "the image model belongs to the generator node settings, not the run panel");

@@ -333,6 +333,33 @@ test("creative direction accepts only complete exact-evidence contracts and conf
   assert.match(requirements[0].id, /^creative-direction-[a-f0-9]{16}$/);
   assert.equal(requirements[0].evidence, "make it warm");
 
+  const proposedPrepared = await prepare({
+    ...base,
+    node: { id: "prepare", type: "logic.prepare-creative-direction", version: 1, name: "Prepare", description: "", position: { x: 0, y: 0 }, groupId: null, config: {}, bindings: {}, disabled: false },
+    config: { controls: DEFAULT_AUTOMATION_CREATIVE_CONTROLS },
+    inputs: { settings: { ...settings, creativeBrief: "Keep the same room.", creativeDirectionPolicy: "propose" }, source: { slides: [{ index: 1 }] } },
+    inputConnections: { settings: [{ sourceNodeId: "choices", sourceNodeName: "Choices", sourcePort: "settings", targetPort: "settings", value: settings }] },
+  });
+  const proposedRequest = proposedPrepared.request as { briefHash: string; clauses: Array<{ id: string }> };
+  const proposedEvidence = "Keep the same room";
+  const proposedResult = await resolve({ ...execution, inputs: { request: proposedRequest, analysis: { briefHash: proposedRequest.briefHash, clauseResults: [{ clauseId: proposedRequest.clauses[0].id, items: [
+    { kind: "choice", evidence: proposedEvidence, evidenceStart: 0, evidenceEnd: proposedEvidence.length, controlId: "location-setting", optionId: "preserve", instruction: "", category: "", placement: "", slideIndexes: [], confidence: 1, reason: "" },
+  ] }] } } });
+  const proposedChange = (proposedResult.conflict as { conflicts: Array<Record<string, unknown>> }).conflicts[0];
+  assert.deepEqual({
+    kind: proposedChange.kind,
+    runtimeInputKey: proposedChange.runtimeInputKey,
+    selectedLabel: proposedChange.selectedLabel,
+    requestedLabel: proposedChange.requestedLabel,
+    requestedValue: proposedChange.requestedValue,
+  }, {
+    kind: "proposed-change",
+    runtimeInputKey: "choices.newLocation",
+    selectedLabel: "Allow a visible change",
+    requestedLabel: "Preserve the source",
+    requestedValue: false,
+  });
+
   const inventedEvidence = await resolve({ ...execution, inputs: { request, analysis: { ...analysis, clauseResults: [{ clauseId, items: [{ ...analysis.clauseResults[0].items[0], evidence: "keep the same room" }] }] } } });
   assert.match(String((inventedEvidence.conflict as { message: string }).message), /exact phrase/);
 

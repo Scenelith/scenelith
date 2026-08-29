@@ -76,7 +76,10 @@ test("visual references are configured on their node from canvas, Library or Ide
   assert.match(referencePickerSource, /workspaceId/);
   assert.match(referencePickerSource, /assetId/);
   assert.match(referencePickerSource, /maxItems/);
-  assert.match(referencePickerSource, /Use \{draftIds\.length/);
+  assert.doesNotMatch(referencePickerSource, /draftIds|Use \{.*reference/);
+  assert.match(referencePickerSource, /selections apply immediately/);
+  assert.match(referencePickerSource, /automation-reference-personas/);
+  assert.match(referencePickerSource, /\["reference", "before", "after"\]/);
   assert.match(referencePickerSource, /Clear/);
   assert.doesNotMatch(referencePickerSource, /storagePath|storage_path|apiKey|secret/i);
   assert.doesNotMatch(panelSource, /<AutomationReferencePicker/);
@@ -91,6 +94,16 @@ test("visual references are configured on their node from canvas, Library or Ide
   assert.doesNotMatch(referencePickerSource, /automation-reference-drawer is-node/);
   assert.match(workflowEditorSource, /onRuntimeValueChange/);
   assert.match(canvasSource, /automationRuntimePreview\.values/);
+});
+
+test("creative choice confirmation shows an exact node-authored diff and reruns visible inputs", () => {
+  assert.match(panelSource, /automation-choice-confirmation/);
+  assert.match(panelSource, /selectedLabel/);
+  assert.match(panelSource, /requestedLabel/);
+  assert.match(panelSource, /Confirm and run again/);
+  assert.match(canvasSource, /outputPorts\?\.includes\("conflict"\)/);
+  assert.match(canvasSource, /runtimeInputKey/);
+  assert.match(canvasSource, /requestedValue/);
 });
 
 test("automation workflow discovery is not restarted by an unstable parent callback", () => {

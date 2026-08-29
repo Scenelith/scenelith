@@ -150,10 +150,9 @@ Each card performs one visible job. A line starts at an output socket and ends a
 \`1. START + INPUTS\` → \`2. UNDERSTAND\` → \`3. ADAPT\` → \`4. BUILD\` → \`5. CHECK\` → \`6. CREATE + RETURN\`
 
 ### 1. Start and collect the inputs
-- **Run** sends the start signal and trigger metadata. In this template, it tells the four input steps to read their selected values.
+- **Run** sends the start signal and trigger metadata. In this template, it tells the three input steps to read their selected values.
 - **TikTok slideshow** loads the ordered source slides. It passes the same source to both analysis steps, image creation and the final canvas output.
 - **Identity** loads an optional saved person or character when one is selected. It is passed to identity analysis, reference matching and image creation; the workflow can also run without it.
-- **Visual references** loads optional images chosen from this canvas, the workspace Library or saved Identities. These can describe a product, place, pose, composition or style; use the separate Identity step when the workflow must preserve a recognizable person or character.
 - **Creative settings** collects the visible switches, optional written direction and one explicit policy: written choices may override only when unambiguous, or they must agree with the switches.
 - **Prepare the written direction** freezes the exact comment, configurable switches and raw source indexes. **Understand the written direction** classifies every clause under a fixed strict contract; an empty comment returns an explicit empty analysis without a provider call. **Resolve comments against choices** checks the comment hash, exact evidence ranges, complete wording coverage, confidence and configured options before applying the selected policy. Contradictory, partial or ambiguous wording goes to **Stop for conflicting direction** with the exact phrases and fields to fix.
 - **Adaptation route** reads the resolved mode and activates exactly one visible instruction: **Rebuild for a new concept** or **Keep concept, change the person**. The selected path then passes through one join card without asking AI to restate it.
@@ -170,7 +169,7 @@ Each card performs one visible job. A line starts at an output socket and ends a
 - **Turn choices into a clear brief** receives source understanding as its main input, then adds the authoritative resolved choices package and optional identity evidence through named supporting inputs. It must copy every accepted written requirement with its stable ID and is not allowed to reinterpret a resolved switch.
 - **Write the new on-screen text** uses that brief plus the meaning of the original text. It creates new wording for every original slide index.
 - **Check the new text** compares the draft with the brief and fixes repetition, inconsistency or text that would not fit the planned visual.
-- **Match references to slides** combines the checked text, brief, identity evidence and optional visual references, then assigns only the images each slide actually needs.
+- **Match references to slides** combines the checked text, brief and identity evidence, then assigns only the images each slide actually needs. A duplicated workflow may also connect a Visual references step here when its author needs extra composition, product, place, pose or style images.
 
 ### 4. Build one executable plan per image
 - **Merge the approved plan** has five separate named inputs: \`sourceAnalysis\`, \`choices\`, \`copy\`, \`brief\` and \`references\`. It waits for every connected branch and creates one predictable planning package. Nothing is generated yet.
@@ -180,10 +179,10 @@ Each card performs one visible job. A line starts at an output socket and ends a
 ### 5. Check the whole series before generation
 - **Check the complete series** receives the complete original contract beside all slide plans and compares every immutable requirement explicitly.
 - **Did every requirement pass?** sends approved plans straight onward without another AI rewrite. Only a failed verdict activates **Fix only problem slides**, which receives the contract, original plans and review together.
-- **Check every immutable requirement** receives the one selected final plan set plus the original contract, source, optional identity and optional visual references. It verifies indexes, exact text operation, resolved choices, every accepted written requirement, reference roles and required JSON fields. It never writes or repairs the prompt; an incomplete model-authored contract stops here.
+- **Check every immutable requirement** receives the one selected final plan set plus the original contract, source and optional identity. It also checks any Visual references step deliberately connected by the workflow author. It verifies indexes, exact text operation, resolved choices, every accepted written requirement, reference roles and required JSON fields. It never writes or repairs the prompt; an incomplete model-authored contract stops here.
 
 ### 6. Create the assets and return them to the canvas
-- **Image Generator** receives the validated plans, original source, optional identity and optional visual references. It serializes each slide into the same structured JSON fields used by Canvas Assistant and keeps successful results if one slide needs a retry.
+- **Image Generator** receives the validated plans, original source and optional identity. Custom workflows may connect an additional Visual references step. It serializes each slide into the same structured JSON fields used by Canvas Assistant and keeps successful results if one slide needs a retry.
 - **Add slideshow to canvas** receives the generated assets plus the original source. It places the finished branch beside the source so every result stays editable and connected.
 - The workflow ends here. The output is now regular canvas content; the guide note itself never runs and never enters the data flow.
 
@@ -218,11 +217,6 @@ export function createDefaultTikTokWorkflowGraph(): AutomationWorkflowGraph {
         creativeBrief: { mode: "ask-on-run", value: "", label: "Creative direction", required: false },
         creativeDirectionPolicy: { mode: "ask-on-run", value: "propose", label: "How comments affect choices", required: true },
       },
-    }),
-    node({
-      id: "visual-references", type: "input.visual-references", name: "Visual references", description: "Optional composition, product, place, pose or style images.", position: { x: 430, y: 648 },
-      config: { references: [], maxItems: 8, optional: true },
-      bindings: { references: { mode: "ask-on-run", label: "Visual references", required: false } },
     }),
     node({
       id: "prepare-user-direction", type: "logic.prepare-creative-direction", name: "Prepare the written direction", description: "Freeze the exact comment, configured choices and real source indexes into one typed request.", groupId: "group-adapt", position: { x: 760, y: 648 },
@@ -457,7 +451,6 @@ export function createDefaultTikTokWorkflowGraph(): AutomationWorkflowGraph {
     edge("manual-run", "run", "tiktok-source", "run"),
     edge("manual-run", "run", "identity", "run"),
     edge("manual-run", "run", "creative-settings", "run"),
-    edge("manual-run", "run", "visual-references", "run"),
     edge("tiktok-source", "source", "analyze-source", "primary"),
     edge("identity", "identity", "inspect-identity", "primary"),
     edge("creative-settings", "settings", "prepare-user-direction", "settings"),
@@ -468,7 +461,6 @@ export function createDefaultTikTokWorkflowGraph(): AutomationWorkflowGraph {
     edge("resolve-user-direction", "conflict", "direction-conflict", "data", "error"),
     edge("analyze-source", "result", "interpret-brief", "primary"),
     edge("inspect-identity", "result", "interpret-brief", "context", "data"),
-    edge("visual-references", "references", "interpret-brief", "context", "data"),
     edge("resolve-user-direction", "resolved", "wardrobe-choice", "data"),
     edge("resolve-user-direction", "resolved", "location-choice", "data"),
     edge("resolve-user-direction", "resolved", "adaptation-mode-choice", "data"),
@@ -511,7 +503,6 @@ export function createDefaultTikTokWorkflowGraph(): AutomationWorkflowGraph {
     edge("select-copy", "result", "bind-references", "primary"),
     edge("interpret-brief", "result", "bind-references", "context", "data"),
     edge("inspect-identity", "result", "bind-references", "context", "data"),
-    edge("visual-references", "references", "bind-references", "context", "data"),
     edge("identity", "identity", "bind-references", "identity", "data"),
     edge("analyze-source", "result", "assemble-contract", "input-source-analysis", "data"),
     edge("assemble-choices", "result", "assemble-contract", "input-choices", "data"),
@@ -535,7 +526,6 @@ export function createDefaultTikTokWorkflowGraph(): AutomationWorkflowGraph {
     edge("assemble-contract", "result", "validate-slide-plans", "contract", "data"),
     edge("tiktok-source", "source", "validate-slide-plans", "source", "data"),
     edge("identity", "identity", "validate-slide-plans", "identity", "data"),
-    edge("visual-references", "references", "validate-slide-plans", "references", "data"),
     edge("validate-slide-plans", "plans", "generate-images", "plans"),
     edge("validate-slide-plans", "error", "repair-validation", "primary", "error"),
     edge("retry-validation", "current", "repair-validation", "context", "data"),
@@ -546,7 +536,6 @@ export function createDefaultTikTokWorkflowGraph(): AutomationWorkflowGraph {
     edge("retry-validation", "exhausted", "retry-exhausted", "data", "error"),
     edge("tiktok-source", "source", "generate-images", "source", "data"),
     edge("identity", "identity", "generate-images", "identity", "data"),
-    edge("visual-references", "references", "generate-images", "references", "data"),
     edge("generate-images", "assets", "add-to-canvas", "assets"),
     edge("tiktok-source", "source", "add-to-canvas", "source", "data"),
   ];

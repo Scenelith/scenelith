@@ -60,7 +60,7 @@ import {
 } from "lucide-react";
 import { assetDirectUrl, assetDownloadUrl, assetThumbnailUrl, FrameNodeCard, GeneratorNodeContext, OPEN_NODE_CREATOR_EVENT, OPEN_VIDEO_EDITOR_EVENT, generatorModelCreditDescription, generatorRatiosFor, generatorResolutionsFor, generatorSettingsForModel, type GeneratorModelOption, type GeneratorNodeActions } from "./FrameNode";
 import { InspectorSelect } from "./InspectorSelect";
-import { TikTokAutomationPanel, type TikTokAutomationSlideState, type TikTokAutomationStatus } from "./TikTokAutomationPanel";
+import { TikTokAutomationPanel, type AutomationChoiceConfirmation, type TikTokAutomationSlideState, type TikTokAutomationStatus } from "./TikTokAutomationPanel";
 import type { AutomationWorkflowExecutionState } from "./automation/AutomationWorkflowEditorOverlay";
 import type { AutomationReferenceCandidate } from "./automation/AutomationReferencePicker";
 import { MediaViewer, type ImageEditOptions } from "./MediaViewer";
@@ -530,6 +530,7 @@ function CanvasWorkspace({ initialProject, projects: initialProjects, initialWor
   const [automationStatus, setAutomationStatus] = useState<TikTokAutomationStatus>("idle");
   const [automationRunId, setAutomationRunId] = useState<string | null>(null);
   const [automationExecution, setAutomationExecution] = useState<AutomationWorkflowExecutionState | null>(null);
+  const [automationChoiceConfirmation, setAutomationChoiceConfirmation] = useState<AutomationChoiceConfirmation | null>(null);
   const [automationStageLabel, setAutomationStageLabel] = useState("Ready to analyze");
   const [automationPlanningProgress, setAutomationPlanningProgress] = useState(0);
   const [automationSlideStates, setAutomationSlideStates] = useState<TikTokAutomationSlideState[]>([]);
@@ -3737,6 +3738,7 @@ function CanvasWorkspace({ initialProject, projects: initialProjects, initialWor
     setAutomationStageLabel("Waiting for the workflow worker");
     setAutomationPlanningProgress(1);
     setAutomationSlideStates([]);
+    setAutomationChoiceConfirmation(null);
     const requestedWorkflowId = automationWorkflowId;
     setAutomationExecution({ workflowId: requestedWorkflowId, runId: null, status: "queued", nodeRuns: [] });
     try {
@@ -3763,7 +3765,7 @@ function CanvasWorkspace({ initialProject, projects: initialProjects, initialWor
             progress: number;
             error?: string | null;
             output?: Record<string, { result?: { nodeIds?: string[]; failures?: Array<{ index?: number; error?: string }> } }> | null;
-            nodeRuns?: Array<{ id: string; nodeId: string; nodeType: string; status: string; attempt: number; error?: string | null; errorCode?: string | null; startedAt?: string | null; completedAt?: string | null }>;
+            nodeRuns?: Array<{ id: string; nodeId: string; nodeType: string; status: string; attempt: number; error?: string | null; errorCode?: string | null; outputPorts?: string[]; startedAt?: string | null; completedAt?: string | null }>;
           };
           error?: string;
         };
@@ -3782,7 +3784,31 @@ function CanvasWorkspace({ initialProject, projects: initialProjects, initialWor
         if (activeNodeType.startsWith("generation.")) setAutomationStatus("generating");
         else if (activeNodeType.startsWith("output.")) setAutomationStatus("building");
         else if (run.status === "running") setAutomationStatus("planning");
-        if (run.status === "failed" || run.status === "cancelled") throw new Error(run.error || "Workflow stopped");
+        if (run.status === "failed" || run.status === "cancelled") {
+          const proposalNode = [...(run.nodeRuns || [])].reverse().find((nodeRun) => nodeRun.status === "completed" && nodeRun.outputPorts?.includes("conflict"));
+          if (run.status === "failed" && proposalNode) {
+            const detailResponse = await fetch(`/api/automation-runs/${encodeURIComponent(queued.runId)}/nodes/${encodeURIComponent(proposalNode.nodeId)}`, { cache: "no-store" });
+            const detailBody = await detailResponse.json().catch(() => ({})) as { attempts?: Array<{ output?: { conflict?: { conflicts?: Array<Record<string, unknown>> } } }> };
+            const rawChanges = detailBody.attempts?.find((attempt) => attempt.output?.conflict)?.output?.conflict?.conflicts || [];
+            if (rawChanges.length > 0 && rawChanges.every((change) => change.kind === "proposed-change" && typeof change.runtimeInputKey === "string" && change.runtimeInputKey)) {
+              setAutomationChoiceConfirmation({
+                runId: queued.runId,
+                mode,
+                changes: rawChanges.map((change) => ({
+                  field: String(change.field || ""),
+                  runtimeInputKey: String(change.runtimeInputKey),
+                  label: String(change.label || change.field || "Choice"),
+                  selectedLabel: String(change.selectedLabel || change.selected || "Current choice"),
+                  requestedLabel: String(change.requestedLabel || change.requested || "Requested choice"),
+                  requestedValue: change.requestedValue,
+                  evidence: Array.isArray(change.evidence) ? change.evidence.map(String) : [],
+                })),
+              });
+              throw new Error("Review the exact changes requested by the written direction");
+            }
+          }
+          throw new Error(run.error || "Workflow stopped");
+        }
         if (run.status === "completed" || run.status === "completed_with_warnings") {
           const terminal = Object.values(run.output || {}).find((value) => value?.result?.nodeIds?.length);
           const nodeIds = terminal?.result?.nodeIds || [];
@@ -4616,7 +4642,7 @@ function CanvasWorkspace({ initialProject, projects: initialProjects, initialWor
       {tiktokAutomationOpen && <TikTokAutomationPanel
         projectId={project.id}
         workflowId={automationWorkflowId}
-        setWorkflowId={(value) => { setAutomationWorkflowId(value); setAutomationRuntimePreview(null); setAutomationStatus("idle"); setAutomationSlideStates([]); setAutomationExecution(null); }}
+        setWorkflowId={(value) => { setAutomationWorkflowId(value); setAutomationRuntimePreview(null); setAutomationStatus("idle"); setAutomationSlideStates([]); setAutomationExecution(null); setAutomationChoiceConfirmation(null); }}
         workflowRefreshKey={automationWorkflowRefreshKey}
         onConfigure={(workflowId) => { setTikTokAutomationOpen(true); setAutomationEditorWorkflowId(workflowId); }}
         sources={tiktokAutomationSources}
@@ -4626,11 +4652,17 @@ function CanvasWorkspace({ initialProject, projects: initialProjects, initialWor
         stageLabel={automationStageLabel}
         planningProgress={automationPlanningProgress}
         slideStates={automationSlideStates}
-        onSourceSelected={(value) => { setAutomationSourceId(value); setAutomationStatus("idle"); focusAutomationSource(value); }}
+        onSourceSelected={(value) => { setAutomationSourceId(value); setAutomationStatus("idle"); setAutomationChoiceConfirmation(null); focusAutomationSource(value); }}
         onRuntimeValuesChange={(workflowId, values) => setAutomationRuntimePreview((current) => ({
           workflowId,
           values: current?.workflowId === workflowId ? { ...current.values, ...values } : values,
         }))}
+        confirmation={automationChoiceConfirmation}
+        onDismissConfirmation={() => setAutomationChoiceConfirmation(null)}
+        onConfirmChanges={(runtimeInputs, mode) => {
+          setAutomationRuntimePreview({ workflowId: automationWorkflowId, values: runtimeInputs });
+          void runAutomationWorkflow(runtimeInputs, mode);
+        }}
         onRun={(runtimeInputs, mode) => void runAutomationWorkflow({
           ...runtimeInputs,
           ...(automationRuntimePreview?.workflowId === automationWorkflowId ? automationRuntimePreview.values : {}),
