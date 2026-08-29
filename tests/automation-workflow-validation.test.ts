@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
+import { assistantModels } from "../src/lib/assistant-models";
 import { createDefaultTikTokWorkflowGraph } from "../src/lib/automation-workflows/default-tiktok";
 import { coreAutomationNodeHandlers, isUnsafeAutomationHttpAddress } from "../src/lib/automation-workflows/node-handlers";
 import { automationNodeDefinitions } from "../src/lib/automation-workflows/registry";
@@ -57,6 +58,34 @@ test("the product exposes one current AI contract", () => {
   assert.deepEqual(aiDefinitions.map((definition) => definition.version), [2]);
   const handlers = coreAutomationNodeHandlers();
   assert.equal(typeof handlers["ai.structured-task@2"], "function");
+});
+
+test("every AI node exposes the full Canvas Assistant model catalogue", () => {
+  const expectedModelIds = assistantModels.map((model) => model.id);
+  const aiDefinitions = automationNodeDefinitions().filter((definition) => definition.category === "ai");
+  assert.ok(aiDefinitions.length > 0);
+  for (const definition of aiDefinitions) {
+    const modelField = definition.fields.find((field) => field.id === "modelId");
+    assert.equal(modelField?.kind, "model", `${definition.type} must expose its own model selector`);
+    assert.equal(modelField?.modelCapability, "assistant");
+    assert.deepEqual(modelField?.options?.map((option) => option.value), expectedModelIds);
+  }
+});
+
+test("the default workflow stores each AI model independently in node settings", () => {
+  const graph = createDefaultTikTokWorkflowGraph();
+  const aiNodes = graph.nodes.filter((node) => node.type === "ai.structured-task" || node.type === "ai.interpret-creative-direction");
+  assert.ok(aiNodes.length > 1);
+  for (const aiNode of aiNodes) {
+    assert.equal(aiNode.config.modelId, "google/gemini-3.7-flash");
+    assert.equal(aiNode.bindings.modelId, undefined, `${aiNode.id} must not shadow its model setting with a fixed binding`);
+  }
+  aiNodes[0].config.modelId = "qwen/qwen3.8-max";
+  aiNodes[1].config.modelId = "anthropic/claude-sonnet-5";
+  assert.equal(aiNodes[0].config.modelId, "qwen/qwen3.8-max");
+  assert.equal(aiNodes[1].config.modelId, "anthropic/claude-sonnet-5");
+  assert.equal(aiNodes[2].config.modelId, "google/gemini-3.7-flash");
+  assert.equal(validateAutomationWorkflowGraph(graph).valid, true);
 });
 
 test("the AI node validates only the selected output contract and keeps permanent instructions static", () => {
@@ -306,14 +335,12 @@ test("AI model and response schema contracts fail closed before publishing", () 
   const graph = createDefaultTikTokWorkflowGraph();
   const node = graph.nodes.find((entry) => entry.id === "review-series")!;
   node.config.modelId = "made-up/model";
-  node.bindings.modelId = { mode: "fixed", value: "made-up/model", required: true };
   node.config.responseSchema = { type: "object", properties: { passed: { type: "boolean" } }, unsupportedKeyword: true };
   let result = validateAutomationWorkflowGraph(graph);
   assert.ok(result.issues.some((entry) => entry.code === "INVALID_SETTING_OPTION"));
   assert.ok(result.issues.some((entry) => entry.code === "INVALID_RESPONSE_SCHEMA"));
 
-  node.config.modelId = "google/gemini-3.7-flash";
-  node.bindings.modelId = { mode: "fixed", value: "google/gemini-3.7-flash", required: true };
+  node.config.modelId = "openai/gpt-5.6-terra-pro";
   node.config.responseSchema = { type: "object", properties: { passed: { type: "boolean" } }, required: ["passed"] };
   result = validateAutomationWorkflowGraph(graph);
   assert.ok(result.issues.some((entry) => entry.code === "INVALID_RESPONSE_SCHEMA" && entry.message.includes("additionalProperties")));

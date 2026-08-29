@@ -1,4 +1,4 @@
-import { tiktokAutomationPlanningModels } from "@/lib/assistant-models";
+import { assistantModels } from "@/lib/assistant-models";
 import type { AutomationNode, AutomationNodeDefinition, AutomationNodeHelp, AutomationNodePortDefinition, AutomationPortType } from "./types";
 import { AUTOMATION_CREATIVE_DIRECTION_SYSTEM_PROMPT, DEFAULT_AUTOMATION_CREATIVE_CONTROLS } from "./creative-direction-contract";
 
@@ -36,7 +36,8 @@ export function automationNodeInputPorts(node: Pick<AutomationNode, "type" | "ve
   }));
 }
 
-const planningModelOptions = tiktokAutomationPlanningModels.map((model) => ({ value: model.id, label: model.label }));
+const assistantModelOptions = assistantModels.map((model) => ({ value: model.id, label: model.label }));
+const optionalAssistantModelOptions = [{ value: "", label: "No backup model" }, ...assistantModelOptions];
 
 const helpByType: Record<string, AutomationNodeHelp> = {
   "core.manual-trigger": {
@@ -274,7 +275,7 @@ const rawDefinitions: Array<Omit<AutomationNodeDefinition, "help">> = [
     ],
     outputs: [{ id: "result", label: "AI answer", type: "data" }, { id: "error", label: "Error path", type: "error" }],
     fields: [
-      { id: "modelId", label: "AI model", description: "Choose the model that should complete this task.", kind: "model", runtimeBindable: true, runtimeValueType: "assistant-model", modelCapability: "assistant", required: true, options: planningModelOptions },
+      { id: "modelId", label: "AI model", description: "Choose this step's text model independently from the same models available to Canvas Assistant.", kind: "model", runtimeBindable: true, runtimeValueType: "assistant-model", modelCapability: "assistant", required: true, options: assistantModelOptions },
       { id: "userPrompt", label: "What should the AI do?", description: "Describe one clear job and the result you want. Connected cards are included automatically; variables place an exact connected value.", placeholder: "Example: Study every slide and explain its hook, message and visual purpose…", kind: "prompt", required: true, defaultValue: "" },
       { id: "outputMode", label: "What should this step return?", description: "Choose readable text for writing and summaries. Choose defined fields when later steps must read exact values.", kind: "select", defaultValue: "text", options: [
         { value: "text", label: "Readable text" }, { value: "structured", label: "Defined data fields" },
@@ -288,7 +289,7 @@ const rawDefinitions: Array<Omit<AutomationNodeDefinition, "help">> = [
         { value: "consistent", label: "Consistent" }, { value: "balanced", label: "Balanced" }, { value: "exploratory", label: "More exploratory" },
       ], advanced: true },
       { id: "maxAttempts", label: "How many times to retry", description: "Retries the AI task when the request fails or a structured answer cannot be used.", kind: "number", defaultValue: 3, min: 1, max: 8, advanced: true },
-      { id: "fallbackModelId", label: "Backup AI model", kind: "model", modelCapability: "assistant", description: "Optional. Used on a later attempt when the main model cannot complete the task.", options: planningModelOptions, advanced: true },
+      { id: "fallbackModelId", label: "Backup AI model", kind: "model", modelCapability: "assistant", description: "Optional. Used on a later attempt when the main model cannot complete the task.", options: optionalAssistantModelOptions, advanced: true },
       { id: "failureMode", label: "If this step still fails", description: "Stop the run, route a safe error to a recovery path, or continue with an empty answer.", kind: "select", defaultValue: "stop", options: [
         { value: "stop", label: "Stop and show the error" }, { value: "error-output", label: "Send the error to another path" }, { value: "continue-empty", label: "Continue without an answer" },
       ], advanced: true },
@@ -366,9 +367,9 @@ const rawDefinitions: Array<Omit<AutomationNodeDefinition, "help">> = [
     outputs: [{ id: "analysis", label: "Direction analysis", type: "creative-direction-analysis", required: true }, { id: "error", label: "Error path", type: "error" }],
     fields: [
       { id: "systemInstructions", label: "Built-in interpretation contract", description: "Visible for audit. It defines the output contract and requires semantic interpretation from this node's configured option meanings; it contains no hidden keyword rules.", kind: "prompt", defaultValue: AUTOMATION_CREATIVE_DIRECTION_SYSTEM_PROMPT, readOnly: true, advanced: true },
-      { id: "modelId", label: "AI model", description: "Choose the model that should classify the prepared request.", kind: "model", runtimeBindable: true, runtimeValueType: "assistant-model", modelCapability: "assistant", required: true, options: planningModelOptions },
+      { id: "modelId", label: "AI model", description: "Choose this step's text model independently from the same models available to Canvas Assistant.", kind: "model", runtimeBindable: true, runtimeValueType: "assistant-model", modelCapability: "assistant", required: true, options: assistantModelOptions },
       { id: "maxAttempts", label: "How many times to retry", description: "Retries provider or strict-schema failures only; it never weakens the contract.", kind: "number", defaultValue: 3, min: 1, max: 8, advanced: true },
-      { id: "fallbackModelId", label: "Backup AI model", description: "Optional model for a later attempt when the main model cannot return the strict contract.", kind: "model", modelCapability: "assistant", options: planningModelOptions, advanced: true },
+      { id: "fallbackModelId", label: "Backup AI model", description: "Optional model for a later attempt when the main model cannot return the strict contract.", kind: "model", modelCapability: "assistant", options: optionalAssistantModelOptions, advanced: true },
       { id: "failureMode", label: "If interpretation still fails", description: "Stop or route the exact error. Continuing with an empty answer is intentionally unavailable.", kind: "select", defaultValue: "stop", options: [{ value: "stop", label: "Stop and show the error" }, { value: "error-output", label: "Send the error to another path" }], advanced: true },
     ],
   },

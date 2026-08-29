@@ -35,6 +35,14 @@ test("automation panel renders the selected workflow input contract", () => {
   assert.match(panelSource, /selectedWorkflow\?\.publishedVersionId/);
 });
 
+test("automation AI settings reuse the complete Canvas Assistant model catalogue", () => {
+  assert.match(frameNodeSource, /assistantModels\.map/);
+  assert.match(workflowEditorSource, /assistantModels\.map/);
+  assert.match(panelSource, /assistantModels\.map/);
+  assert.doesNotMatch(workflowEditorSource, /tiktokAutomationPlanningModels/);
+  assert.doesNotMatch(panelSource, /tiktokAutomationPlanningModels/);
+});
+
 test("visual references are configured on their node from canvas, Library or Identities", () => {
   assert.match(referencePickerSource, />Canvas</);
   assert.match(referencePickerSource, /Library/);

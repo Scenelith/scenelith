@@ -68,7 +68,7 @@ import {
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { generatorRatiosFor, generatorResolutionsFor, type GeneratorModelOption } from "@/components/FrameNode";
 import { InspectorSelect } from "@/components/InspectorSelect";
-import { tiktokAutomationPlanningModels } from "@/lib/assistant-models";
+import { assistantModels } from "@/lib/assistant-models";
 import { automationMergeInputs, automationNodeDefinition, automationNodeDefinitions, automationNodeInputPorts, type AutomationMergeInput } from "@/lib/automation-workflows/registry";
 import { automationCreativeControls, type AutomationCreativeControl } from "@/lib/automation-workflows/creative-direction-contract";
 import type { PersonaRecord } from "@/lib/types";
@@ -1281,7 +1281,11 @@ export function AutomationWorkflowEditorOverlay({ workspaceId, projectId, workfl
     if (!selectedNode) return field.options || [];
     if (field.runtimeValueType === "tiktok-source") return sources.map((source) => ({ value: source.id, label: source.label }));
     if (field.runtimeValueType === "identity") return [{ value: "", label: "No identity" }, ...personas.map((persona) => ({ value: persona.id, label: persona.name }))];
-    if (field.runtimeValueType === "assistant-model" || field.modelCapability === "assistant") return tiktokAutomationPlanningModels.map((model) => ({ value: model.id, label: model.label }));
+    if (field.runtimeValueType === "assistant-model") return assistantModels.map((model) => ({ value: model.id, label: model.label }));
+    if (field.modelCapability === "assistant") return [
+      ...(!field.required ? [{ value: "", label: "No backup model" }] : []),
+      ...assistantModels.map((model) => ({ value: model.id, label: model.label })),
+    ];
     if (field.runtimeValueType === "image-model" || field.modelCapability === "image") return models.filter((model) => model.mediaType === "image" && model.maxReferences > 0).map((model) => ({ value: model.id, label: model.label }));
     const boundValue = (fieldId: string) => selectedNode.bindings[fieldId]?.mode === "fixed" && selectedNode.bindings[fieldId]?.value !== undefined
       ? selectedNode.bindings[fieldId].value

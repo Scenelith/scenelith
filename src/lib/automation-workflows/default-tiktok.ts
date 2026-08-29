@@ -2,8 +2,9 @@ import { DEFAULT_AUTOMATION_WORKFLOW_SETTINGS, type AutomationAnnotation, type A
 import { AUTOMATION_IDENTITY_REFERENCE_INSTRUCTION, AUTOMATION_NO_TEXT_AVOID_INSTRUCTION, AUTOMATION_SOURCE_REFERENCE_INSTRUCTION } from "../generation-prompt-contract";
 import { automationSlidePlanCollectionJsonSchema } from "./slide-plan-contract";
 import { DEFAULT_AUTOMATION_CREATIVE_CONTROLS } from "./creative-direction-contract";
+import { DEFAULT_ASSISTANT_MODEL_ID } from "../assistant-models";
 
-const defaultPlanningModel = "google/gemini-3.7-flash";
+const defaultPlanningModel = DEFAULT_ASSISTANT_MODEL_ID;
 
 function node(input: Omit<AutomationNode, "version" | "description" | "groupId" | "config" | "bindings" | "disabled"> & Partial<Pick<AutomationNode, "version" | "description" | "groupId" | "config" | "bindings" | "disabled">>): AutomationNode {
   return {
@@ -53,9 +54,7 @@ function aiNode(input: {
       failureMode: "stop",
       runWhen: input.runWhen || "always",
     },
-    bindings: {
-      modelId: { mode: "fixed", value: defaultPlanningModel, label: "Planning model", required: true },
-    },
+    bindings: {},
   });
 }
 
@@ -232,7 +231,7 @@ export function createDefaultTikTokWorkflowGraph(): AutomationWorkflowGraph {
     node({
       id: "interpret-user-direction", type: "ai.interpret-creative-direction", name: "Understand the written direction", description: "Classify every exact clause under the fixed creative-direction contract.", groupId: "group-adapt", position: { x: 1090, y: 648 },
       config: { modelId: defaultPlanningModel, maxAttempts: 2, fallbackModelId: "", failureMode: "stop" },
-      bindings: { modelId: { mode: "fixed", value: defaultPlanningModel, label: "Planning model", required: true } },
+      bindings: {},
     }),
     node({
       id: "resolve-user-direction", type: "logic.resolve-creative-direction", version: 2, name: "Resolve comments against choices", description: "Verify exact evidence and coverage, then apply only policy-approved configured choices.", groupId: "group-adapt", position: { x: 1420, y: 648 },

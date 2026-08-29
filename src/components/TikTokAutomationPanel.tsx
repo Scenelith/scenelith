@@ -5,7 +5,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { generatorRatiosFor, generatorResolutionsFor, type GeneratorModelOption } from "@/components/FrameNode";
 import { InspectorSelect } from "@/components/InspectorSelect";
 import type { AutomationReferenceCandidate } from "@/components/automation/AutomationReferencePicker";
-import { tiktokAutomationPlanningModels } from "@/lib/assistant-models";
+import { assistantModels } from "@/lib/assistant-models";
 import type { AutomationCapabilities } from "@/editions/contracts/access";
 import type { PersonaRecord } from "@/lib/types";
 import type { TikTokSlideshowSource } from "@/lib/tiktok-slideshow-sources";
@@ -160,7 +160,7 @@ export function TikTokAutomationPanel({
             else if (field.valueType === "tiktok-source") next[field.key] = field.required ? sources[0]?.id || "" : "";
             else if (field.valueType === "identity") next[field.key] = "";
             else if (field.valueType === "visual-references") next[field.key] = [];
-            else if (field.valueType === "assistant-model") next[field.key] = tiktokAutomationPlanningModels[0]?.id || "";
+            else if (field.valueType === "assistant-model") next[field.key] = assistantModels[0]?.id || "";
             else if (field.valueType === "image-model") next[field.key] = models.find((model) => model.mediaType === "image" && model.maxReferences > 0)?.id || "";
             else if (field.options?.length) next[field.key] = field.options[0].value;
             else next[field.key] = "";
@@ -214,7 +214,7 @@ export function TikTokAutomationPanel({
       ...(!field.required ? [{ value: "", label: "No identity", description: "Run without identity references" }] : []),
       ...personas.map((persona) => ({ value: persona.id, label: persona.name, description: `${persona.assets.length} references` })),
     ];
-    if (field.valueType === "assistant-model") return tiktokAutomationPlanningModels.map((model) => ({ value: model.id, label: model.label }));
+    if (field.valueType === "assistant-model") return assistantModels.map((model) => ({ value: model.id, label: model.label }));
     if (field.valueType === "image-model") return models.filter((model) => model.mediaType === "image" && model.maxReferences > 0).map((model) => ({ value: model.id, label: model.label, description: model.description }));
     const modelField = runInputs.find((candidate) => candidate.nodeId === field.nodeId && candidate.valueType === "image-model");
     const selectedModel = models.find((model) => model.id === (modelField ? runtimeValues[modelField.key] : ""));
