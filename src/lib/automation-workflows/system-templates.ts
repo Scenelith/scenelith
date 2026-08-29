@@ -32,7 +32,7 @@ function defineSystemWorkflowTemplate(
 
 export const DEFAULT_TIKTOK_AUTOMATION_TEMPLATE = defineSystemWorkflowTemplate({
   key: "system.tiktok-recreate",
-  revision: 35,
+  revision: 36,
   name: "Recreate TikTok slideshow",
   description: "Analyze a source slideshow, adapt it and generate an editable canvas branch.",
   createGraph: createDefaultTikTokWorkflowGraph,

@@ -390,6 +390,24 @@ test("creative direction accepts only complete exact-evidence contracts and conf
   const detailedResolved = detailedResult.resolved as { newOutfit: boolean; direction: { requirements: Array<{ instruction: string }> } };
   assert.equal(detailedResolved.newOutfit, true, "a model-selected route change must update the configured state under auto-explicit policy");
   assert.equal(detailedResolved.direction.requirements[0].instruction, detailedEvidence, "a route choice must not consume the user's concrete downstream instruction");
+
+  const workflow = createDefaultTikTokWorkflowGraph();
+  const wardrobeRoute = await handlers["logic.condition@1"]({
+    ...base,
+    node: workflow.nodes.find((node) => node.id === "wardrobe-choice")!,
+    config: workflow.nodes.find((node) => node.id === "wardrobe-choice")!.config,
+    inputs: { data: detailedResolved },
+  });
+  const wardrobeNode = workflow.nodes.find((node) => node.id === "allow-wardrobe-change")!;
+  const wardrobeResult = await handlers["logic.transform@1"]({
+    ...base,
+    node: wardrobeNode,
+    config: wardrobeNode.config,
+    inputs: { data: wardrobeRoute.yes },
+  });
+  const wardrobeContract = wardrobeResult.result as { choice: { direction: { requirements: Array<{ instruction: string }> } }; wardrobe: { mode: string } };
+  assert.equal(wardrobeContract.wardrobe.mode, "change");
+  assert.equal(wardrobeContract.choice.direction.requirements[0].instruction, detailedEvidence, "the active wardrobe node must carry the exact detail into the choices package");
 });
 
 test("slide validator carries immutable choices, exact text and reference roles into generation", async () => {

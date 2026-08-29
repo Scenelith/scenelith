@@ -990,12 +990,6 @@ async function validateSlidePlans(execution: AutomationNodeExecution) {
     const tokens = slide.prompt.reference_plan.map((binding) => binding.token);
     if (tokens.some((token) => !/^@[\p{L}\p{N}_]+$/u.test(token)) || new Set(tokens).size !== tokens.length) throw new Error(`Slide ${slide.index} has invalid or duplicate reference_plan tokens`);
 
-    if (!decisions.newOutfit && slide.prompt.change.some((item) => /(?:new|different|change|replace).*(?:wardrobe|outfit|clothing)|(?:wardrobe|outfit|clothing).*(?:new|different|change|replace)/i.test(item))) {
-      throw new Error(`Slide ${slide.index} contradicts the Preserve wardrobe choice`);
-    }
-    if (!decisions.newLocation && slide.prompt.change.some((item) => /(?:new|different|change|replace).*(?:location|setting|background|environment)|(?:location|setting|background|environment).*(?:new|different|change|replace)/i.test(item))) {
-      throw new Error(`Slide ${slide.index} contradicts the Preserve location choice`);
-    }
     const wardrobeArray = decisions.newOutfit ? slide.prompt.change : slide.prompt.preserve;
     const locationArray = decisions.newLocation ? slide.prompt.change : slide.prompt.preserve;
     const textArray = textStrategy === "keep" ? slide.prompt.preserve : slide.prompt.change;
