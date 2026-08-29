@@ -65,6 +65,14 @@ test("migration persists delivery leases, DLQ history, alerts and fixtures", asy
   assert.match(migration, /automation_runs_workspace_active_idx/);
 });
 
+test("system model overrides have a narrow workspace-scoped persistence contract", async () => {
+  const migration = await readFile(new URL("../database/migrations/core/002_automation_system_model_overrides.sql", import.meta.url), "utf8");
+  assert.match(migration, /CREATE TABLE public\.automation_system_model_overrides/);
+  assert.match(migration, /PRIMARY KEY \(workflow_id, node_id\)/);
+  assert.match(migration, /REFERENCES public\.automation_workflows\(workspace_id, id\) ON DELETE CASCADE/);
+  assert.doesNotMatch(migration, /prompt|config_json|graph_json/i);
+});
+
 test("worker admission is fair across workspaces before selecting the oldest local job", async () => {
   const runs = await readFile(new URL("../src/lib/automation-workflows/runs.ts", import.meta.url), "utf8");
   assert.match(runs, /workspace_candidates AS/);

@@ -89,6 +89,56 @@ test("system metadata is reconciled without rewriting the published graph", asyn
   assert.equal(afterDetail?.published?.id, beforeDetail?.published?.id);
 });
 
+test("system templates allow only explicit primary model overrides and reset to template defaults", async () => {
+  const owner = await seedOwner();
+  const [system] = (await repository.listAutomationWorkflows(owner.userId, owner.projectId))!;
+  const before = await repository.getAutomationWorkflow(owner.userId, system.id);
+  const aiNode = before!.published!.graph.nodes.find((node) => node.type === "ai.structured-task")!;
+  const imageNode = before!.published!.graph.nodes.find((node) => node.type === "generation.image")!;
+  const originalAiModel = String(aiNode.config.modelId);
+  const originalImageModel = String(imageNode.config.modelId);
+  const originalPrompt = aiNode.config.userPrompt;
+
+  const changedAi = await repository.setSystemAutomationModelOverride({
+    userId: owner.userId,
+    workflowId: system.id,
+    nodeId: aiNode.id,
+    modelId: "qwen/qwen3.8-max",
+  });
+  assert.equal(changedAi?.published?.graph.nodes.find((node) => node.id === aiNode.id)?.config.modelId, "qwen/qwen3.8-max");
+  assert.equal(changedAi?.published?.graph.nodes.find((node) => node.id === aiNode.id)?.config.userPrompt, originalPrompt);
+  assert.notEqual(changedAi?.published?.id, before?.published?.id);
+
+  const changedImage = await repository.setSystemAutomationModelOverride({
+    userId: owner.userId,
+    workflowId: system.id,
+    nodeId: imageNode.id,
+    modelId: "nano-banana-pro",
+  });
+  assert.equal(changedImage?.published?.graph.nodes.find((node) => node.id === imageNode.id)?.config.modelId, "nano-banana-pro");
+  const storedOverrides = await db.prepare("SELECT node_id, model_id FROM automation_system_model_overrides WHERE workflow_id = ? ORDER BY node_id")
+    .all(system.id) as Array<{ node_id: string; model_id: string }>;
+  assert.deepEqual(new Map(storedOverrides.map((row) => [row.node_id, row.model_id])), new Map([[aiNode.id, "qwen/qwen3.8-max"], [imageNode.id, "nano-banana-pro"]]));
+
+  await db.prepare("UPDATE automation_workflows SET system_revision = 0 WHERE id = ?").run(system.id);
+  await repository.ensureSystemAutomationWorkflows(owner.workspaceId, owner.userId);
+  const upgraded = await repository.getAutomationWorkflow(owner.userId, system.id);
+  assert.equal(upgraded?.published?.graph.nodes.find((node) => node.id === aiNode.id)?.config.modelId, "qwen/qwen3.8-max");
+  assert.equal(upgraded?.published?.graph.nodes.find((node) => node.id === imageNode.id)?.config.modelId, "nano-banana-pro");
+
+  const resetAi = await repository.setSystemAutomationModelOverride({ userId: owner.userId, workflowId: system.id, nodeId: aiNode.id, modelId: null });
+  const resetImage = await repository.setSystemAutomationModelOverride({ userId: owner.userId, workflowId: system.id, nodeId: imageNode.id, modelId: originalImageModel });
+  assert.equal(resetAi?.published?.graph.nodes.find((node) => node.id === aiNode.id)?.config.modelId, originalAiModel);
+  assert.equal(resetImage?.published?.graph.nodes.find((node) => node.id === imageNode.id)?.config.modelId, originalImageModel);
+  const remaining = await db.prepare("SELECT COUNT(*) AS count FROM automation_system_model_overrides WHERE workflow_id = ?").get(system.id) as { count: number };
+  assert.equal(Number(remaining.count), 0);
+
+  await assert.rejects(
+    repository.setSystemAutomationModelOverride({ userId: owner.userId, workflowId: system.id, nodeId: "creative-settings", modelId: "qwen/qwen3.8-max" }),
+    /does not support that model/i,
+  );
+});
+
 test("custom workflows keep immutable draft history and publish explicitly", async () => {
   const owner = await seedOwner();
   const [system] = (await repository.listAutomationWorkflows(owner.userId, owner.projectId))!;

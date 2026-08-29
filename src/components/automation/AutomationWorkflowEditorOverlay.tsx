@@ -157,7 +157,10 @@ type AutomationExecutionEdgeData = {
 type WorkflowBindingOption = { id: string; name: string; status: string; publishedVersionId: string | null };
 type CredentialOption = { id: string; name: string; kind: string; fingerprint: string };
 type WorkflowBinding = { slotKey: string; type: "credential" | "subworkflow"; credentialId: string | null; credentialName: string | null; targetWorkflowId: string | null; targetWorkflowName: string | null };
-type AutomationWorkflowClientDetail = AutomationWorkflowDetail & { capabilities: AutomationCapabilities };
+type AutomationWorkflowClientDetail = AutomationWorkflowDetail & {
+  capabilities: AutomationCapabilities;
+  systemModelDefaults?: Record<string, string>;
+};
 type AutomationNodeDefinitionRecord = ReturnType<typeof automationNodeDefinitions>[number];
 
 function workflowSwitcherPresentation(workflow: AutomationWorkflowRecord) {
@@ -1262,6 +1265,11 @@ export function AutomationWorkflowEditorOverlay({ workspaceId, projectId, workfl
   const selectedAnnotation = graph?.annotations?.find((annotation) => `annotation:${annotation.id}` === selectedId) || null;
   const selectedEdgeContract = graph && selectedEdge ? connectedStep(graph, selectedEdge) : null;
   const selectedDefinition = selectedNode ? automationNodeDefinition(selectedNode.type, selectedNode.version) : null;
+  const selectedHasEditableSystemModel = Boolean(systemReadOnly && capabilities.edit && selectedDefinition?.fields.some((field) => (
+    field.id === "modelId"
+    && field.kind === "model"
+    && (field.modelCapability === "assistant" || field.modelCapability === "image")
+  )));
   const previewDefinition = previewDefinitionKey ? automationNodeDefinitions().find((definition) => `${definition.type}@${definition.version}` === previewDefinitionKey) || null : null;
   const executionDetailKey = selectedNode && execution?.runId && execution.workflowId === workflowId ? `${execution.runId}:${selectedNode.id}` : "";
   useEffect(() => {
@@ -1521,6 +1529,31 @@ export function AutomationWorkflowEditorOverlay({ workspaceId, projectId, workfl
     }
   }
 
+  async function saveSystemModel(nodeId: string, modelId: string | null) {
+    if (!detail || !systemReadOnly || !capabilities.edit) return;
+    setSaving(true);
+    setError("");
+    try {
+      const response = await fetch(`/api/automation-workflows/${encodeURIComponent(detail.workflow.id)}/system-model`, {
+        method: "PUT",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ nodeId, modelId }),
+      });
+      const body = await response.json() as AutomationWorkflowDetail & { error?: string };
+      if (!response.ok) throw new Error(body.error || "Could not save the model");
+      const nextVersion = body.published;
+      if (!nextVersion) throw new Error("The system workflow has no published version");
+      setDetail({ ...body, capabilities: detail.capabilities, systemModelDefaults: detail.systemModelDefaults });
+      setGraph(structuredClone(nextVersion.graph));
+      setValidation(nextVersion.validation);
+      onWorkflowChanged?.(body.workflow.id);
+    } catch (modelError) {
+      setError(modelError instanceof Error ? modelError.message : "Could not save the model");
+    } finally {
+      setSaving(false);
+    }
+  }
+
   async function publish() {
     const saved = dirty ? await saveDraft() : detail;
     if (!saved) return;
@@ -1634,6 +1667,25 @@ export function AutomationWorkflowEditorOverlay({ workspaceId, projectId, workfl
     const fieldValue = selectedNode?.bindings[field.id]?.mode === "fixed" && selectedNode.bindings[field.id]?.value !== undefined
       ? selectedNode.bindings[field.id]?.value
       : selectedNode?.config[field.id] ?? field.defaultValue;
+    const systemModelEditable = Boolean(
+      systemReadOnly
+      && capabilities.edit
+      && field.id === "modelId"
+      && field.kind === "model"
+      && (field.modelCapability === "assistant" || field.modelCapability === "image"),
+    );
+    if (systemModelEditable) {
+      const defaultModelId = detail?.systemModelDefaults?.[`${selectedNode!.id}.modelId`] || "";
+      const currentModelId = String(fieldValue || "");
+      return <label key={`${selectedNode!.id}:${field.id}`} className="automation-inspector-field is-model is-system-model">
+        <span><b>{field.label}</b><button type="button" disabled={saving || !defaultModelId || currentModelId === defaultModelId} title="Restore the model selected by this system template" onClick={() => void saveSystemModel(selectedNode!.id, null)}><RotateCcw size={11} /> Reset to default</button></span>
+        {field.description && <small>{field.description}</small>}
+        <select disabled={saving} value={currentModelId} onChange={(event) => void saveSystemModel(selectedNode!.id, event.target.value)}>
+          {selectedFieldOptions(field).map((option) => <option key={option.value} value={option.value}>{option.label}</option>)}
+        </select>
+        <small className="automation-system-model-help">Saved for this workspace. The template structure and every other setting stay locked.</small>
+      </label>;
+    }
     const selectedReferenceIds = Array.isArray(fieldValue) ? fieldValue.filter((item): item is string => typeof item === "string") : [];
     return <FieldEditor
       key={`${selectedNode?.id}:${field.id}`}
@@ -1802,10 +1854,10 @@ export function AutomationWorkflowEditorOverlay({ workspaceId, projectId, workfl
             : selectedAnnotation ? <div className="automation-annotation-inspector"><span><StickyNote size={18} /></span><small>GUIDE NOTE · DOES NOT RUN</small><h2>{selectedAnnotation.title}</h2><p>Notes explain the workflow but never enter its execution or data flow.</p><AutomationMarkdown markdown={selectedAnnotation.markdown} />{!readOnly && <><label><b>Note title</b><input value={selectedAnnotation.title} onChange={(event) => mutateGraph((current) => ({ ...current, annotations: (current.annotations || []).map((annotation) => annotation.id === selectedAnnotation.id ? { ...annotation, title: event.target.value } : annotation) }))} /></label><label><b>Markdown</b><textarea value={selectedAnnotation.markdown} onChange={(event) => mutateGraph((current) => ({ ...current, annotations: (current.annotations || []).map((annotation) => annotation.id === selectedAnnotation.id ? { ...annotation, markdown: event.target.value } : annotation) }))} /></label><button type="button" className="is-danger" onClick={() => { mutateGraph((current) => ({ ...current, annotations: (current.annotations || []).filter((annotation) => annotation.id !== selectedAnnotation.id) })); setSelectedId(null); setMobileInspectorOpen(false); }}><Trash2 size={13} /> Remove note</button></>}</div>
             : selectedEdge ? <div className="automation-inspector-empty is-group"><GitBranch size={20} /><small>HOW THESE STEPS CONNECT</small><h2>{selectedEdgeContract?.sourceNode?.name || "Step"} → {selectedEdgeContract?.targetNode?.name || "Step"}</h2><p>The first step passes <b>{selectedEdgeContract?.sourceLabel || selectedEdge.sourcePort}</b>. The next step receives it as <b>{selectedEdgeContract?.targetLabel || selectedEdge.targetPort}</b>.</p><label className="automation-edge-role"><span><b>Connection purpose</b><small>{(selectedEdge.role || (selectedEdgeContract?.dataType === "error" ? "error" : "flow")) === "flow" ? "Main route: shows what runs next." : selectedEdge.role === "data" ? "Supporting data: supplies an additional value without becoming the main route." : selectedEdge.role === "retry" ? "Bounded retry: returns corrected data to its Retry gate." : "Recovery route: used only after a handled error."}</small></span><select disabled={Boolean(readOnly || selectedEdgeContract?.dataType === "error" || selectedEdge.role === "retry")} value={selectedEdge.role || (selectedEdgeContract?.dataType === "error" ? "error" : "flow")} onChange={(event) => mutateGraph((current) => ({ ...current, edges: current.edges.map((edge) => edge.id === selectedEdge.id ? { ...edge, role: event.target.value as AutomationEdgeRole } : edge) }))}>{selectedEdge.role === "retry" ? <option value="retry">Bounded retry route</option> : selectedEdgeContract?.dataType === "error" ? <option value="error">Error recovery route</option> : <><option value="flow">Main execution route</option><option value="data">Supporting data</option></>}</select></label>{!readOnly && <button type="button" className="is-danger" onClick={removeSelectedEdge}><Trash2 size={13} /> Remove connection</button>}</div>
             : selectedNode && selectedDefinition ? <>
-              <header><span className={`is-${selectedDefinition.accent}`}><AutomationNodeIcon definition={selectedDefinition} size={15} /></span><div><small><b>Node type · {selectedDefinition.title}</b><em>{categoryNodeLabels[selectedDefinition.category]} · {readOnly ? "View only" : "Editable step"}</em></small><h2>{selectedNode.name}</h2></div></header>
+              <header><span className={`is-${selectedDefinition.accent}`}><AutomationNodeIcon definition={selectedDefinition} size={15} /></span><div><small><b>Node type · {selectedDefinition.title}</b><em>{categoryNodeLabels[selectedDefinition.category]} · {selectedHasEditableSystemModel ? "Model editable" : readOnly ? "View only" : "Editable step"}</em></small><h2>{selectedNode.name}</h2></div></header>
               <nav className="automation-inspector-tabs" aria-label="Step panel">
                 <button type="button" className={inspectorView === "guide" ? "is-active" : ""} aria-pressed={inspectorView === "guide"} onClick={() => setInspectorView("guide")}><BookOpen size={14} /><span><b>Guide</b><small>Purpose and examples</small></span></button>
-                <button type="button" className={inspectorView === "settings" ? "is-active" : ""} aria-pressed={inspectorView === "settings"} onClick={() => setInspectorView("settings")}><Settings2 size={14} /><span><b>Settings</b><small>{readOnly ? "Current values" : "Configure this step"}</small></span></button>
+                <button type="button" className={inspectorView === "settings" ? "is-active" : ""} aria-pressed={inspectorView === "settings"} onClick={() => setInspectorView("settings")}><Settings2 size={14} /><span><b>Settings</b><small>{selectedHasEditableSystemModel ? "Choose model" : readOnly ? "Current values" : "Configure this step"}</small></span></button>
                 <button type="button" className={inspectorView === "execution" ? "is-active" : ""} aria-pressed={inspectorView === "execution"} onClick={() => setInspectorView("execution")}><Activity size={14} /><span><b>Execution</b><small>{execution?.runId ? "Inputs · outputs · errors" : "No run selected"}</small></span></button>
               </nav>
               <div className="automation-inspector-scroll">
@@ -1813,8 +1865,8 @@ export function AutomationWorkflowEditorOverlay({ workspaceId, projectId, workfl
                   <AutomationNodeGuide definition={selectedDefinition} node={selectedNode} />
                   <AutomationNodeConnections graph={graph} node={selectedNode} onSelect={(nodeId) => { setSelectedId(nodeId); setPreviewDefinitionKey(null); setInspectorView("settings"); setMobileInspectorOpen(true); }} />
                 </> : inspectorView === "settings" ? <>
-                  {systemReadOnly && <section className="automation-template-notice"><Copy size={14} /><span><b>View-only template</b><small>Duplicate the workflow once to change these settings.</small></span></section>}
-                  <div className="automation-inspector-section-label"><b>{readOnly ? "Current settings" : "Configure this step"}</b><span>{readOnly ? "Values this workflow will use" : "Saved to your draft"}</span></div>
+                  {systemReadOnly && <section className="automation-template-notice"><Copy size={14} /><span><b>Protected system template</b><small>AI and image models can be changed here. Duplicate the workflow to change prompts, connections or any other setting.</small></span></section>}
+                  <div className="automation-inspector-section-label"><b>{selectedHasEditableSystemModel ? "Model setting" : readOnly ? "Current settings" : "Configure this step"}</b><span>{selectedHasEditableSystemModel ? "The model is saved immediately; all other values stay protected" : readOnly ? "Values this workflow will use" : "Saved to your draft"}</span></div>
                   {readOnly && <section className="automation-node-readonly-identity"><span><b>Step name</b><small>{selectedNode.name}</small></span><span><b>Description</b><small>{selectedNode.description || selectedDefinition.description}</small></span></section>}
                   {!readOnly && <label className="automation-inspector-field"><span><b>Step name</b><small>Give this particular step a clear name. Its node type stays {selectedDefinition.title} everywhere.</small></span><input value={selectedNode.name} onChange={(event) => mutateGraph((current) => ({ ...current, nodes: current.nodes.map((node) => node.id === selectedNode.id ? { ...node, name: event.target.value } : node) }))} /></label>}
                   {!readOnly && <label className="automation-inspector-field"><span><b>Step description</b></span><textarea value={selectedNode.description} onChange={(event) => mutateGraph((current) => ({ ...current, nodes: current.nodes.map((node) => node.id === selectedNode.id ? { ...node, description: event.target.value } : node) }))} /></label>}
