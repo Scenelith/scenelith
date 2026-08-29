@@ -7,6 +7,7 @@ import { validateAutomationRunInputs, validateAutomationWorkflowGraph } from "./
 import { canPerformAutomationAction, requireAutomationPermission } from "./permissions";
 import { automationNodeDefinition } from "./registry";
 import { generationProvider } from "@/platform/providers/registry";
+import { validateAutomationDeploymentBindings } from "./deployment-validation";
 
 type WorkflowRow = {
   id: string;
@@ -93,6 +94,7 @@ async function workflowRowById(id: string) {
 }
 
 type SystemModelOverrideRow = { node_id: string; model_id: string };
+const AUTOMATION_AUTOSAVE_HISTORY_LIMIT = 25;
 
 function configurableSystemModelNode(graph: AutomationWorkflowGraph, nodeId: string) {
   const node = graph.nodes.find((candidate) => candidate.id === nodeId);
@@ -148,6 +150,71 @@ async function applyPersistedSystemModelOverrides(workflowId: string, graph: Aut
   return graph;
 }
 
+async function systemAutomationModelIssues(workflowId: string, systemKey: string | null) {
+  const template = automationSystemWorkflowTemplate(systemKey || "");
+  if (!template) return [];
+  const defaults = template.createGraph();
+  const rows = await db.prepare("SELECT node_id, model_id FROM automation_system_model_overrides WHERE workflow_id = ? ORDER BY node_id")
+    .all(workflowId) as SystemModelOverrideRow[];
+  return rows.flatMap((row) => {
+    const graph = structuredClone(defaults);
+    if (applySystemModelSelection(graph, defaults, row.node_id, row.model_id)) return [];
+    const nodeName = defaults.nodes.find((node) => node.id === row.node_id)?.name;
+    return [{
+      nodeId: row.node_id,
+      modelId: row.model_id,
+      message: nodeName
+        ? `The saved model ${row.model_id} is no longer available for ${nodeName}. The current template default is active instead.`
+        : `The saved model ${row.model_id} belongs to a system step that no longer exists. The current template ignored this override.`,
+    }];
+  });
+}
+
+async function advanceSystemWorkflowTriggers(input: {
+  workflowId: string;
+  workspaceId: string;
+  graph: AutomationWorkflowGraph;
+  versionId: string;
+  now: string;
+}) {
+  const active = await db.prepare("SELECT id, input_json FROM automation_workflow_triggers WHERE workflow_id = ? AND status = 'active'")
+    .all(input.workflowId) as Array<{ id: string; input_json: unknown }>;
+  if (!active.length) return;
+  const deployment = await validateAutomationDeploymentBindings({ workflowId: input.workflowId, workspaceId: input.workspaceId, graph: input.graph });
+  for (const trigger of active) {
+    const compatible = deployment.valid && validateAutomationRunInputs(input.graph, jsonValue<Record<string, unknown>>(trigger.input_json)).valid;
+    if (compatible) {
+      await db.prepare("UPDATE automation_workflow_triggers SET active_version_id = ?, updated_at = ? WHERE id = ? AND status = 'active'")
+        .run(input.versionId, input.now, trigger.id);
+    } else {
+      await db.prepare("UPDATE automation_workflow_triggers SET status = 'paused', active_version_id = NULL, next_fire_at = NULL, updated_at = ? WHERE id = ? AND status = 'active'")
+        .run(input.now, trigger.id);
+    }
+  }
+}
+
+async function pruneAutomationAutosaveHistory(workflowId: string) {
+  await db.prepare(`WITH expired_autosaves AS (
+    SELECT candidate.id
+    FROM automation_workflow_versions candidate
+    WHERE candidate.workflow_id = ?
+      AND candidate.status = 'superseded'
+      AND candidate.published_at IS NULL
+      AND candidate.change_note IS NULL
+      AND NOT EXISTS (SELECT 1 FROM automation_workflow_versions restored WHERE restored.workflow_id = candidate.workflow_id AND restored.restored_from_version_id = candidate.id)
+      AND NOT EXISTS (SELECT 1 FROM automation_runs run WHERE run.workflow_id = candidate.workflow_id AND run.workflow_version_id = candidate.id)
+      AND NOT EXISTS (SELECT 1 FROM automation_workflow_fixtures fixture WHERE fixture.workflow_id = candidate.workflow_id AND fixture.workflow_version_id = candidate.id)
+      AND NOT EXISTS (SELECT 1 FROM automation_workflow_triggers trigger WHERE trigger.workflow_id = candidate.workflow_id AND trigger.active_version_id = candidate.id)
+      AND NOT EXISTS (SELECT 1 FROM automation_trigger_deliveries delivery WHERE delivery.workflow_id = candidate.workflow_id AND delivery.workflow_version_id = candidate.id)
+    ORDER BY candidate.version DESC
+    OFFSET ?
+  )
+  DELETE FROM automation_workflow_versions version
+  USING expired_autosaves expired
+  WHERE version.workflow_id = ? AND version.id = expired.id`)
+    .run(workflowId, AUTOMATION_AUTOSAVE_HISTORY_LIMIT, workflowId);
+}
+
 async function ensureSystemAutomationWorkflow(
   workspaceId: string,
   userId: string,
@@ -196,6 +263,7 @@ async function ensureSystemAutomationWorkflow(
       name = ?, description = ?, status = 'system', system_revision = ?, published_version_id = ?, draft_version_id = NULL, updated_at = ?
       WHERE id = ?`)
       .run(template.name, template.description, template.revision, versionId, now, workflowId);
+    await advanceSystemWorkflowTriggers({ workflowId, workspaceId, graph, versionId, now });
     return workflowRecord((await workflowRowById(workflowId))!);
   })();
 }
@@ -249,6 +317,7 @@ export async function getAutomationWorkflow(userId: string, workflowId: string):
     workflow: workflowRecord(row),
     draft: await versionById(row.draft_version_id),
     published: await versionById(row.published_version_id),
+    systemModelIssues: row.status === "system" ? await systemAutomationModelIssues(row.id, row.system_key) : [],
   };
 }
 
@@ -272,10 +341,12 @@ export async function setSystemAutomationModelOverride(input: { userId: string; 
   const graph = structuredClone(published.graph);
   const defaultNode = defaults.nodes.find((node) => node.id === input.nodeId);
   const overrideModelId = input.modelId && input.modelId !== String(defaultNode?.config.modelId || "") ? input.modelId : null;
-  if (!applySystemModelSelection(graph, defaults, input.nodeId, overrideModelId)) {
+  const selectionApplied = applySystemModelSelection(graph, defaults, input.nodeId, overrideModelId);
+  if (!selectionApplied && input.modelId !== null) {
     throw Object.assign(new Error("This system step does not support that model"), { status: 400 });
   }
-  const validation = validateAutomationWorkflowGraph(graph);
+  const graphChanged = selectionApplied && JSON.stringify(graph) !== JSON.stringify(published.graph);
+  const validation = graphChanged ? validateAutomationWorkflowGraph(graph) : published.validation;
   if (!validation.valid) throw Object.assign(new Error(validation.issues.map((issue) => issue.message).join(" ")), { status: 400 });
   const now = new Date().toISOString();
   await db.transaction(async () => {
@@ -294,6 +365,7 @@ export async function setSystemAutomationModelOverride(input: { userId: string; 
       await db.prepare("DELETE FROM automation_system_model_overrides WHERE workflow_id = ? AND node_id = ?")
         .run(row.id, input.nodeId);
     }
+    if (!graphChanged) return;
     const latest = await db.prepare("SELECT COALESCE(MAX(version), 0) AS version FROM automation_workflow_versions WHERE workflow_id = ?")
       .get(row.id) as { version: number };
     const versionId = randomUUID();
@@ -304,6 +376,7 @@ export async function setSystemAutomationModelOverride(input: { userId: string; 
       .run(versionId, row.id, Number(latest.version || 0) + 1, JSON.stringify(graph), JSON.stringify(validation), input.userId, now, now, overrideModelId ? `Changed ${input.nodeId} model` : `Reset ${input.nodeId} model`);
     await db.prepare("UPDATE automation_workflows SET published_version_id = ?, updated_at = ? WHERE id = ?")
       .run(versionId, now, row.id);
+    await advanceSystemWorkflowTriggers({ workflowId: row.id, workspaceId: row.workspace_id, graph, versionId, now });
   })();
   return await getAutomationWorkflow(input.userId, row.id);
 }
@@ -485,6 +558,7 @@ export async function saveAutomationWorkflowDraft(input: {
       name = COALESCE(?, name), description = COALESCE(?, description), status = 'draft', draft_version_id = ?, updated_at = ?
       WHERE id = ?`)
       .run(input.name?.trim().slice(0, 120) || null, input.description?.trim().slice(0, 500) ?? null, versionId, now, row.id);
+    await pruneAutomationAutosaveHistory(row.id);
   })();
   return await getAutomationWorkflow(input.userId, row.id);
 }
@@ -502,19 +576,31 @@ export async function publishAutomationWorkflow(userId: string, workflowId: stri
     if (!draft) return { kind: "missing" as const };
     const validation = validateAutomationWorkflowGraph(draft.graph);
     if (!validation.valid) return { kind: "invalid" as const, validation };
-    const now = new Date().toISOString();
-    const activeTriggers = await db.prepare("SELECT id, input_json FROM automation_workflow_triggers WHERE workflow_id = ? AND status = 'active'").all(row.id) as Array<{ id: string; input_json: unknown }>;
-    const incompatibleTriggerIds = activeTriggers.filter((trigger) => !validateAutomationRunInputs(draft.graph, jsonValue(trigger.input_json)).valid).map((trigger) => trigger.id);
-    if (incompatibleTriggerIds.length) {
-      for (const triggerId of incompatibleTriggerIds) await db.prepare("UPDATE automation_workflow_triggers SET status = 'paused', updated_at = ? WHERE id = ?").run(now, triggerId);
+    const deployment = await validateAutomationDeploymentBindings({ workflowId: row.id, workspaceId: row.workspace_id, graph: draft.graph });
+    if (!deployment.valid) {
+      return { kind: "invalid" as const, validation: { valid: false, issues: deployment.issues } };
     }
+    const activeTriggers = await db.prepare("SELECT id, input_json FROM automation_workflow_triggers WHERE workflow_id = ? AND status = 'active'").all(row.id) as Array<{ id: string; input_json: unknown }>;
+    const triggerIssues = activeTriggers.flatMap((trigger) => validateAutomationRunInputs(draft.graph, jsonValue(trigger.input_json)).issues.map((entry) => ({
+      ...entry,
+      code: `ACTIVE_TRIGGER_${entry.code}`,
+      message: `Active trigger ${trigger.id} is incompatible with this version: ${entry.message}`,
+    })));
+    if (triggerIssues.length) {
+      return { kind: "invalid" as const, validation: { valid: false, issues: triggerIssues } };
+    }
+    const now = new Date().toISOString();
     if (current.published_version_id) await db.prepare("UPDATE automation_workflow_versions SET status = 'superseded' WHERE id = ? AND status = 'published'").run(current.published_version_id);
     await db.prepare("UPDATE automation_workflow_versions SET status = 'published', validation_json = ?, published_at = ? WHERE id = ? AND status = 'draft'")
       .run(JSON.stringify(validation), now, draft.id);
     await db.prepare("UPDATE automation_workflows SET status = 'published', published_version_id = ?, draft_version_id = NULL, updated_at = ? WHERE id = ?")
       .run(draft.id, now, row.id);
-    return { kind: "published" as const, validation, pausedTriggerCount: incompatibleTriggerIds.length };
+    for (const trigger of activeTriggers) {
+      await db.prepare("UPDATE automation_workflow_triggers SET active_version_id = ?, updated_at = ? WHERE id = ? AND status = 'active'")
+        .run(draft.id, now, trigger.id);
+    }
+    return { kind: "published" as const, validation };
   })();
   if (outcome.kind === "missing") return null;
-  return { detail: await getAutomationWorkflow(userId, workflowId), validation: outcome.validation, published: outcome.kind === "published", pausedTriggerCount: outcome.kind === "published" ? outcome.pausedTriggerCount : 0 };
+  return { detail: await getAutomationWorkflow(userId, workflowId), validation: outcome.validation, published: outcome.kind === "published" };
 }

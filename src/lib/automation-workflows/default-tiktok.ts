@@ -1,7 +1,13 @@
 import { DEFAULT_AUTOMATION_WORKFLOW_SETTINGS, type AutomationAnnotation, type AutomationEdge, type AutomationEdgeRole, type AutomationGroup, type AutomationNode, type AutomationWorkflowGraph } from "./types";
 import { AUTOMATION_IDENTITY_REFERENCE_INSTRUCTION, AUTOMATION_NO_TEXT_AVOID_INSTRUCTION, AUTOMATION_SOURCE_REFERENCE_INSTRUCTION } from "../generation-prompt-contract";
 import { automationSlidePlanCollectionJsonSchema } from "./slide-plan-contract";
-import { DEFAULT_AUTOMATION_CREATIVE_CONTROLS } from "./creative-direction-contract";
+import {
+  AUTOMATION_CREATIVE_DIRECTION_SYSTEM_PROMPT,
+  AUTOMATION_CREATIVE_DIRECTION_USER_PROMPT,
+  DEFAULT_AUTOMATION_CREATIVE_CONTROLS,
+  DEFAULT_AUTOMATION_REQUIREMENT_CATEGORIES,
+  DEFAULT_AUTOMATION_REQUIREMENT_PLACEMENTS,
+} from "./creative-direction-contract";
 import { DEFAULT_ASSISTANT_MODEL_ID } from "../assistant-models";
 
 const defaultPlanningModel = DEFAULT_ASSISTANT_MODEL_ID;
@@ -154,7 +160,7 @@ Each card performs one visible job. A line starts at an output socket and ends a
 - **TikTok slideshow** loads the ordered source slides. It passes the same source to both analysis steps, image creation and the final canvas output.
 - **Identity** loads an optional saved person or character when one is selected. It is passed to identity analysis, reference matching and image creation; the workflow can also run without it.
 - **Creative settings** collects the visible switches, optional written direction and one explicit policy: written choices may override only when unambiguous, or they must agree with the switches.
-- **Prepare the written direction** freezes the exact comment, configurable switches and raw source indexes. **Understand the written direction** classifies every clause under a fixed strict contract; an empty comment returns an explicit empty analysis without a provider call. **Resolve comments against choices** checks the comment hash, exact evidence ranges, complete wording coverage, confidence and configured options before applying the selected policy. Contradictory, partial or ambiguous wording goes to **Stop for conflicting direction** with the exact phrases and fields to fix.
+- **Prepare the written direction** freezes the exact comment, configurable switches and raw source indexes. **Understand the written direction** classifies the complete comment under a fixed strict contract and returns exact evidence spans for every decision; an empty comment returns an explicit empty analysis without a provider call. **Resolve comments against choices** checks the comment hash, exact evidence ranges, complete wording coverage, confidence and configured options before applying the selected policy. Contradictory, partial or ambiguous wording goes to **Stop for conflicting direction** with the exact phrases and fields to fix.
 - **Adaptation route** reads the resolved mode and activates exactly one visible instruction: **Rebuild for a new concept** or **Keep concept, change the person**. The selected path then passes through one join card without asking AI to restate it.
 - **Wardrobe route** and **Location route** each choose one real path. Their visible **Allow change** and **Preserve source** cards create explicit instructions. **Lock the run choices** keeps those selected route objects beside the raw switches as one authoritative package, so turning a switch off never forgets that property.
 - **Text routes** choose exactly one of **Keep original text**, **Write new text** or **Remove text**. Unselected cards and their lines are skipped and shown as inactive before the run.
@@ -182,7 +188,8 @@ Each card performs one visible job. A line starts at an output socket and ends a
 - **Check every immutable requirement** receives the one selected final plan set plus the original contract, source and optional identity. It also checks any Visual references step deliberately connected by the workflow author. It verifies indexes, exact text operation, resolved choices, every accepted written requirement, reference roles and required JSON fields. It never writes or repairs the prompt; an incomplete model-authored contract stops here.
 
 ### 6. Create the assets and return them to the canvas
-- **Image Generator** receives the validated plans, original source and optional identity. Custom workflows may connect an additional Visual references step. It serializes each slide into the same structured JSON fields used by Canvas Assistant and keeps successful results if one slide needs a retry.
+- **Prepare slideshow image requests** visibly converts the validated TikTok contract into the generic image-request format, including each exact serialized prompt and ordered reference role.
+- **Image Generator** receives only those prepared requests plus its visible model, shape and quality settings. It contains no TikTok, wardrobe, location or text-policy decisions.
 - **Add slideshow to canvas** receives the generated assets plus the original source. It places the finished branch beside the source so every result stays editable and connected.
 - The workflow ends here. The output is now regular canvas content; the guide note itself never runs and never enters the data flow.
 
@@ -196,7 +203,8 @@ export function createDefaultTikTokWorkflowGraph(): AutomationWorkflowGraph {
       config: {},
     }),
     node({
-      id: "tiktok-source", type: "input.tiktok-source", name: "TikTok slideshow", description: "Use the slideshow selected when the workflow starts.", position: { x: 430, y: 120 },
+      id: "tiktok-source", type: "input.tiktok-source", version: 2, name: "TikTok slideshow", description: "Use the slideshow selected when the workflow starts.", position: { x: 430, y: 120 },
+      config: { captionMode: "original", caption: "" },
       bindings: {
         source: { mode: "ask-on-run", label: "Source slideshow", required: true },
       },
@@ -220,22 +228,24 @@ export function createDefaultTikTokWorkflowGraph(): AutomationWorkflowGraph {
     }),
     node({
       id: "prepare-user-direction", type: "logic.prepare-creative-direction", name: "Prepare the written direction", description: "Freeze the exact comment, configured choices and real source indexes into one typed request.", groupId: "group-adapt", position: { x: 760, y: 648 },
-      config: { controls: DEFAULT_AUTOMATION_CREATIVE_CONTROLS, briefPath: "creativeBrief", policyPath: "creativeDirectionPolicy", minConfidence: 0.9, maxBriefCharacters: 5000, maxClauses: 16, maxClauseCharacters: 1000, maxRequirements: 24, allowIgnoredClauses: false },
+      version: 2,
+      config: { controls: DEFAULT_AUTOMATION_CREATIVE_CONTROLS, requirementCategories: DEFAULT_AUTOMATION_REQUIREMENT_CATEGORIES, requirementPlacements: DEFAULT_AUTOMATION_REQUIREMENT_PLACEMENTS, briefPath: "creativeBrief", policyPath: "creativeDirectionPolicy", minConfidence: 0.9, maxBriefCharacters: 5000, maxRequirements: 24, allowIgnoredClauses: false },
     }),
     node({
-      id: "interpret-user-direction", type: "ai.interpret-creative-direction", name: "Understand the written direction", description: "Classify every exact clause under the fixed creative-direction contract.", groupId: "group-adapt", position: { x: 1090, y: 648 },
-      config: { modelId: defaultPlanningModel, maxAttempts: 2, fallbackModelId: "", failureMode: "stop" },
+      id: "interpret-user-direction", type: "ai.interpret-creative-direction", name: "Understand the written direction", description: "Classify the complete comment and return exact evidence spans under the visible creative-direction contract.", groupId: "group-adapt", position: { x: 1090, y: 648 },
+      version: 2,
+      config: { modelId: defaultPlanningModel, systemInstructions: AUTOMATION_CREATIVE_DIRECTION_SYSTEM_PROMPT, taskInstructions: AUTOMATION_CREATIVE_DIRECTION_USER_PROMPT, creativity: "consistent", maxAttempts: 2, fallbackModelId: "", failureMode: "stop" },
       bindings: {},
     }),
     node({
-      id: "resolve-user-direction", type: "logic.resolve-creative-direction", version: 2, name: "Resolve comments against choices", description: "Verify exact evidence and coverage, then apply only policy-approved configured choices.", groupId: "group-adapt", position: { x: 1420, y: 648 },
+      id: "resolve-user-direction", type: "logic.resolve-creative-direction", version: 3, name: "Resolve comments against choices", description: "Verify exact evidence and coverage, then apply only policy-approved configured choices.", groupId: "group-adapt", position: { x: 1420, y: 648 },
     }),
     node({
       id: "direction-conflict", type: "output.finish", name: "Stop for conflicting direction", description: "Show the exact settings and phrases that need clarification before generation.", groupId: "group-adapt", position: { x: 2080, y: 824 },
       config: { outcome: "failed", message: "{{ data.message }}" },
     }),
     node({
-      id: "adaptation-mode-choice", type: "logic.condition", name: "Rebuild the concept?", description: "Choose the real workflow path that matches the selected adaptation mode.", groupId: "group-adapt", position: { x: 760, y: 384 },
+      id: "adaptation-mode-choice", type: "logic.condition", version: 2, name: "Rebuild the concept?", description: "Choose the real workflow path that matches the selected adaptation mode.", groupId: "group-adapt", position: { x: 760, y: 384 },
       config: { path: "mode", operator: "equals", compareValue: "concept" },
     }),
     node({
@@ -250,7 +260,7 @@ export function createDefaultTikTokWorkflowGraph(): AutomationWorkflowGraph {
       id: "select-adaptation", type: "logic.select-one", name: "Continue with the selected adaptation", description: "Pass the one active adaptation contract forward without asking AI to reconstruct the choice.", groupId: "group-adapt", position: { x: 1420, y: 472 },
     }),
     node({
-      id: "wardrobe-choice", type: "logic.condition", name: "Change the wardrobe or subjects?", description: "Route the brief through Change or Preserve using the resolved run choice.", groupId: "group-adapt", position: { x: 1090, y: 1088 },
+      id: "wardrobe-choice", type: "logic.condition", version: 2, name: "Change the wardrobe or subjects?", description: "Route the brief through Change or Preserve using the resolved run choice.", groupId: "group-adapt", position: { x: 1090, y: 1088 },
       config: { path: "newOutfit", operator: "equals", compareValue: true },
     }),
     node({
@@ -265,7 +275,7 @@ export function createDefaultTikTokWorkflowGraph(): AutomationWorkflowGraph {
       id: "select-wardrobe", type: "logic.select-one", name: "Continue with the selected wardrobe rule", description: "Pass the one active wardrobe contract forward unchanged.", groupId: "group-adapt", position: { x: 1750, y: 1088 },
     }),
     node({
-      id: "location-choice", type: "logic.condition", name: "Change the location?", description: "Route the brief through Change or Preserve using the resolved run choice.", groupId: "group-adapt", position: { x: 1090, y: 1440 },
+      id: "location-choice", type: "logic.condition", version: 2, name: "Change the location?", description: "Route the brief through Change or Preserve using the resolved run choice.", groupId: "group-adapt", position: { x: 1090, y: 1440 },
       config: { path: "newLocation", operator: "equals", compareValue: true },
     }),
     node({
@@ -289,11 +299,11 @@ export function createDefaultTikTokWorkflowGraph(): AutomationWorkflowGraph {
       ] },
     }),
     node({
-      id: "text-route-rewrite", type: "logic.condition", name: "Write new on-screen text?", description: "Choose the rewrite route when the run asks for new wording.", groupId: "group-adapt", position: { x: 1750, y: 120 },
+      id: "text-route-rewrite", type: "logic.condition", version: 2, name: "Write new on-screen text?", description: "Choose the rewrite route when the run asks for new wording.", groupId: "group-adapt", position: { x: 1750, y: 120 },
       config: { path: "textStrategy", operator: "equals", compareValue: "rewrite" },
     }),
     node({
-      id: "text-route-keep", type: "logic.condition", name: "Keep the original text?", description: "Choose Keep when selected; otherwise continue to Remove.", groupId: "group-adapt", position: { x: 2080, y: 472 },
+      id: "text-route-keep", type: "logic.condition", version: 2, name: "Keep the original text?", description: "Choose Keep when selected; otherwise continue to Remove.", groupId: "group-adapt", position: { x: 2080, y: 472 },
       config: { path: "textStrategy", operator: "equals", compareValue: "keep" },
     }),
     aiNode({
@@ -394,7 +404,7 @@ export function createDefaultTikTokWorkflowGraph(): AutomationWorkflowGraph {
       ] },
     }),
     node({
-      id: "review-passed", type: "logic.condition", name: "Did every requirement pass?", description: "Use approved plans unchanged or repair only when QA found an actual failure.", groupId: "group-review", position: { x: 5050, y: 296 },
+      id: "review-passed", type: "logic.condition", version: 2, name: "Did every requirement pass?", description: "Use approved plans unchanged or repair only when QA found an actual failure.", groupId: "group-review", position: { x: 5050, y: 296 },
       config: { path: "review.passed", operator: "equals", compareValue: true },
     }),
     node({
@@ -438,7 +448,11 @@ export function createDefaultTikTokWorkflowGraph(): AutomationWorkflowGraph {
       config: { outcome: "failed", message: "{{ data.message }}" },
     }),
     node({
-      id: "generate-images", type: "generation.image", name: "Image Generator", description: "Create the checked slides from the same structured JSON contract used by Canvas Assistant.", position: { x: 7030, y: 120 },
+      id: "prepare-image-requests", type: "logic.prepare-slideshow-image-requests", name: "Prepare slideshow image requests", description: "Serialize the checked prompts and exact references into the generic image-request contract.", position: { x: 6700, y: 120 },
+    }),
+    node({
+      id: "generate-images", type: "generation.image", name: "Image Generator", description: "Generate exactly the prepared requests without adding creative rules.", position: { x: 7030, y: 120 },
+      version: 2,
       config: { modelId: "nano-banana-2", ratio: "9:16", resolution: "1K", concurrency: 3, maxAttempts: 3, partialFailure: "keep-successful" },
     }),
     node({
@@ -526,7 +540,7 @@ export function createDefaultTikTokWorkflowGraph(): AutomationWorkflowGraph {
     edge("assemble-contract", "result", "validate-slide-plans", "contract", "data"),
     edge("tiktok-source", "source", "validate-slide-plans", "source", "data"),
     edge("identity", "identity", "validate-slide-plans", "identity", "data"),
-    edge("validate-slide-plans", "plans", "generate-images", "plans"),
+    edge("validate-slide-plans", "plans", "prepare-image-requests", "plans"),
     edge("validate-slide-plans", "error", "repair-validation", "primary", "error"),
     edge("retry-validation", "current", "repair-validation", "context", "data"),
     edge("assemble-contract", "result", "repair-validation", "context", "data"),
@@ -534,8 +548,9 @@ export function createDefaultTikTokWorkflowGraph(): AutomationWorkflowGraph {
     edge("validate-slide-plans", "error", "assemble-retry-feedback", "input-error", "error"),
     edge("assemble-retry-feedback", "result", "retry-validation", "feedback", "retry"),
     edge("retry-validation", "exhausted", "retry-exhausted", "data", "error"),
-    edge("tiktok-source", "source", "generate-images", "source", "data"),
-    edge("identity", "identity", "generate-images", "identity", "data"),
+    edge("tiktok-source", "source", "prepare-image-requests", "source", "data"),
+    edge("identity", "identity", "prepare-image-requests", "identity", "data"),
+    edge("prepare-image-requests", "requests", "generate-images", "requests"),
     edge("generate-images", "assets", "add-to-canvas", "assets"),
     edge("tiktok-source", "source", "add-to-canvas", "source", "data"),
   ];

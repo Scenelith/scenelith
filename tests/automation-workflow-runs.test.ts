@@ -60,12 +60,97 @@ function finishGraph(outcome: "completed" | "failed"): AutomationWorkflowGraph {
   };
 }
 
+function inputSnapshotGraph(input: { sourceNodeId: string; identityId: string; referenceAssetId: string }, caption: { mode: "original" | "replacement" | "empty"; value?: string } = { mode: "original" }): AutomationWorkflowGraph {
+  return {
+    schemaVersion: 1,
+    settings: { ...DEFAULT_AUTOMATION_WORKFLOW_SETTINGS, timeoutSeconds: 120, maxCredits: 10 },
+    nodes: [
+      { id: "manual", type: "core.manual-trigger", version: 1, name: "Run", description: "", position: { x: 0, y: 0 }, groupId: null, config: {}, bindings: {}, disabled: false },
+      { id: "source", type: "input.tiktok-source", version: 2, name: "Source", description: "", position: { x: 180, y: 0 }, groupId: null, config: { source: input.sourceNodeId, captionMode: caption.mode, caption: caption.value || "" }, bindings: {}, disabled: false },
+      { id: "identity", type: "input.identity", version: 1, name: "Identity", description: "", position: { x: 180, y: 180 }, groupId: null, config: { identity: input.identityId, referenceGroup: "auto", optional: false }, bindings: {}, disabled: false },
+      { id: "references", type: "input.visual-references", version: 1, name: "References", description: "", position: { x: 180, y: 360 }, groupId: null, config: { references: [input.referenceAssetId], maxItems: 8, optional: false }, bindings: {}, disabled: false },
+      { id: "merge", type: "logic.merge", version: 1, name: "Frozen inputs", description: "", position: { x: 420, y: 180 }, groupId: null, config: { mode: "named-object", inputs: [
+        { id: "source-value", name: "source" },
+        { id: "identity-value", name: "identity" },
+        { id: "reference-value", name: "references" },
+      ] }, bindings: {}, disabled: false },
+      { id: "finish", type: "output.finish", version: 1, name: "Finish", description: "", position: { x: 680, y: 180 }, groupId: null, config: { outcome: "completed", message: "snapshot" }, bindings: {}, disabled: false },
+    ],
+    edges: [
+      { id: "run-source", source: "manual", sourcePort: "run", target: "source", targetPort: "run", role: "flow" },
+      { id: "run-identity", source: "manual", sourcePort: "run", target: "identity", targetPort: "run", role: "flow" },
+      { id: "run-references", source: "manual", sourcePort: "run", target: "references", targetPort: "run", role: "flow" },
+      { id: "source-merge", source: "source", sourcePort: "source", target: "merge", targetPort: "source-value", role: "flow" },
+      { id: "identity-merge", source: "identity", sourcePort: "identity", target: "merge", targetPort: "identity-value", role: "data" },
+      { id: "references-merge", source: "references", sourcePort: "references", target: "merge", targetPort: "reference-value", role: "data" },
+      { id: "merge-finish", source: "merge", sourcePort: "result", target: "finish", targetPort: "data", role: "flow" },
+    ],
+    groups: [],
+  };
+}
+
+function mediaUseGraph(input: { sourceNodeId: string; identityId: string; referenceAssetId: string }): AutomationWorkflowGraph {
+  return {
+    schemaVersion: 1,
+    settings: { ...DEFAULT_AUTOMATION_WORKFLOW_SETTINGS, timeoutSeconds: 120, maxCredits: 10 },
+    nodes: [
+      { id: "manual", type: "core.manual-trigger", version: 1, name: "Run", description: "", position: { x: 0, y: 0 }, groupId: null, config: {}, bindings: {}, disabled: false },
+      { id: "payload", type: "input.workflow-data", version: 1, name: "Task", description: "", position: { x: 180, y: 0 }, groupId: null, config: { value: { task: "Inspect the media" }, payloadPath: "" }, bindings: {}, disabled: false },
+      { id: "source", type: "input.tiktok-source", version: 2, name: "Source", description: "", position: { x: 180, y: 150 }, groupId: null, config: { source: input.sourceNodeId, captionMode: "original", caption: "" }, bindings: {}, disabled: false },
+      { id: "identity", type: "input.identity", version: 1, name: "Identity", description: "", position: { x: 180, y: 300 }, groupId: null, config: { identity: input.identityId, referenceGroup: "auto", optional: false }, bindings: {}, disabled: false },
+      { id: "references", type: "input.visual-references", version: 1, name: "References", description: "", position: { x: 180, y: 450 }, groupId: null, config: { references: [input.referenceAssetId], maxItems: 8, optional: false }, bindings: {}, disabled: false },
+      { id: "ai", type: "ai.structured-task", version: 2, name: "Inspect", description: "", position: { x: 460, y: 220 }, groupId: null, config: { modelId: "google/gemini-3.7-flash", userPrompt: "Inspect the connected media.", outputMode: "text", runWhen: "always", systemPrompt: "", creativity: "consistent", maxAttempts: 1, fallbackModelId: "", failureMode: "stop" }, bindings: {}, disabled: false },
+      { id: "finish", type: "output.finish", version: 1, name: "Finish", description: "", position: { x: 720, y: 220 }, groupId: null, config: { outcome: "completed", message: "done" }, bindings: {}, disabled: false },
+    ],
+    edges: [
+      { id: "run-payload", source: "manual", sourcePort: "run", target: "payload", targetPort: "run", role: "flow" },
+      { id: "run-source", source: "manual", sourcePort: "run", target: "source", targetPort: "run", role: "flow" },
+      { id: "run-identity", source: "manual", sourcePort: "run", target: "identity", targetPort: "run", role: "flow" },
+      { id: "run-references", source: "manual", sourcePort: "run", target: "references", targetPort: "run", role: "flow" },
+      { id: "payload-ai", source: "payload", sourcePort: "data", target: "ai", targetPort: "primary", role: "flow" },
+      { id: "source-ai", source: "source", sourcePort: "source", target: "ai", targetPort: "context", role: "data" },
+      { id: "references-ai", source: "references", sourcePort: "references", target: "ai", targetPort: "context", role: "data" },
+      { id: "identity-ai", source: "identity", sourcePort: "identity", target: "ai", targetPort: "identity", role: "data" },
+      { id: "ai-finish", source: "ai", sourcePort: "result", target: "finish", targetPort: "data", role: "flow" },
+    ],
+    groups: [],
+  };
+}
+
+async function seedSnapshotInputs(owner: Awaited<ReturnType<typeof seedOwner>>) {
+  const sourceAssetId = crypto.randomUUID();
+  const identityAssetId = crypto.randomUUID();
+  const referenceAssetId = crypto.randomUUID();
+  const identityId = crypto.randomUUID();
+  const sourceNodeId = `source-${crypto.randomUUID()}`;
+  const now = new Date().toISOString();
+  await db.prepare("INSERT INTO personas (id, workspace_id, name, notes, created_at, updated_at) VALUES (?, ?, 'Original person', 'Original notes', ?, ?)")
+    .run(identityId, owner.workspaceId, now, now);
+  await db.prepare(`INSERT INTO assets (id, workspace_id, project_id, kind, filename, storage_path, mime_type, created_at)
+    VALUES (?, ?, ?, 'scene', 'original-slide.png', 'snapshots/original-slide.png', 'image/png', ?)`).run(sourceAssetId, owner.workspaceId, owner.projectId, now);
+  await db.prepare(`INSERT INTO assets (id, workspace_id, persona_id, kind, role, filename, storage_path, mime_type, created_at)
+    VALUES (?, ?, ?, 'persona', 'reference', 'original-person.png', 'snapshots/original-person.png', 'image/png', ?)`).run(identityAssetId, owner.workspaceId, identityId, now);
+  await db.prepare(`INSERT INTO assets (id, workspace_id, project_id, kind, filename, storage_path, mime_type, created_at)
+    VALUES (?, ?, ?, 'library', 'original-reference.png', 'snapshots/original-reference.png', 'image/png', ?)`).run(referenceAssetId, owner.workspaceId, owner.projectId, now);
+  const projectGraph = {
+    nodes: [
+      { id: sourceNodeId, type: "frameNode", position: { x: 0, y: 0 }, data: { kind: "source", title: "Original caption", postId: "snapshot-post", sourceUrl: "https://www.tiktok.com/@test/photo/snapshot-post", tiktokMediaType: "slideshow" } },
+      { id: "source-slide", type: "frameNode", position: { x: 300, y: 0 }, data: { kind: "scene", title: "Screen 01", assetId: sourceAssetId, tiktokSourceNodeId: sourceNodeId } },
+    ],
+    edges: [],
+  };
+  const { writeProjectGraphSnapshot } = await import("../src/lib/postgres-db");
+  const written = await writeProjectGraphSnapshot(owner.projectId, projectGraph);
+  assert.equal(written.ok, true);
+  return { sourceAssetId, identityAssetId, referenceAssetId, identityId, sourceNodeId, projectGraph };
+}
+
 test("a draft test run is pinned, observable and side-effect mode aware", async () => {
   const owner = await seedOwner();
   const workflow = await repository.createAutomationWorkflow({ userId: owner.userId, projectId: owner.projectId, name: "Draft test" });
   const saved = await repository.saveAutomationWorkflowDraft({ userId: owner.userId, workflowId: workflow!.workflow.id, baseDraftVersionId: workflow!.draft!.id, graph: finishGraph("completed") });
   const production = await runs.enqueueAutomationWorkflowRun({ userId: owner.userId, projectId: owner.projectId, workflowId: workflow!.workflow.id, runtimeInputs: {}, mode: "production" });
-  assert.equal("error" in production ? production.error : "", "Publish the workflow before running it");
+  assert.equal("error" in production ? production.error : "", "Take the workflow live before running it");
   const queued = await runs.enqueueAutomationWorkflowRun({ userId: owner.userId, projectId: owner.projectId, workflowId: workflow!.workflow.id, runtimeInputs: {}, mode: "test" });
   assert.ok("runId" in queued);
   await runs.drainAutomationWorkflowRuns();
@@ -73,7 +158,7 @@ test("a draft test run is pinned, observable and side-effect mode aware", async 
   assert.equal(run?.status, "completed");
   assert.equal(run?.runKind, "test");
   assert.equal(run?.workflowVersionId, saved?.draft?.id);
-  assert.deepEqual(run?.events.map((event) => event.type), ["run.queued", "node.started", "node.completed", "node.started", "node.completed", "run.completed"]);
+  assert.deepEqual(run?.events.map((event) => event.type), ["run.queued", "node.input_snapshotted", "node.started", "node.completed", "run.completed"]);
   assert.deepEqual(run?.nodeRuns.map((node) => node.outputPorts), [["run"], ["result"]]);
   const captured = await fixtures.createAutomationWorkflowFixture({
     userId: owner.userId,
@@ -112,6 +197,92 @@ test("a saved fixture previews one pinned node and exposes only its port data", 
   assert.equal(await runs.getAutomationWorkflowNodeRunDetails(intruder.userId, queued!.runId, "finish"), null);
 });
 
+test("queued runs keep the exact source, identity and visual references captured at enqueue time", async () => {
+  const owner = await seedOwner();
+  const inputs = await seedSnapshotInputs(owner);
+  const workflow = await repository.createAutomationWorkflow({ userId: owner.userId, projectId: owner.projectId, name: "Immutable inputs" });
+  await repository.saveAutomationWorkflowDraft({
+    userId: owner.userId,
+    workflowId: workflow!.workflow.id,
+    baseDraftVersionId: workflow!.draft!.id,
+    graph: inputSnapshotGraph(inputs),
+  });
+  const queued = await runs.enqueueAutomationWorkflowRun({ userId: owner.userId, projectId: owner.projectId, workflowId: workflow!.workflow.id, runtimeInputs: {}, mode: "test" });
+  assert.ok("runId" in queued);
+
+  await db.prepare("UPDATE personas SET name = 'Changed person', notes = 'Changed notes', updated_at = ? WHERE id = ?")
+    .run(new Date().toISOString(), inputs.identityId);
+  await db.prepare("UPDATE assets SET filename = 'changed-person.png', storage_path = 'snapshots/changed-person.png' WHERE id = ?")
+    .run(inputs.identityAssetId);
+  await db.prepare("UPDATE assets SET filename = 'changed-reference.png', storage_path = 'snapshots/changed-reference.png' WHERE id = ?")
+    .run(inputs.referenceAssetId);
+  const changedGraph = structuredClone(inputs.projectGraph);
+  changedGraph.nodes[0].data.title = "Changed caption";
+  const { writeProjectGraphSnapshot } = await import("../src/lib/postgres-db");
+  const changed = await writeProjectGraphSnapshot(owner.projectId, changedGraph);
+  assert.equal(changed.ok, true);
+
+  await runs.drainAutomationWorkflowRuns();
+  const completed = await runs.getAutomationWorkflowRun(owner.userId, "runId" in queued ? queued.runId : "");
+  assert.equal(completed?.status, "completed");
+  const finalData = (completed?.output as { finish?: { result?: { data?: Record<string, unknown> } } })?.finish?.result?.data as {
+    source: { caption: string; label: string; slides: Array<{ filename: string; path: string }> };
+    identity: { name: string; notes: string; assets: Array<{ filename: string; path: string }> };
+    references: { assets: Array<{ filename: string; path: string }> };
+  };
+  assert.equal(finalData.source.caption, "Original caption");
+  assert.equal(finalData.source.label, "Original caption");
+  assert.deepEqual(finalData.source.slides.map((slide) => [slide.filename, slide.path]), [["original-slide.png", "snapshots/original-slide.png"]]);
+  assert.equal(finalData.identity.name, "Original person");
+  assert.equal(finalData.identity.notes, "Original notes");
+  assert.deepEqual(finalData.identity.assets.map((asset) => [asset.filename, asset.path]), [["original-person.png", "snapshots/original-person.png"]]);
+  assert.deepEqual(finalData.references.assets.map((asset) => [asset.filename, asset.path]), [["original-reference.png", "snapshots/original-reference.png"]]);
+  assert.deepEqual(completed?.nodeRuns.filter((node) => ["manual", "source", "identity", "references"].includes(node.nodeId)).map((node) => node.status), ["completed", "completed", "completed", "completed"]);
+  assert.equal(completed?.events.filter((event) => event.type === "node.input_snapshotted").length, 4);
+});
+
+test("a referenced asset revoked after enqueue fails explicitly when a later step tries to use it", async () => {
+  const owner = await seedOwner();
+  const inputs = await seedSnapshotInputs(owner);
+  const workflow = await repository.createAutomationWorkflow({ userId: owner.userId, projectId: owner.projectId, name: "Revoked media" });
+  await repository.saveAutomationWorkflowDraft({
+    userId: owner.userId,
+    workflowId: workflow!.workflow.id,
+    baseDraftVersionId: workflow!.draft!.id,
+    graph: mediaUseGraph(inputs),
+  });
+  const queued = await runs.enqueueAutomationWorkflowRun({ userId: owner.userId, projectId: owner.projectId, workflowId: workflow!.workflow.id, runtimeInputs: {}, mode: "test" });
+  assert.ok("runId" in queued);
+  await db.prepare("DELETE FROM assets WHERE id = ?").run(inputs.referenceAssetId);
+
+  await runs.drainAutomationWorkflowRuns();
+  const failed = await runs.getAutomationWorkflowRun(owner.userId, "runId" in queued ? queued.runId : "");
+  assert.equal(failed?.status, "failed");
+  assert.equal(failed?.code, "AI_MEDIA_UNAVAILABLE");
+  assert.match(failed?.error || "", /Connected image .* is not available to this workflow/);
+  assert.equal(failed?.nodeRuns.find((node) => node.nodeId === "references")?.status, "completed");
+  assert.equal(failed?.nodeRuns.find((node) => node.nodeId === "ai")?.status, "failed");
+});
+
+test("TikTok source v2 can intentionally snapshot an empty caption without falling back to the source title", async () => {
+  const owner = await seedOwner();
+  const inputs = await seedSnapshotInputs(owner);
+  const workflow = await repository.createAutomationWorkflow({ userId: owner.userId, projectId: owner.projectId, name: "No caption" });
+  await repository.saveAutomationWorkflowDraft({
+    userId: owner.userId,
+    workflowId: workflow!.workflow.id,
+    baseDraftVersionId: workflow!.draft!.id,
+    graph: inputSnapshotGraph(inputs, { mode: "empty" }),
+  });
+  const queued = await runs.enqueueAutomationWorkflowRun({ userId: owner.userId, projectId: owner.projectId, workflowId: workflow!.workflow.id, runtimeInputs: {}, mode: "test" });
+  assert.ok("runId" in queued);
+  await runs.drainAutomationWorkflowRuns();
+  const completed = await runs.getAutomationWorkflowRun(owner.userId, "runId" in queued ? queued.runId : "");
+  const data = (completed?.output as { finish?: { result?: { data?: { source?: { caption?: string; label?: string } } } } })?.finish?.result?.data;
+  assert.equal(data?.source?.caption, "");
+  assert.equal(data?.source?.label, "Original caption");
+});
+
 test("retry creates a linked run and reuses only safe upstream outputs", async () => {
   const owner = await seedOwner();
   const workflow = await repository.createAutomationWorkflow({ userId: owner.userId, projectId: owner.projectId, name: "Replay" });
@@ -121,6 +292,7 @@ test("retry creates a linked run and reuses only safe upstream outputs", async (
   await runs.drainAutomationWorkflowRuns();
   const failed = await runs.getAutomationWorkflowRun(owner.userId, "runId" in queued ? queued.runId : "");
   assert.equal(failed?.status, "failed");
+  const sourceSnapshot = await db.prepare("SELECT input_snapshot_json FROM automation_runs WHERE id = ?").get(failed!.id) as { input_snapshot_json: unknown };
   const replay = await runs.retryAutomationWorkflowRun({ userId: owner.userId, runId: failed!.id, nodeId: "finish" });
   assert.ok("runId" in replay);
   if (!("runId" in replay) || !replay.runId) throw new Error("Replay was not queued");
@@ -130,6 +302,8 @@ test("retry creates a linked run and reuses only safe upstream outputs", async (
   assert.equal(replayed?.runKind, "replay");
   assert.equal(replayed?.replayOfRunId, failed?.id);
   assert.equal(replayed?.reusedNodeCount, 1);
+  const replaySnapshot = await db.prepare("SELECT input_snapshot_json FROM automation_runs WHERE id = ?").get(replayed!.id) as { input_snapshot_json: unknown };
+  assert.deepEqual(replaySnapshot.input_snapshot_json, sourceSnapshot.input_snapshot_json);
   assert.equal(replayed?.nodeRuns.find((node) => node.nodeId === "manual")?.reusedFromNodeRunId, failed?.nodeRuns.find((node) => node.nodeId === "manual")?.id);
   assert.ok(replayed?.events.some((event) => event.type === "node.reused"));
 });
@@ -191,8 +365,8 @@ test("Map creates durable pinned child runs and rejects recursive bindings", asy
   const childPublished = await repository.publishAutomationWorkflow(owner.userId, child!.workflow.id);
   const parent = await repository.createAutomationWorkflow({ userId: owner.userId, projectId: owner.projectId, name: "Parent" });
   await repository.saveAutomationWorkflowDraft({ userId: owner.userId, workflowId: parent!.workflow.id, baseDraftVersionId: parent!.draft!.id, graph: mapGraph() });
-  await repository.publishAutomationWorkflow(owner.userId, parent!.workflow.id);
   await credentials.bindAutomationSubworkflow({ userId: owner.userId, workflowId: parent!.workflow.id, workspaceId: owner.workspaceId, slotKey: "item-workflow", targetWorkflowId: child!.workflow.id });
+  await repository.publishAutomationWorkflow(owner.userId, parent!.workflow.id);
   await assert.rejects(credentials.bindAutomationSubworkflow({ userId: owner.userId, workflowId: parent!.workflow.id, workspaceId: owner.workspaceId, slotKey: "self", targetWorkflowId: parent!.workflow.id }), /itself/);
   await assert.rejects(credentials.bindAutomationSubworkflow({ userId: owner.userId, workflowId: child!.workflow.id, workspaceId: owner.workspaceId, slotKey: "cycle", targetWorkflowId: parent!.workflow.id }), /recursive workflow cycle/);
   const queued = await runs.enqueueAutomationWorkflowRun({ userId: owner.userId, projectId: owner.projectId, workflowId: parent!.workflow.id, runtimeInputs: { "workflow-input.value": [{ id: 1 }, { id: 2 }, { id: 3 }] } });
@@ -205,9 +379,13 @@ test("Map creates durable pinned child runs and rejects recursive bindings", asy
   await runs.drainAutomationWorkflowRuns();
   const completed = await runs.getAutomationWorkflowRun(owner.userId, "runId" in queued ? queued.runId : "");
   assert.equal(completed?.status, "completed");
-  const children = await db.prepare("SELECT status, workflow_version_id, item_index FROM automation_runs WHERE parent_run_id = ? ORDER BY item_index").all(completed!.id) as Array<{ status: string; workflow_version_id: string; item_index: number }>;
+  const children = await db.prepare("SELECT status, workflow_version_id, item_index, input_snapshot_json FROM automation_runs WHERE parent_run_id = ? ORDER BY item_index").all(completed!.id) as Array<{ status: string; workflow_version_id: string; item_index: number; input_snapshot_json: unknown }>;
   assert.deepEqual(children.map((row) => [row.status, row.item_index]), [["completed", 0], ["completed", 1], ["completed", 2]]);
   assert.ok(children.every((row) => row.workflow_version_id === childPublished!.detail!.published!.id));
+  assert.deepEqual(children.map((row) => {
+    const snapshot = (typeof row.input_snapshot_json === "string" ? JSON.parse(row.input_snapshot_json) : row.input_snapshot_json) as Record<string, { output: { data: unknown } }>;
+    return snapshot["workflow-input"].output.data;
+  }), [{ id: 1 }, { id: 2 }, { id: 3 }]);
   assert.equal(completed?.treeRunCount, 4);
   assert.equal(completed?.treeNodeExecutions, 13);
   await runs.reserveAutomationTreeUsage(completed!.id, "asset", 1, "generate:slide-1");
@@ -257,6 +435,9 @@ test("run preflight blocks a missing child workflow connection before queuing th
   const parentGraph = mapGraph();
   const parent = await repository.createAutomationWorkflow({ userId: owner.userId, projectId: owner.projectId, name: "Invalid child mapping" });
   await repository.saveAutomationWorkflowDraft({ userId: owner.userId, workflowId: parent!.workflow.id, baseDraftVersionId: parent!.draft!.id, graph: parentGraph });
+  const live = await repository.publishAutomationWorkflow(owner.userId, parent!.workflow.id);
+  assert.equal(live?.published, false);
+  assert.match(live?.validation.issues[0]?.message || "", /Connect workflow slot/);
   const result = await runs.enqueueAutomationWorkflowRun({ userId: owner.userId, projectId: owner.projectId, workflowId: parent!.workflow.id, runtimeInputs: { "workflow-input.value": [{ id: 1 }] }, mode: "test" });
   assert.equal(result.status, 409);
   assert.match("error" in result ? result.error : "", /Connect workflow slot/);
@@ -271,8 +452,8 @@ test("the root workflow depth limit governs the entire nested execution tree", a
 
   const middle = await repository.createAutomationWorkflow({ userId: owner.userId, projectId: owner.projectId, name: "Middle" });
   await repository.saveAutomationWorkflowDraft({ userId: owner.userId, workflowId: middle!.workflow.id, baseDraftVersionId: middle!.draft!.id, graph: nestedGraph("leaf") });
-  await repository.publishAutomationWorkflow(owner.userId, middle!.workflow.id);
   await credentials.bindAutomationSubworkflow({ userId: owner.userId, workflowId: middle!.workflow.id, workspaceId: owner.workspaceId, slotKey: "leaf", targetWorkflowId: leaf!.workflow.id });
+  await repository.publishAutomationWorkflow(owner.userId, middle!.workflow.id);
 
   const rootGraph = nestedGraph("middle");
   rootGraph.settings = { ...DEFAULT_AUTOMATION_WORKFLOW_SETTINGS, ...rootGraph.settings, maxSubworkflowDepth: 1 };
@@ -289,6 +470,14 @@ test("credential vault encrypts payloads and never lists secret material", async
   const owner = await seedOwner();
   const created = await credentials.createAutomationCredential({ userId: owner.userId, workspaceId: owner.workspaceId, name: "API", kind: "bearer", payload: { token: "super-secret-token-value" } });
   assert.ok(created?.id);
+  await assert.rejects(
+    credentials.createAutomationCredential({ userId: owner.userId, workspaceId: owner.workspaceId, name: "Ambiguous", kind: "bearer", payload: { value: "old-alias" } }),
+    /require exactly: token/,
+  );
+  await assert.rejects(
+    credentials.createAutomationCredential({ userId: owner.userId, workspaceId: owner.workspaceId, name: "Managed header", kind: "header", payload: { headerName: "Host", value: "example.com" } }),
+    /managed by Scenelith/,
+  );
   const stored = await db.prepare("SELECT encrypted_payload FROM automation_credentials WHERE id = ?").get(created!.id) as { encrypted_payload: string };
   assert.ok(!stored.encrypted_payload.includes("super-secret-token-value"));
   const listed = await credentials.listAutomationCredentials(owner.userId, owner.workspaceId);
@@ -330,14 +519,75 @@ test("webhook triggers are paused by default and enqueue only after token verifi
   assert.equal(run?.runKind, "trigger");
   const changed = await repository.saveAutomationWorkflowDraft({ userId: owner.userId, workflowId: workflow!.workflow.id, baseDraftVersionId: null, graph: childGraph() });
   const republished = await repository.publishAutomationWorkflow(owner.userId, workflow!.workflow.id);
-  assert.equal(republished?.pausedTriggerCount, 1);
+  assert.equal(republished?.published, false);
+  assert.match(republished?.validation.issues[0]?.message || "", /Active trigger .* incompatible/);
   assert.ok(changed?.draft);
   const trigger = await db.prepare("SELECT status FROM automation_workflow_triggers WHERE id = ?").get(created!.trigger.id) as { status: string };
-  assert.equal(trigger.status, "paused");
-  await assert.rejects(triggers.createAutomationWorkflowTrigger({ userId: owner.userId, workflowId: workflow!.workflow.id, projectId: owner.projectId, type: "canvas-event", name: "Unknown", config: { event: "project.updated" }, inputs: { "workflow-input.value": { hello: "world" } } }), /supported canvas event/);
+  assert.equal(trigger.status, "active");
+  await assert.rejects(triggers.createAutomationWorkflowTrigger({ userId: owner.userId, workflowId: workflow!.workflow.id, projectId: owner.projectId, type: "canvas-event", name: "Unknown", config: { event: "project.updated" }, inputs: {} }), /supported canvas event/);
   const deleted = await triggers.deleteAutomationWorkflowTrigger(owner.userId, created!.trigger.id);
   assert.equal(deleted?.id, created!.trigger.id);
   assert.equal(await db.prepare("SELECT id FROM automation_workflow_triggers WHERE id = ?").get(created!.trigger.id), undefined);
+});
+
+test("an accepted trigger delivery keeps its exact live version and admission snapshot", async () => {
+  const owner = await seedOwner();
+  const workflow = await repository.createAutomationWorkflow({ userId: owner.userId, projectId: owner.projectId, name: "Pinned webhook" });
+  await repository.saveAutomationWorkflowDraft({ userId: owner.userId, workflowId: workflow!.workflow.id, baseDraftVersionId: workflow!.draft!.id, graph: finishGraph("completed") });
+  const firstLive = await repository.publishAutomationWorkflow(owner.userId, workflow!.workflow.id);
+  const firstVersionId = firstLive!.detail!.published!.id;
+  const created = await triggers.createAutomationWorkflowTrigger({
+    userId: owner.userId,
+    workflowId: workflow!.workflow.id,
+    projectId: owner.projectId,
+    type: "webhook",
+    name: "Pinned incoming",
+    overlapPolicy: "skip",
+    maxConcurrentRuns: 2,
+    config: {},
+    inputs: {},
+  });
+  await triggers.setAutomationWorkflowTriggerStatus(owner.userId, created!.trigger.id, "active");
+  const accepted = await triggers.fireAutomationWebhook(created!.trigger.id, created!.token!, { exact: "v1" }, "pinned-v1");
+  assert.ok(accepted?.deliveryId);
+
+  const secondGraph = structuredClone(finishGraph("completed"));
+  secondGraph.nodes.find((node) => node.id === "finish")!.config.message = "v2";
+  await repository.saveAutomationWorkflowDraft({ userId: owner.userId, workflowId: workflow!.workflow.id, baseDraftVersionId: null, graph: secondGraph });
+  const secondLive = await repository.publishAutomationWorkflow(owner.userId, workflow!.workflow.id);
+  const secondVersionId = secondLive!.detail!.published!.id;
+  assert.notEqual(secondVersionId, firstVersionId);
+  const active = await db.prepare("SELECT active_version_id FROM automation_workflow_triggers WHERE id = ?").get(created!.trigger.id) as { active_version_id: string };
+  assert.equal(active.active_version_id, secondVersionId);
+
+  const snapshot = await db.prepare(`SELECT workflow_version_id, trigger_key, overlap_policy, max_concurrent_runs, payload_json, deployment_json
+    FROM automation_trigger_deliveries WHERE id = ?`).get(accepted!.deliveryId) as {
+      workflow_version_id: string; trigger_key: string; overlap_policy: string; max_concurrent_runs: number; payload_json: unknown; deployment_json: unknown;
+    };
+  assert.equal(snapshot.workflow_version_id, firstVersionId);
+  assert.equal(snapshot.trigger_key, created!.trigger.id);
+  assert.equal(snapshot.overlap_policy, "skip");
+  assert.equal(snapshot.max_concurrent_runs, 2);
+  const payloadSnapshot = typeof snapshot.payload_json === "string" ? JSON.parse(snapshot.payload_json) : snapshot.payload_json;
+  const deploymentSnapshot = typeof snapshot.deployment_json === "string" ? JSON.parse(snapshot.deployment_json) : snapshot.deployment_json;
+  assert.deepEqual(payloadSnapshot, { contractVersion: 1, type: "webhook", payload: { exact: "v1" } });
+  assert.deepEqual(deploymentSnapshot, { version: 1, workflows: { [workflow!.workflow.id]: { credentials: {}, subworkflows: {} } } });
+
+  await deliveries.drainAutomationTriggerDeliveries();
+  stopScheduledWorkflowDrain();
+  const storedRun = await db.prepare("SELECT id, workflow_version_id, overlap_policy, max_concurrent_runs, trigger_payload_json FROM automation_runs WHERE trigger_delivery_id = ?")
+    .get(accepted!.deliveryId) as { id: string; workflow_version_id: string; overlap_policy: string; max_concurrent_runs: number; trigger_payload_json: unknown };
+  assert.equal(storedRun.workflow_version_id, firstVersionId);
+  assert.equal(storedRun.overlap_policy, "skip");
+  assert.equal(storedRun.max_concurrent_runs, 2);
+  assert.deepEqual(
+    typeof storedRun.trigger_payload_json === "string" ? JSON.parse(storedRun.trigger_payload_json) : storedRun.trigger_payload_json,
+    payloadSnapshot,
+  );
+  await runs.drainAutomationWorkflowRuns();
+  const completed = await runs.getAutomationWorkflowRun(owner.userId, storedRun.id);
+  assert.equal(completed?.status, "completed");
+  assert.equal((completed?.output as { finish?: { result?: { message?: string } } })?.finish?.result?.message, "completed");
 });
 
 test("product events survive the request boundary and fan out idempotently", async () => {
@@ -355,6 +605,13 @@ test("product events survive the request boundary and fan out idempotently", asy
     inputs: {},
   });
   await triggers.setAutomationWorkflowTriggerStatus(owner.userId, created!.trigger.id, "active");
+  const outsider = await seedOwner();
+  assert.equal(await triggers.fireAutomationCanvasEvent({
+    userId: outsider.userId,
+    projectId: owner.projectId,
+    event: "generation.completed",
+    payload: { generationId: "forbidden", nodeId: "node-1", assetId: "asset-1", mediaType: "image", operation: "generation" },
+  }), null);
   const event = await triggers.fireAutomationCanvasEvent({
     userId: owner.userId,
     projectId: owner.projectId,

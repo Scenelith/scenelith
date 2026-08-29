@@ -5,6 +5,30 @@ import { requireAutomationPermission } from "./permissions";
 export type AutomationCredentialKind = "api-key" | "bearer" | "basic" | "header";
 export type AutomationCredentialPayload = Record<string, string>;
 
+const managedHttpHeaders = new Set(["host", "connection", "transfer-encoding", "content-length", "proxy-authorization", "upgrade"]);
+
+function exactCredentialPayload(kind: AutomationCredentialKind, payload: AutomationCredentialPayload) {
+  const expected = kind === "basic" ? ["username", "password"]
+    : kind === "header" ? ["headerName", "value"]
+      : kind === "bearer" ? ["token"]
+        : ["apiKey"];
+  const keys = Object.keys(payload).sort();
+  if (keys.length !== expected.length || expected.some((key) => !keys.includes(key))) {
+    throw Object.assign(new Error(`${kind} credentials require exactly: ${expected.join(", ")}`), { code: "CREDENTIAL_PAYLOAD_INVALID" });
+  }
+  for (const key of expected) {
+    if (!String(payload[key] || "").trim()) throw Object.assign(new Error(`Credential field ${key} cannot be empty`), { code: "CREDENTIAL_PAYLOAD_INVALID" });
+    if (/\r|\n/.test(payload[key])) throw Object.assign(new Error(`Credential field ${key} cannot contain a line break`), { code: "CREDENTIAL_PAYLOAD_INVALID" });
+  }
+  if (kind === "header") {
+    const headerName = payload.headerName.trim();
+    if (!/^[!#$%&'*+.^_`|~0-9A-Za-z-]+$/.test(headerName) || managedHttpHeaders.has(headerName.toLowerCase())) {
+      throw Object.assign(new Error("Credential header name is invalid or managed by Scenelith"), { code: "CREDENTIAL_PAYLOAD_INVALID" });
+    }
+  }
+  return Object.fromEntries(expected.map((key) => [key, payload[key]]));
+}
+
 function encryptionKeys() {
   const encodedKeys = (process.env.AUTOMATION_CREDENTIAL_ENCRYPTION_KEYS || process.env.AUTOMATION_CREDENTIAL_ENCRYPTION_KEY || "").split(",").map((value) => value.trim()).filter(Boolean);
   const keys = encodedKeys.map((encoded) => Buffer.from(encoded, "base64"));
@@ -50,21 +74,23 @@ export async function createAutomationCredential(input: { userId: string; worksp
   await requireAutomationPermission(input.userId, input.workspaceId, "automation.credentials.manage");
   const id = randomUUID();
   const now = new Date().toISOString();
+  const payload = exactCredentialPayload(input.kind, input.payload);
   await db.prepare(`INSERT INTO automation_credentials
     (id, workspace_id, name, kind, encrypted_payload, encryption_version, fingerprint, created_by, created_at, updated_at)
     VALUES (?, ?, ?, ?, ?, 1, ?, ?, ?, ?)`)
-    .run(id, input.workspaceId, input.name.trim().slice(0, 120), input.kind, encrypt(input.payload), fingerprint(input.payload), input.userId, now, now);
-  return { id, workspaceId: input.workspaceId, name: input.name.trim().slice(0, 120), kind: input.kind, fingerprint: fingerprint(input.payload), createdAt: now, updatedAt: now, lastUsedAt: null };
+    .run(id, input.workspaceId, input.name.trim().slice(0, 120), input.kind, encrypt(payload), fingerprint(payload), input.userId, now, now);
+  return { id, workspaceId: input.workspaceId, name: input.name.trim().slice(0, 120), kind: input.kind, fingerprint: fingerprint(payload), createdAt: now, updatedAt: now, lastUsedAt: null };
 }
 
 export async function rotateAutomationCredential(input: { userId: string; credentialId: string; payload: AutomationCredentialPayload }) {
-  const row = await db.prepare("SELECT workspace_id FROM automation_credentials WHERE id = ?").get(input.credentialId) as { workspace_id: string } | undefined;
+  const row = await db.prepare("SELECT workspace_id, kind FROM automation_credentials WHERE id = ?").get(input.credentialId) as { workspace_id: string; kind: AutomationCredentialKind } | undefined;
   if (!row || !await userCanAccessWorkspace(input.userId, row.workspace_id)) return null;
   await requireAutomationPermission(input.userId, row.workspace_id, "automation.credentials.manage");
   const now = new Date().toISOString();
+  const payload = exactCredentialPayload(row.kind, input.payload);
   await db.prepare("UPDATE automation_credentials SET encrypted_payload = ?, encryption_version = encryption_version + 1, fingerprint = ?, updated_at = ? WHERE id = ?")
-    .run(encrypt(input.payload), fingerprint(input.payload), now, input.credentialId);
-  return { id: input.credentialId, workspaceId: row.workspace_id, fingerprint: fingerprint(input.payload), updatedAt: now };
+    .run(encrypt(payload), fingerprint(payload), now, input.credentialId);
+  return { id: input.credentialId, workspaceId: row.workspace_id, fingerprint: fingerprint(payload), updatedAt: now };
 }
 
 export async function deleteAutomationCredential(input: { userId: string; credentialId: string }) {
@@ -88,7 +114,7 @@ export async function resolveAutomationCredential(input: { workflowId: string; w
   if (!row) throw Object.assign(new Error(`Credential slot “${input.slotKey}” is not connected`), { code: "CREDENTIAL_BINDING_MISSING" });
   const now = new Date().toISOString();
   await db.prepare("UPDATE automation_credentials SET last_used_at = ? WHERE id = ?").run(now, row.id);
-  return { id: row.id, kind: row.kind, payload: decrypt(row.encrypted_payload) };
+  return { id: row.id, kind: row.kind, payload: exactCredentialPayload(row.kind, decrypt(row.encrypted_payload)) };
 }
 
 export async function bindAutomationCredential(input: { userId: string; workflowId: string; workspaceId: string; slotKey: string; credentialId: string }) {
@@ -119,7 +145,7 @@ export async function bindAutomationSubworkflow(input: { userId: string; workflo
     const source = await db.prepare("SELECT id FROM automation_workflows WHERE id = ? AND workspace_id = ?").get(input.workflowId, input.workspaceId);
     if (!source) throw new Error("Workflow must belong to the selected workspace");
     const target = await db.prepare("SELECT id FROM automation_workflows WHERE id = ? AND workspace_id = ? AND published_version_id IS NOT NULL").get(input.targetWorkflowId, input.workspaceId);
-    if (!target) throw new Error("Target workflow must be published in the same workspace");
+    if (!target) throw new Error("Target workflow must be live in the same workspace");
     const cycle = await db.prepare(`WITH RECURSIVE dependencies(workflow_id) AS (
       SELECT ?::text UNION
       SELECT binding.target_workflow_id FROM automation_workflow_bindings binding JOIN dependencies dependency ON binding.workflow_id = dependency.workflow_id

@@ -6,11 +6,66 @@ import { createDefaultTikTokWorkflowGraph } from "../src/lib/automation-workflow
 import { AUTOMATION_IDENTITY_REFERENCE_INSTRUCTION, AUTOMATION_NO_TEXT_AVOID_INSTRUCTION, AUTOMATION_SOURCE_REFERENCE_INSTRUCTION } from "../src/lib/generation-prompt-contract";
 import { validateAutomationStructuredValue } from "../src/lib/automation-workflows/json-schema";
 import { parseAutomationSlidePlanSet } from "../src/lib/automation-workflows/slide-plan-contract";
+import { parseAutomationImageGenerationRequestBatch } from "../src/lib/automation-workflows/image-generation-request";
 import type { AutomationWorkflowGraph } from "../src/lib/automation-workflows/types";
 import { validateAutomationWorkflowGraph } from "../src/lib/automation-workflows/validation";
-import { DEFAULT_AUTOMATION_CREATIVE_CONTROLS } from "../src/lib/automation-workflows/creative-direction-contract";
+import { DEFAULT_AUTOMATION_CREATIVE_CONTROLS, DEFAULT_AUTOMATION_REQUIREMENT_CATEGORIES, DEFAULT_AUTOMATION_REQUIREMENT_PLACEMENTS } from "../src/lib/automation-workflows/creative-direction-contract";
+import { parseAutomationGeneratedAssets, parseAutomationPortValue } from "../src/lib/automation-workflows/port-contracts";
 
 const context = { runId: "run", userId: "user", workspaceId: "workspace", projectId: "project", runtimeInputs: { "source.source": "canvas-source" } };
+const runContextValue = () => ({ runId: context.runId, projectId: context.projectId, startedBy: context.userId, trigger: null });
+const sourceValue = (sourceNodeId = "canvas-source") => ({
+  sourceNodeId,
+  label: "Source",
+  caption: "",
+  slides: [{ index: 1, assetId: "source-asset", filename: "source.png", path: "source.png", mimeType: "image/png", analysisPath: "source.png", analysisMimeType: "image/png", title: "Screen 01" }],
+});
+const generatedAssetsValue = () => ({
+  items: [{ requestKey: "1", prompt: "Create slide 1", referenceAssetIds: [], referenceRoles: [], referenceLabels: [], presentation: { index: 1, role: "scene", overlayText: "", sourceAssetId: "source-asset" }, metadata: {}, nodeId: "generated-node", generationId: "generation", modelId: "image-model", aspectRatio: "1:1", resolution: "1K", outputUrl: "/api/assets/generated", assetId: "generated", creditCost: 1 }],
+  failures: [],
+  model: { id: "image-model", label: "Image model" },
+  effectiveSettings: { aspectRatio: "1:1", resolution: "1K", concurrency: 1, attempts: 1 },
+});
+const canvasResultValue = () => ({ nodeIds: ["generated-node"], noteId: null, sourceNodeId: "canvas-source", added: 1, failures: [] });
+
+test("historical image-generator outputs normalize into the current generated-assets contract", () => {
+  const parsed = parseAutomationGeneratedAssets({
+    items: [{
+      index: 1,
+      role: "scene",
+      prompt: "Create slide 1",
+      promptContract: { reference_plan: [{ token: "@Source_composition_1_1" }] },
+      referenceAssetIds: ["source-asset"],
+      overlayText: "",
+      sourceAssetId: "source-asset",
+      nodeId: "generated-node",
+      generationId: "generation",
+      modelId: "image-model",
+      aspectRatio: "1:1",
+      resolution: "1K",
+      outputUrl: "/api/assets/generated",
+      assetId: "generated",
+      creditCost: 1,
+    }],
+    failures: [{ index: 2, error: "provider failed" }],
+    model: { id: "image-model", label: "Image model", defaultRatio: "1:1", defaultResolution: "1K" },
+  });
+  assert.equal(parsed.items[0]?.requestKey, "1");
+  assert.deepEqual(parsed.items[0]?.referenceLabels, ["@Source_composition_1_1"]);
+  assert.deepEqual(parsed.failures, [{ key: "2", error: "provider failed" }]);
+  assert.deepEqual(parsed.effectiveSettings, { aspectRatio: "1:1", resolution: "1K", concurrency: 1, attempts: 1 });
+});
+const creativePreparationConfig = {
+  controls: DEFAULT_AUTOMATION_CREATIVE_CONTROLS,
+  requirementCategories: DEFAULT_AUTOMATION_REQUIREMENT_CATEGORIES,
+  requirementPlacements: DEFAULT_AUTOMATION_REQUIREMENT_PLACEMENTS,
+  briefPath: "creativeBrief",
+  policyPath: "creativeDirectionPolicy",
+  minConfidence: 0.9,
+  maxBriefCharacters: 5_000,
+  maxRequirements: 24,
+  allowIgnoredClauses: false,
+};
 
 function checkedPlanSet() {
   return {
@@ -36,6 +91,13 @@ function checkedPlanSet() {
   };
 }
 
+function checkedImageRequestBatch() {
+  return {
+    schemaVersion: 1 as const,
+    requests: [{ key: "1", prompt: "{\"task\":\"Create slide 1\"}", referenceAssetIds: [], referenceRoles: [], referenceLabels: [], presentation: { index: 1, role: "scene", overlayText: "", sourceAssetId: "source-asset" }, metadata: { index: 1 } }],
+  };
+}
+
 function linearGraph(aiConfig: Record<string, unknown> = {}): AutomationWorkflowGraph {
   return {
     schemaVersion: 1,
@@ -44,15 +106,17 @@ function linearGraph(aiConfig: Record<string, unknown> = {}): AutomationWorkflow
       { id: "source", type: "input.tiktok-source", version: 1, name: "Source", description: "", position: { x: 100, y: 0 }, groupId: null, config: { source: "source" }, bindings: {}, disabled: false },
       { id: "plan", type: "ai.structured-task", version: 2, name: "Plan", description: "", position: { x: 200, y: 0 }, groupId: null, config: { modelId: "google/gemini-3.7-flash", userPrompt: "Create the plan.", ...aiConfig }, bindings: {}, disabled: false },
       { id: "validate", type: "logic.validate-slide-plans", version: 1, name: "Validate", description: "", position: { x: 300, y: 0 }, groupId: null, config: {}, bindings: {}, disabled: false },
-      { id: "generate", type: "generation.image", version: 1, name: "Generate", description: "", position: { x: 400, y: 0 }, groupId: null, config: { modelId: "image-model" }, bindings: {}, disabled: false },
+      { id: "prepare", type: "logic.prepare-slideshow-image-requests", version: 1, name: "Prepare", description: "", position: { x: 350, y: 0 }, groupId: null, config: {}, bindings: {}, disabled: false },
+      { id: "generate", type: "generation.image", version: 2, name: "Generate", description: "", position: { x: 400, y: 0 }, groupId: null, config: { modelId: "image-model", ratio: "1:1", resolution: "1K" }, bindings: {}, disabled: false },
       { id: "output", type: "output.add-to-canvas", version: 1, name: "Output", description: "", position: { x: 500, y: 0 }, groupId: null, config: {}, bindings: {}, disabled: false },
     ],
     edges: [
       { id: "a", source: "run", sourcePort: "run", target: "source", targetPort: "run" },
       { id: "b", source: "source", sourcePort: "source", target: "plan", targetPort: "primary" },
       { id: "c", source: "plan", sourcePort: "result", target: "validate", targetPort: "data" },
-      { id: "c-validated", source: "validate", sourcePort: "plans", target: "generate", targetPort: "plans" },
-      { id: "d", source: "source", sourcePort: "source", target: "generate", targetPort: "source" },
+      { id: "c-validated", source: "validate", sourcePort: "plans", target: "prepare", targetPort: "plans" },
+      { id: "c-source", source: "source", sourcePort: "source", target: "prepare", targetPort: "source" },
+      { id: "c-requests", source: "prepare", sourcePort: "requests", target: "generate", targetPort: "requests" },
       { id: "e", source: "generate", sourcePort: "assets", target: "output", targetPort: "assets" },
     ],
     groups: [],
@@ -67,15 +131,17 @@ test("runtime resolves ask-on-run values and carries typed outputs in dependency
       { id: "source", type: "input.tiktok-source", version: 1, name: "Source", description: "", position: { x: 100, y: 0 }, groupId: null, config: {}, bindings: { source: { mode: "ask-on-run", required: true, label: "Source" } }, disabled: false },
       { id: "plan", type: "ai.structured-task", version: 2, name: "Plan", description: "", position: { x: 200, y: 0 }, groupId: null, config: { modelId: "google/gemini-3.7-flash", userPrompt: "Create the plan." }, bindings: {}, disabled: false },
       { id: "validate", type: "logic.validate-slide-plans", version: 1, name: "Validate", description: "", position: { x: 300, y: 0 }, groupId: null, config: {}, bindings: {}, disabled: false },
-      { id: "generate", type: "generation.image", version: 1, name: "Generate", description: "", position: { x: 400, y: 0 }, groupId: null, config: { modelId: "image-model" }, bindings: {}, disabled: false },
+      { id: "prepare", type: "logic.prepare-slideshow-image-requests", version: 1, name: "Prepare", description: "", position: { x: 350, y: 0 }, groupId: null, config: {}, bindings: {}, disabled: false },
+      { id: "generate", type: "generation.image", version: 2, name: "Generate", description: "", position: { x: 400, y: 0 }, groupId: null, config: { modelId: "image-model", ratio: "1:1", resolution: "1K" }, bindings: {}, disabled: false },
       { id: "output", type: "output.add-to-canvas", version: 1, name: "Output", description: "", position: { x: 500, y: 0 }, groupId: null, config: {}, bindings: {}, disabled: false },
     ],
     edges: [
       { id: "a", source: "run", sourcePort: "run", target: "source", targetPort: "run" },
       { id: "b", source: "source", sourcePort: "source", target: "plan", targetPort: "primary" },
       { id: "c", source: "plan", sourcePort: "result", target: "validate", targetPort: "data" },
-      { id: "c-validated", source: "validate", sourcePort: "plans", target: "generate", targetPort: "plans" },
-      { id: "c-source", source: "source", sourcePort: "source", target: "generate", targetPort: "source" },
+      { id: "c-validated", source: "validate", sourcePort: "plans", target: "prepare", targetPort: "plans" },
+      { id: "c-source", source: "source", sourcePort: "source", target: "prepare", targetPort: "source" },
+      { id: "c-requests", source: "prepare", sourcePort: "requests", target: "generate", targetPort: "requests" },
       { id: "d", source: "generate", sourcePort: "assets", target: "output", targetPort: "assets" },
       { id: "e", source: "source", sourcePort: "source", target: "output", targetPort: "source" },
     ],
@@ -83,16 +149,17 @@ test("runtime resolves ask-on-run values and carries typed outputs in dependency
   };
   const calls: string[] = [];
   const handlers: AutomationNodeHandlers = {
-    "core.manual-trigger@1": async () => { calls.push("run"); return { run: { id: "run" } }; },
-    "input.tiktok-source@1": async ({ config }) => { calls.push("source"); return { source: { id: config.source } }; },
+    "core.manual-trigger@1": async () => { calls.push("run"); return { run: runContextValue() }; },
+    "input.tiktok-source@1": async ({ config }) => { calls.push("source"); return { source: sourceValue(String(config.source)) }; },
     "ai.structured-task@2": async ({ inputs }) => { calls.push("plan"); return { result: inputs.primary }; },
     "logic.validate-slide-plans@1": async () => { calls.push("validate"); return { plans: checkedPlanSet() }; },
-    "generation.image@1": async ({ inputs }) => { calls.push("generate"); return { assets: inputs.plans }; },
-    "output.add-to-canvas@1": async ({ inputs }) => { calls.push("output"); return { result: inputs.source }; },
+    "logic.prepare-slideshow-image-requests@1": async () => { calls.push("prepare"); return { requests: checkedImageRequestBatch() }; },
+    "generation.image@2": async () => { calls.push("generate"); return { assets: generatedAssetsValue() }; },
+    "output.add-to-canvas@1": async () => { calls.push("output"); return { result: canvasResultValue() }; },
   };
   const result = await executeAutomationGraph({ graph, context, handlers });
-  assert.deepEqual(calls, ["run", "source", "plan", "validate", "generate", "output"]);
-  assert.deepEqual(result.outputs.get("output")?.result, { id: "canvas-source" });
+  assert.deepEqual(calls, ["run", "source", "plan", "validate", "prepare", "generate", "output"]);
+  assert.deepEqual(result.outputs.get("output")?.result, canvasResultValue());
 });
 
 test("runtime resumes from durable completed node outputs", async () => {
@@ -102,14 +169,16 @@ test("runtime resumes from durable completed node outputs", async () => {
       { id: "run", type: "core.manual-trigger", version: 1, name: "Run", description: "", position: { x: 0, y: 0 }, groupId: null, config: {}, bindings: {}, disabled: false },
       { id: "source", type: "input.tiktok-source", version: 1, name: "Source", description: "", position: { x: 100, y: 0 }, groupId: null, config: { source: "saved-source" }, bindings: {}, disabled: false },
       { id: "validate", type: "logic.validate-slide-plans", version: 1, name: "Validate", description: "", position: { x: 200, y: 0 }, groupId: null, config: {}, bindings: {}, disabled: false },
-      { id: "generate", type: "generation.image", version: 1, name: "Generate", description: "", position: { x: 300, y: 0 }, groupId: null, config: { modelId: "image-model" }, bindings: {}, disabled: false },
+      { id: "prepare", type: "logic.prepare-slideshow-image-requests", version: 1, name: "Prepare", description: "", position: { x: 250, y: 0 }, groupId: null, config: {}, bindings: {}, disabled: false },
+      { id: "generate", type: "generation.image", version: 2, name: "Generate", description: "", position: { x: 300, y: 0 }, groupId: null, config: { modelId: "image-model", ratio: "1:1", resolution: "1K" }, bindings: {}, disabled: false },
       { id: "output", type: "output.add-to-canvas", version: 1, name: "Output", description: "", position: { x: 400, y: 0 }, groupId: null, config: {}, bindings: {}, disabled: false },
     ],
     edges: [
       { id: "a", source: "run", sourcePort: "run", target: "source", targetPort: "run" },
       { id: "b", source: "source", sourcePort: "source", target: "validate", targetPort: "data" },
-      { id: "b-validated", source: "validate", sourcePort: "plans", target: "generate", targetPort: "plans" },
-      { id: "c", source: "source", sourcePort: "source", target: "generate", targetPort: "source" },
+      { id: "b-validated", source: "validate", sourcePort: "plans", target: "prepare", targetPort: "plans" },
+      { id: "b-source", source: "source", sourcePort: "source", target: "prepare", targetPort: "source" },
+      { id: "b-requests", source: "prepare", sourcePort: "requests", target: "generate", targetPort: "requests" },
       { id: "d", source: "generate", sourcePort: "assets", target: "output", targetPort: "assets" },
       { id: "e", source: "source", sourcePort: "source", target: "output", targetPort: "source" },
     ],
@@ -117,23 +186,24 @@ test("runtime resumes from durable completed node outputs", async () => {
   };
   const calls: string[] = [];
   const initialOutputs = new Map<string, Record<string, unknown>>([
-    ["run", { run: { id: "saved-run" } }],
-    ["source", { source: { id: "saved-source" } }],
+    ["run", { run: runContextValue() }],
+    ["source", { source: sourceValue("saved-source") }],
     ["validate", { plans: checkedPlanSet() }],
-    ["generate", { assets: { items: [] } }],
+    ["prepare", { requests: checkedImageRequestBatch() }],
+    ["generate", { assets: generatedAssetsValue() }],
   ]);
   const result = await executeAutomationGraph({
     graph,
     context,
     initialOutputs,
     handlers: {
-      "core.manual-trigger@1": async () => { calls.push("run"); return { run: {} }; },
-      "input.tiktok-source@1": async () => { calls.push("source"); return { source: {} }; },
-      "output.add-to-canvas@1": async ({ inputs }) => { calls.push("output"); return { result: inputs.source }; },
+      "core.manual-trigger@1": async () => { calls.push("run"); return { run: runContextValue() }; },
+      "input.tiktok-source@1": async () => { calls.push("source"); return { source: sourceValue() }; },
+      "output.add-to-canvas@1": async () => { calls.push("output"); return { result: canvasResultValue() }; },
     },
   });
   assert.deepEqual(calls, ["output"]);
-  assert.deepEqual(result.outputs.get("output")?.result, { id: "saved-source" });
+  assert.deepEqual(result.outputs.get("output")?.result, canvasResultValue());
 });
 
 test("runtime exposes the retry attempt so handlers can switch to a fallback", async () => {
@@ -144,15 +214,17 @@ test("runtime exposes the retry attempt so handlers can switch to a fallback", a
       { id: "source", type: "input.tiktok-source", version: 1, name: "Source", description: "", position: { x: 100, y: 0 }, groupId: null, config: { source: "source" }, bindings: {}, disabled: false },
       { id: "plan", type: "ai.structured-task", version: 2, name: "Plan", description: "", position: { x: 200, y: 0 }, groupId: null, config: { modelId: "google/gemini-3.7-flash", userPrompt: "Create the plan.", maxAttempts: 2 }, bindings: {}, disabled: false },
       { id: "validate", type: "logic.validate-slide-plans", version: 1, name: "Validate", description: "", position: { x: 300, y: 0 }, groupId: null, config: {}, bindings: {}, disabled: false },
-      { id: "generate", type: "generation.image", version: 1, name: "Generate", description: "", position: { x: 400, y: 0 }, groupId: null, config: { modelId: "image-model" }, bindings: {}, disabled: false },
+      { id: "prepare", type: "logic.prepare-slideshow-image-requests", version: 1, name: "Prepare", description: "", position: { x: 350, y: 0 }, groupId: null, config: {}, bindings: {}, disabled: false },
+      { id: "generate", type: "generation.image", version: 2, name: "Generate", description: "", position: { x: 400, y: 0 }, groupId: null, config: { modelId: "image-model", ratio: "1:1", resolution: "1K" }, bindings: {}, disabled: false },
       { id: "output", type: "output.add-to-canvas", version: 1, name: "Output", description: "", position: { x: 500, y: 0 }, groupId: null, config: {}, bindings: {}, disabled: false },
     ],
     edges: [
       { id: "a", source: "run", sourcePort: "run", target: "source", targetPort: "run" },
       { id: "b", source: "source", sourcePort: "source", target: "plan", targetPort: "primary" },
       { id: "c", source: "plan", sourcePort: "result", target: "validate", targetPort: "data" },
-      { id: "c-validated", source: "validate", sourcePort: "plans", target: "generate", targetPort: "plans" },
-      { id: "d", source: "source", sourcePort: "source", target: "generate", targetPort: "source" },
+      { id: "c-validated", source: "validate", sourcePort: "plans", target: "prepare", targetPort: "plans" },
+      { id: "c-source", source: "source", sourcePort: "source", target: "prepare", targetPort: "source" },
+      { id: "c-requests", source: "prepare", sourcePort: "requests", target: "generate", targetPort: "requests" },
       { id: "e", source: "generate", sourcePort: "assets", target: "output", targetPort: "assets" },
     ],
     groups: [],
@@ -162,16 +234,17 @@ test("runtime exposes the retry attempt so handlers can switch to a fallback", a
     graph,
     context,
     handlers: {
-      "core.manual-trigger@1": async () => ({ run: {} }),
-      "input.tiktok-source@1": async () => ({ source: {} }),
+      "core.manual-trigger@1": async () => ({ run: runContextValue() }),
+      "input.tiktok-source@1": async () => ({ source: sourceValue() }),
       "ai.structured-task@2": async ({ attempt }) => {
         attempts.push(attempt);
         if (attempt === 1) throw new Error("retry");
         return { result: {} };
       },
       "logic.validate-slide-plans@1": async () => ({ plans: checkedPlanSet() }),
-      "generation.image@1": async () => ({ assets: {} }),
-      "output.add-to-canvas@1": async () => ({ result: {} }),
+      "logic.prepare-slideshow-image-requests@1": async () => ({ requests: checkedImageRequestBatch() }),
+      "generation.image@2": async () => ({ assets: generatedAssetsValue() }),
+      "output.add-to-canvas@1": async () => ({ result: canvasResultValue() }),
     },
   });
   assert.deepEqual(attempts, [1, 2]);
@@ -194,7 +267,7 @@ test("runtime cancellation interrupts an active node instead of waiting for it t
     graph,
     context: { ...context, signal: controller.signal },
     handlers: {
-      "core.manual-trigger@1": async () => ({ run: {} }),
+      "core.manual-trigger@1": async () => ({ run: runContextValue() }),
       "output.finish@1": async ({ context: executionContext }) => {
         finishStarted();
         return await new Promise<Record<string, unknown>>((resolve, reject) => {
@@ -272,6 +345,17 @@ test("slide-plan boundary rejects every legacy wrapper, alias and plain-prompt s
   assert.throws(() => parseAutomationSlidePlanSet({ ...checked, slides: [{ ...slide, prompt: "Recreate the opening portrait." }] }), /prompt must be an object/);
 });
 
+test("image generation accepts one canonical request contract and rejects alternate shapes", () => {
+  const exact = {
+    schemaVersion: 1 as const,
+    requests: [{ key: "slide-1", prompt: "{\"task\":\"Create slide 1\"}", referenceAssetIds: ["asset-1"], referenceRoles: ["identity"], referenceLabels: ["Main identity"], presentation: { index: 1, role: "scene", overlayText: "", sourceAssetId: "asset-1" }, metadata: { slideIndex: 1 } }],
+  };
+  assert.deepEqual(parseAutomationImageGenerationRequestBatch(exact), exact);
+  assert.throws(() => parseAutomationImageGenerationRequestBatch({ images: exact.requests }), /supported contract/);
+  assert.throws(() => parseAutomationImageGenerationRequestBatch({ schemaVersion: 1, requests: [{ ...exact.requests[0], references: [], referenceAssetIds: undefined }] }), /supported contract|does not match its port contract/);
+  assert.throws(() => parseAutomationImageGenerationRequestBatch({ schemaVersion: 1, requests: [{ ...exact.requests[0], referenceRoles: [] }] }), /exactly one role and label/);
+});
+
 test("continue-one-path passes one result unchanged and rejects ambiguous joins", async () => {
   const handler = coreAutomationNodeHandlers()["logic.select-one@1"];
   const execution = {
@@ -282,6 +366,32 @@ test("continue-one-path passes one result unchanged and rejects ambiguous joins"
   assert.deepEqual(await handler({ ...execution, inputs: { data: [exact] } }), { result: exact });
   await assert.rejects(handler({ ...execution, inputs: { data: [] } }), /exactly one completed input/);
   await assert.rejects(handler({ ...execution, inputs: { data: [exact, exact] } }), /exactly one completed input/);
+  const listResult = [{ index: 1 }, { index: 2 }];
+  assert.deepEqual(await handler({
+    ...execution,
+    inputs: { data: [listResult] },
+    inputConnections: { data: [{ sourceNodeId: "list", sourceNodeName: "Build list", sourcePort: "result", targetPort: "data", value: listResult }] },
+  }), { result: listResult });
+});
+
+test("prepare-information keeps every connection when one node contributes multiple outputs", async () => {
+  const handler = coreAutomationNodeHandlers()["logic.transform@1"];
+  const node = { id: "prepare", type: "logic.transform", version: 1, name: "Prepare information", description: "", position: { x: 0, y: 0 }, groupId: null, config: {}, bindings: {}, disabled: false } as const;
+  const first = { approved: true };
+  const second = { score: 0.96 };
+  const result = await handler({
+    node,
+    config: { template: { all: "{{ byNode.review }}", approved: "{{ byNodePort.review.approved }}", score: "{{ byNodePort.review.score }}" } },
+    inputs: { data: [first, second] },
+    inputConnections: { data: [
+      { sourceNodeId: "review", sourceNodeName: "Review", sourcePort: "approved", targetPort: "data", value: first },
+      { sourceNodeId: "review", sourceNodeName: "Review", sourcePort: "score", targetPort: "data", value: second },
+    ] },
+    attempt: 1,
+    context,
+    outputsByNode: new Map<string, Record<string, unknown>>(),
+  });
+  assert.deepEqual(result, { result: { all: [first, second], approved: first, score: second } });
 });
 
 test("select-information returns the exact nested value and never guesses another path", async () => {
@@ -297,14 +407,14 @@ test("select-information returns the exact nested value and never guesses anothe
 
 test("creative direction accepts only complete exact-evidence contracts and configurable choices", async () => {
   const handlers = coreAutomationNodeHandlers();
-  const prepare = handlers["logic.prepare-creative-direction@1"];
-  const resolve = handlers["logic.resolve-creative-direction@2"];
+  const prepare = handlers["logic.prepare-creative-direction@2"];
+  const resolve = handlers["logic.resolve-creative-direction@3"];
   const base = { attempt: 1, context, outputsByNode: new Map<string, Record<string, unknown>>() };
   const settings = { mode: "concept", newOutfit: false, newLocation: true, textStrategy: "rewrite", creativeBrief: "Keep the same room, remove text and make it warm.", creativeDirectionPolicy: "auto-explicit" };
   const prepared = await prepare({
     ...base,
-    node: { id: "prepare", type: "logic.prepare-creative-direction", version: 1, name: "Prepare", description: "", position: { x: 0, y: 0 }, groupId: null, config: {}, bindings: {}, disabled: false },
-    config: { controls: DEFAULT_AUTOMATION_CREATIVE_CONTROLS, minConfidence: 0.9, maxClauses: 16, maxRequirements: 24 },
+    node: { id: "prepare", type: "logic.prepare-creative-direction", version: 2, name: "Prepare", description: "", position: { x: 0, y: 0 }, groupId: null, config: {}, bindings: {}, disabled: false },
+    config: { ...creativePreparationConfig, minConfidence: 0.9, maxRequirements: 24 },
     inputs: { settings, source: { slides: [{ index: 1 }, { index: 2 }] } },
   });
   const request = prepared.request as { briefHash: string; clauses: Array<{ id: string; text: string }> };
@@ -313,14 +423,15 @@ test("creative direction accepts only complete exact-evidence contracts and conf
     const evidenceStart = request.clauses[0].text.indexOf(evidence);
     return { ...item, evidence, evidenceStart, evidenceEnd: evidenceStart + evidence.length };
   };
+  const completeEvidence = request.clauses[0].text;
   const analysis = { briefHash: request.briefHash, clauseResults: [{ clauseId, items: [
-    withSpan("Keep the same room", { kind: "choice", controlId: "location-setting", optionId: "preserve", instruction: "", category: "", placement: "", slideIndexes: [], confidence: 1, reason: "" }),
+    withSpan(completeEvidence, { kind: "choice", controlId: "location-setting", optionId: "preserve", instruction: "", category: "", placement: "", slideIndexes: [], confidence: 1, reason: "" }),
     withSpan("remove text", { kind: "choice", controlId: "on-screen-text", optionId: "remove", instruction: "", category: "", placement: "", slideIndexes: [], confidence: 1, reason: "" }),
     withSpan("make it warm", { kind: "requirement", controlId: "", optionId: "", instruction: "make it warm", category: "tone", placement: "change", slideIndexes: [], confidence: 1, reason: "" }),
   ] }] };
   const execution = {
     ...base,
-    node: { id: "resolve", type: "logic.resolve-creative-direction", version: 2, name: "Resolve", description: "", position: { x: 0, y: 0 }, groupId: null, config: {}, bindings: {}, disabled: false },
+    node: { id: "resolve", type: "logic.resolve-creative-direction", version: 3, name: "Resolve", description: "", position: { x: 0, y: 0 }, groupId: null, config: {}, bindings: {}, disabled: false },
     config: {}, inputs: { request, analysis },
   };
   const result = await resolve(execution);
@@ -335,13 +446,13 @@ test("creative direction accepts only complete exact-evidence contracts and conf
 
   const proposedPrepared = await prepare({
     ...base,
-    node: { id: "prepare", type: "logic.prepare-creative-direction", version: 1, name: "Prepare", description: "", position: { x: 0, y: 0 }, groupId: null, config: {}, bindings: {}, disabled: false },
-    config: { controls: DEFAULT_AUTOMATION_CREATIVE_CONTROLS },
+    node: { id: "prepare", type: "logic.prepare-creative-direction", version: 2, name: "Prepare", description: "", position: { x: 0, y: 0 }, groupId: null, config: {}, bindings: {}, disabled: false },
+    config: creativePreparationConfig,
     inputs: { settings: { ...settings, creativeBrief: "Keep the same room.", creativeDirectionPolicy: "propose" }, source: { slides: [{ index: 1 }] } },
     inputConnections: { settings: [{ sourceNodeId: "choices", sourceNodeName: "Choices", sourcePort: "settings", targetPort: "settings", value: settings }] },
   });
-  const proposedRequest = proposedPrepared.request as { briefHash: string; clauses: Array<{ id: string }> };
-  const proposedEvidence = "Keep the same room";
+  const proposedRequest = proposedPrepared.request as { briefHash: string; clauses: Array<{ id: string; text: string }> };
+  const proposedEvidence = proposedRequest.clauses[0].text;
   const proposedResult = await resolve({ ...execution, inputs: { request: proposedRequest, analysis: { briefHash: proposedRequest.briefHash, clauseResults: [{ clauseId: proposedRequest.clauses[0].id, items: [
     { kind: "choice", evidence: proposedEvidence, evidenceStart: 0, evidenceEnd: proposedEvidence.length, controlId: "location-setting", optionId: "preserve", instruction: "", category: "", placement: "", slideIndexes: [], confidence: 1, reason: "" },
   ] }] } } });
@@ -369,22 +480,31 @@ test("creative direction accepts only complete exact-evidence contracts and conf
   const missingCoverage = await resolve({ ...execution, inputs: { request, analysis: { briefHash: request.briefHash, clauseResults: [] } } });
   assert.match(String((missingCoverage.conflict as { message: string }).message), /every creative-direction clause/);
 
+  const missingPolicy = await resolve({ ...execution, inputs: { request: { ...request, policy: undefined }, analysis } });
+  assert.match(String((missingPolicy.conflict as { message: string }).message), /policy is unsupported/);
+
+  const missingConfidence = await resolve({ ...execution, inputs: { request: { ...request, minConfidence: undefined }, analysis } });
+  assert.match(String((missingConfidence.conflict as { message: string }).message), /minConfidence must be between/);
+
+  const missingRequirementLimit = await resolve({ ...execution, inputs: { request: { ...request, maxRequirements: undefined }, analysis } });
+  assert.match(String((missingRequirementLimit.conflict as { message: string }).message), /maxRequirements must be between/);
+
   await assert.rejects(prepare({
     ...base,
-    node: { id: "prepare", type: "logic.prepare-creative-direction", version: 1, name: "Prepare", description: "", position: { x: 0, y: 0 }, groupId: null, config: {}, bindings: {}, disabled: false },
-    config: { controls: DEFAULT_AUTOMATION_CREATIVE_CONTROLS },
+    node: { id: "prepare", type: "logic.prepare-creative-direction", version: 2, name: "Prepare", description: "", position: { x: 0, y: 0 }, groupId: null, config: {}, bindings: {}, disabled: false },
+    config: creativePreparationConfig,
     inputs: { settings: { ...settings, newLocation: "false" }, source: { slides: [{ index: 1 }] } },
   }), /no single selected option/);
 
   const customControls = [{ id: "language", label: "Output language", path: "campaign.language", options: [{ id: "english", label: "English", value: "en", meaning: "The person wants the resulting creative written in English." }, { id: "french", label: "French", value: "fr", meaning: "The person wants the resulting creative written in French, regardless of the language used to ask for it." }] }];
   const customPrepared = await prepare({
     ...base,
-    node: { id: "prepare", type: "logic.prepare-creative-direction", version: 1, name: "Prepare", description: "", position: { x: 0, y: 0 }, groupId: null, config: {}, bindings: {}, disabled: false },
-    config: { controls: customControls },
+    node: { id: "prepare", type: "logic.prepare-creative-direction", version: 2, name: "Prepare", description: "", position: { x: 0, y: 0 }, groupId: null, config: {}, bindings: {}, disabled: false },
+    config: { ...creativePreparationConfig, controls: customControls },
     inputs: { settings: { campaign: { language: "en" }, creativeBrief: "Use French.", creativeDirectionPolicy: "auto-explicit" }, source: { slides: [{ index: 1 }] } },
   });
-  const customRequest = customPrepared.request as { briefHash: string; clauses: Array<{ id: string }> };
-  const customEvidence = "Use French";
+  const customRequest = customPrepared.request as { briefHash: string; clauses: Array<{ id: string; text: string }> };
+  const customEvidence = customRequest.clauses[0].text;
   const customResult = await resolve({
     ...execution,
     inputs: { request: customRequest, analysis: { briefHash: customRequest.briefHash, clauseResults: [{ clauseId: customRequest.clauses[0].id, items: [{ kind: "choice", evidence: customEvidence, evidenceStart: 0, evidenceEnd: customEvidence.length, controlId: "language", optionId: "french", instruction: "", category: "", placement: "", slideIndexes: [], confidence: 1, reason: "" }] }] } },
@@ -393,8 +513,8 @@ test("creative direction accepts only complete exact-evidence contracts and conf
 
   const contextualPrepared = await prepare({
     ...base,
-    node: { id: "prepare", type: "logic.prepare-creative-direction", version: 1, name: "Prepare", description: "", position: { x: 0, y: 0 }, groupId: null, config: {}, bindings: {}, disabled: false },
-    config: { controls: DEFAULT_AUTOMATION_CREATIVE_CONTROLS },
+    node: { id: "prepare", type: "logic.prepare-creative-direction", version: 2, name: "Prepare", description: "", position: { x: 0, y: 0 }, groupId: null, config: {}, bindings: {}, disabled: false },
+    config: creativePreparationConfig,
     inputs: { settings: { ...settings, creativeBrief: "Текст оставь как есть, удалять его не нужно." }, source: { slides: [{ index: 1 }] } },
   });
   const contextualRequest = contextualPrepared.request as { briefHash: string; clauses: Array<{ id: string; text: string }> };
@@ -404,8 +524,8 @@ test("creative direction accepts only complete exact-evidence contracts and conf
 
   const detailedPrepared = await prepare({
     ...base,
-    node: { id: "prepare", type: "logic.prepare-creative-direction", version: 1, name: "Prepare", description: "", position: { x: 0, y: 0 }, groupId: null, config: {}, bindings: {}, disabled: false },
-    config: { controls: DEFAULT_AUTOMATION_CREATIVE_CONTROLS },
+    node: { id: "prepare", type: "logic.prepare-creative-direction", version: 2, name: "Prepare", description: "", position: { x: 0, y: 0 }, groupId: null, config: {}, bindings: {}, disabled: false },
+    config: creativePreparationConfig,
     inputs: { settings: { ...settings, newOutfit: false, creativeBrief: "Одень её в белое льняное платье с длинными рукавами.", creativeDirectionPolicy: "auto-explicit" }, source: { slides: [{ index: 1 }] } },
   });
   const detailedRequest = detailedPrepared.request as { briefHash: string; clauses: Array<{ id: string; text: string }> };
@@ -419,7 +539,7 @@ test("creative direction accepts only complete exact-evidence contracts and conf
   assert.equal(detailedResolved.direction.requirements[0].instruction, detailedEvidence, "a route choice must not consume the user's concrete downstream instruction");
 
   const workflow = createDefaultTikTokWorkflowGraph();
-  const wardrobeRoute = await handlers["logic.condition@1"]({
+  const wardrobeRoute = await handlers["logic.condition@2"]({
     ...base,
     node: workflow.nodes.find((node) => node.id === "wardrobe-choice")!,
     config: workflow.nodes.find((node) => node.id === "wardrobe-choice")!.config,
@@ -435,6 +555,39 @@ test("creative direction accepts only complete exact-evidence contracts and conf
   const wardrobeContract = wardrobeResult.result as { choice: { direction: { requirements: Array<{ instruction: string }> } }; wardrobe: { mode: string } };
   assert.equal(wardrobeContract.wardrobe.mode, "change");
   assert.equal(wardrobeContract.choice.direction.requirements[0].instruction, detailedEvidence, "the active wardrobe node must carry the exact detail into the choices package");
+});
+
+test("historical creative-direction node versions keep their clause-based contract executable", async () => {
+  const handlers = coreAutomationNodeHandlers();
+  const prepare = handlers["logic.prepare-creative-direction@1"];
+  const resolve = handlers["logic.resolve-creative-direction@2"];
+  const settings = { mode: "concept", newOutfit: false, newLocation: false, textStrategy: "keep", creativeBrief: "Keep the same room. Make the mood warm.", creativeDirectionPolicy: "auto-explicit" };
+  const base = { attempt: 1, context, outputsByNode: new Map<string, Record<string, unknown>>() };
+  const prepared = await prepare({
+    ...base,
+    node: { id: "prepare-v1", type: "logic.prepare-creative-direction", version: 1, name: "Prepare legacy direction", description: "", position: { x: 0, y: 0 }, groupId: null, config: {}, bindings: {}, disabled: false },
+    config: { ...creativePreparationConfig, maxClauses: 16, maxClauseCharacters: 1_000 },
+    inputs: { settings, source: { slides: [{ index: 1 }] } },
+  });
+  const request = parseAutomationPortValue("creative-direction-request", prepared.request) as { briefHash: string; contractVersion: number; clauses: Array<{ id: string; text: string }> };
+  assert.equal(request.contractVersion, 2);
+  assert.deepEqual(request.clauses.map((clause) => clause.id), ["clause-1", "clause-2"]);
+  const analysis = {
+    briefHash: request.briefHash,
+    clauseResults: request.clauses.map((clause) => ({
+      clauseId: clause.id,
+      items: [{ kind: "requirement", evidence: clause.text, evidenceStart: 0, evidenceEnd: clause.text.length, controlId: "", optionId: "", instruction: clause.text, category: "tone", placement: "change", slideIndexes: [], confidence: 1, reason: "" }],
+    })),
+  };
+  parseAutomationPortValue("creative-direction-analysis", analysis);
+  const result = await resolve({
+    ...base,
+    node: { id: "resolve-v2", type: "logic.resolve-creative-direction", version: 2, name: "Resolve legacy direction", description: "", position: { x: 0, y: 0 }, groupId: null, config: {}, bindings: {}, disabled: false },
+    config: {},
+    inputs: { request, analysis },
+  });
+  assert.equal((result.resolved as { direction: { contractVersion: number } }).direction.contractVersion, 2);
+  assert.equal((result.resolved as { direction: { requirements: unknown[] } }).direction.requirements.length, 2);
 });
 
 test("slide validator carries immutable choices, exact text and reference roles into generation", async () => {
@@ -554,7 +707,7 @@ test("slide validator rejects identity references assigned to wardrobe", async (
   };
   await assert.rejects(validate({
     node: { id: "validate", type: "logic.validate-slide-plans", version: 1, name: "Validate", description: "", position: { x: 0, y: 0 }, groupId: null, config: {}, bindings: {}, disabled: false },
-    config: {}, inputs: { data: { slides: [slide] }, contract, source: { slides: [{ index: 1 }] }, identity: { assets: [{ id: "person" }] }, references: { assets: [] } }, attempt: 1, context, outputsByNode: new Map(),
+    config: { maxSlides: 40 }, inputs: { data: { slides: [slide] }, contract, source: { slides: [{ index: 1 }] }, identity: { assets: [{ id: "person" }] }, references: { assets: [] } }, attempt: 1, context, outputsByNode: new Map(),
   }), /control outfit/);
 });
 
@@ -562,7 +715,7 @@ test("AI workflow steps fail explicitly instead of silently truncating connected
   const runAi = coreAutomationNodeHandlers()["ai.structured-task@2"];
   await assert.rejects(runAi({
     node: { id: "ai", type: "ai.structured-task", version: 2, name: "AI", description: "", position: { x: 0, y: 0 }, groupId: null, config: {}, bindings: {}, disabled: false },
-    config: { modelId: "google/gemini-3.7-flash", userPrompt: "Summarize the connected information." },
+    config: { modelId: "google/gemini-3.7-flash", userPrompt: "Summarize the connected information.", runWhen: "always" },
     inputs: { primary: { exactData: "x".repeat(81_000) } },
     attempt: 1,
     context,
@@ -575,7 +728,7 @@ test("default automation keeps every selected rule through an approved no-repair
   const locationInstruction = "Preserve the exact location, background, environment, room layout and visible setting details from each slide's source image. Identity references must not contribute or replace location.";
   const textInstruction = "Remove and erase every existing caption, word, letter, number, logo-like typography and watermark from the source image; do not render replacement text.";
   const handlers = coreAutomationNodeHandlers();
-  let generatedPlans: Record<string, unknown> | null = null;
+  let generatedRequests: Record<string, unknown> | null = null;
   const result = await executeAutomationGraph({
     graph: createDefaultTikTokWorkflowGraph(),
     context: {
@@ -594,12 +747,12 @@ test("default automation keeps every selected rule through an approved no-repair
     },
     handlers: {
       ...handlers,
-      "input.tiktok-source@1": async () => ({ source: { id: "source-1", slides: [{ index: 1, assetId: "source-asset" }] } }),
-      "input.identity@1": async () => ({ identity: { id: "person-identity", assets: [{ id: "person", path: "person.png", mimeType: "image/png" }] } }),
-      "input.visual-references@1": async () => ({ references: { assets: [] } }),
-      "ai.interpret-creative-direction@1": async ({ inputs }) => {
+      "input.tiktok-source@2": async () => ({ source: sourceValue("source-1") }),
+      "input.identity@1": async () => ({ identity: { id: "person-identity", name: "Maya", notes: "", assets: [{ id: "person", filename: "person.png", role: "reference", path: "person.png", mimeType: "image/png", analysisPath: "person.png", analysisMimeType: "image/png" }] } }),
+      "input.visual-references@1": async () => ({ references: { assetIds: [], assets: [] } }),
+      "ai.interpret-creative-direction@2": async ({ inputs }) => {
         const request = inputs.request as { briefHash: string; clauses: Array<{ id: string; text: string }> };
-        const evidence = "Keep the exact source location";
+        const evidence = request.clauses[0].text;
         return { analysis: { briefHash: request.briefHash, clauseResults: [{ clauseId: request.clauses[0].id, items: [{ kind: "choice", evidence, evidenceStart: 0, evidenceEnd: evidence.length, controlId: "location-setting", optionId: "preserve", instruction: "", category: "", placement: "", slideIndexes: [], confidence: 1, reason: "" }] }] } };
       },
       "ai.structured-task@2": async ({ node }) => {
@@ -613,14 +766,14 @@ test("default automation keeps every selected rule through an approved no-repair
         if (node.id === "repair-slides") throw new Error("Approved plans must not be rewritten");
         throw new Error(`Unexpected AI node ${node.id}`);
       },
-      "generation.image@1": async ({ inputs }) => { generatedPlans = inputs.plans as Record<string, unknown>; return { assets: { items: [] } }; },
-      "output.add-to-canvas@1": async () => ({ result: { ok: true } }),
+      "generation.image@2": async ({ inputs }) => { generatedRequests = inputs.requests as Record<string, unknown>; return { assets: generatedAssetsValue() }; },
+      "output.add-to-canvas@1": async () => ({ result: canvasResultValue() }),
     },
   });
-  assert.deepEqual(result.outputs.get("add-to-canvas")?.result, { ok: true });
+  assert.deepEqual(result.outputs.get("add-to-canvas")?.result, canvasResultValue());
   assert.equal((result.outputs.get("resolve-user-direction")?.resolved as { newLocation: boolean }).newLocation, false, "the explicit comment must switch the real location branch before planning");
-  assert.ok(generatedPlans);
-  const generatedSlide = (generatedPlans as unknown as { slides: Array<{ prompt: { preserve: string[]; change: string[] }; text: { strategy: string; overlayText: string } }> }).slides[0];
+  assert.ok(generatedRequests);
+  const generatedSlide = (generatedRequests as unknown as { requests: Array<{ metadata: { prompt: { preserve: string[]; change: string[] }; text: { strategy: string; overlayText: string } } }> }).requests[0].metadata;
   assert.ok(generatedSlide.prompt.preserve.includes(locationInstruction));
   assert.ok(generatedSlide.prompt.change.includes(wardrobeInstruction));
   assert.ok(generatedSlide.prompt.change.includes(textInstruction));
@@ -632,8 +785,8 @@ test("runtime rejects handler output keys outside the versioned node contract", 
     graph: linearGraph(),
     context,
     handlers: {
-      "core.manual-trigger@1": async () => ({ run: {} }),
-      "input.tiktok-source@1": async () => ({ source: {} }),
+      "core.manual-trigger@1": async () => ({ run: runContextValue() }),
+      "input.tiktok-source@1": async () => ({ source: sourceValue() }),
       "ai.structured-task@2": async () => ({ typo: {} }),
     },
   }), (error: unknown) => (error as { code?: string }).code === "NODE_OUTPUT_CONTRACT");
@@ -644,8 +797,8 @@ test("runtime rejects a legacy slide-plan shape at the typed validator output bo
     graph: linearGraph(),
     context,
     handlers: {
-      "core.manual-trigger@1": async () => ({ run: {} }),
-      "input.tiktok-source@1": async () => ({ source: {} }),
+      "core.manual-trigger@1": async () => ({ run: runContextValue() }),
+      "input.tiktok-source@1": async () => ({ source: sourceValue() }),
       "ai.structured-task@2": async () => ({ result: { slides: [] } }),
       "logic.validate-slide-plans@1": async () => ({ plans: { selected: checkedPlanSet() } }),
     },
@@ -657,8 +810,8 @@ test("runtime cannot report success when no terminal branch produced output", as
     graph: linearGraph(),
     context,
     handlers: {
-      "core.manual-trigger@1": async () => ({ run: {} }),
-      "input.tiktok-source@1": async () => ({ source: {} }),
+      "core.manual-trigger@1": async () => ({ run: runContextValue() }),
+      "input.tiktok-source@1": async () => ({ source: sourceValue() }),
       "ai.structured-task@2": async () => ({ error: { message: "unexpected handler branch" } }),
     },
   }), (error: unknown) => (error as { code?: string }).code === "NO_TERMINAL_OUTPUT");
@@ -670,12 +823,13 @@ test("failure policies persist a continued node output for safe worker resume", 
     graph: linearGraph({ failureMode: "continue-empty", maxAttempts: 1 }),
     context,
     handlers: {
-      "core.manual-trigger@1": async () => ({ run: {} }),
-      "input.tiktok-source@1": async () => ({ source: {} }),
+      "core.manual-trigger@1": async () => ({ run: runContextValue() }),
+      "input.tiktok-source@1": async () => ({ source: sourceValue() }),
       "ai.structured-task@2": async () => { throw new Error("provider failed"); },
       "logic.validate-slide-plans@1": async () => ({ plans: checkedPlanSet() }),
-      "generation.image@1": async () => ({ assets: { items: [] } }),
-      "output.add-to-canvas@1": async () => ({ result: { ok: true } }),
+      "logic.prepare-slideshow-image-requests@1": async () => ({ requests: checkedImageRequestBatch() }),
+      "generation.image@2": async () => ({ assets: generatedAssetsValue() }),
+      "output.add-to-canvas@1": async () => ({ result: canvasResultValue() }),
     },
     observer: {
       nodeContinued(node, _output, _attempt, reason) { continued.push({ nodeId: node.id, reason }); },
@@ -696,7 +850,7 @@ test("non-retryable failures stop immediately and preserve safe details on the e
     ],
     edges: [
       { id: "a", source: "run", sourcePort: "run", target: "request", targetPort: "data" },
-      { id: "b", source: "request", sourcePort: "error", target: "finish", targetPort: "data" },
+      { id: "b", source: "request", sourcePort: "error", target: "finish", targetPort: "data", role: "error" },
     ],
   };
   let attempts = 0;
@@ -704,7 +858,7 @@ test("non-retryable failures stop immediately and preserve safe details on the e
     graph,
     context,
     handlers: {
-      "core.manual-trigger@1": async () => ({ run: {} }),
+      "core.manual-trigger@1": async () => ({ run: runContextValue() }),
       "integration.http-request@1": async () => {
         attempts += 1;
         throw Object.assign(new Error("HTTP request returned 400"), {
@@ -713,7 +867,7 @@ test("non-retryable failures stop immediately and preserve safe details on the e
           safeResponse: { status: 400, ok: false, body: { error: "invalid request" } },
         });
       },
-      "output.finish@1": async ({ inputs }) => ({ result: inputs.data }),
+      "output.finish@1": async ({ inputs }) => ({ result: { outcome: "completed", message: "Recovered", data: inputs.data } }),
     },
   });
   assert.equal(attempts, 1);
@@ -723,7 +877,7 @@ test("non-retryable failures stop immediately and preserve safe details on the e
     code: "HTTP_STATUS",
     response: { status: 400, ok: false, body: { error: "invalid request" } },
   });
-  assert.deepEqual(result.outputs.get("finish")?.result, result.outputs.get("request")?.error);
+  assert.deepEqual(result.outputs.get("finish")?.result, { outcome: "completed", message: "Recovered", data: result.outputs.get("request")?.error });
 });
 
 test("continue-empty uses the actual node output contract", async () => {
@@ -740,12 +894,13 @@ test("continue-empty uses the actual node output contract", async () => {
     graph,
     context,
     handlers: {
-      "core.manual-trigger@1": async () => ({ run: {} }),
-      "input.tiktok-source@1": async () => ({ source: {} }),
+      "core.manual-trigger@1": async () => ({ run: runContextValue() }),
+      "input.tiktok-source@1": async () => ({ source: sourceValue() }),
       "integration.http-request@1": async () => { throw new Error("remote API failed"); },
       "logic.validate-slide-plans@1": async () => ({ plans: checkedPlanSet() }),
-      "generation.image@1": async () => ({ assets: { items: [] } }),
-      "output.add-to-canvas@1": async () => ({ result: { ok: true } }),
+      "logic.prepare-slideshow-image-requests@1": async () => ({ requests: checkedImageRequestBatch() }),
+      "generation.image@2": async () => ({ assets: generatedAssetsValue() }),
+      "output.add-to-canvas@1": async () => ({ result: canvasResultValue() }),
     },
   });
   assert.equal(result.outputs.get("plan")?.response, null);
@@ -781,7 +936,20 @@ test("condition node uses explicit safe operators instead of evaluating code", a
   assert.deepEqual(await handler({ ...base, config: { path: "review.score", operator: "greater-than", compareValue: 0.7 }, inputs: { data: { review: { score: 0.9 } } } }), { yes: { review: { score: 0.9 } } });
   assert.deepEqual(await handler({ ...base, config: { path: "labels", operator: "contains", compareValue: "blocked" }, inputs: { data: { labels: ["ready"] } } }), { no: { labels: ["ready"] } });
   assert.deepEqual(await handler({ ...base, config: { path: "database.ready", operator: "equals", compareValue: true }, inputs: { data: { database: { ready: true } } } }), { yes: { database: { ready: true } } });
-  assert.deepEqual(await handler({ ...base, config: { path: "data.database.ready", operator: "equals", compareValue: true }, inputs: { data: { database: { ready: true } } } }), { yes: { database: { ready: true } } });
+  assert.deepEqual(await handler({ ...base, config: { path: "data.database.ready", operator: "equals", compareValue: true }, inputs: { data: { data: { database: { ready: true } } } } }), { yes: { data: { database: { ready: true } } } });
+});
+
+test("condition v2 requires real booleans while historical v1 keeps its published truthiness semantics", async () => {
+  const handlers = coreAutomationNodeHandlers();
+  const base = {
+    node: { id: "gate", type: "logic.condition", version: 2, name: "Gate", description: "", position: { x: 0, y: 0 }, groupId: null, config: {}, bindings: {}, disabled: false },
+    attempt: 1,
+    context,
+    outputsByNode: new Map<string, Record<string, unknown>>(),
+  };
+  assert.deepEqual(await handlers["logic.condition@2"]({ ...base, config: { path: "value", operator: "is-false" }, inputs: { data: { value: "false" } } }), { no: { value: "false" } });
+  assert.deepEqual(await handlers["logic.condition@2"]({ ...base, config: { path: "value", operator: "is-false" }, inputs: { data: { value: false } } }), { yes: { value: false } });
+  assert.deepEqual(await handlers["logic.condition@1"]({ ...base, node: { ...base.node, version: 1 }, config: { path: "value", operator: "is-truthy" }, inputs: { data: { value: "false" } } }), { yes: { value: "false" } });
 });
 
 test("merge paths creates one stable named package from completed routes", async () => {
@@ -857,7 +1025,7 @@ test("bounded Retry route repairs a failed value and executes the same check aga
     context,
     handlers: {
       ...handlers,
-      "core.manual-trigger@1": async () => ({ run: { value: "bad" } }),
+      "core.manual-trigger@1": async () => ({ run: runContextValue() }),
       "ai.structured-task@2": async ({ node, inputs }) => {
         attempts.push(node.id);
         if (node.id === "check") {
@@ -882,7 +1050,7 @@ test("bounded Retry route stops through its explicit exhausted output", async ()
     context,
     handlers: {
       ...handlers,
-      "core.manual-trigger@1": async () => ({ run: { value: "bad" } }),
+      "core.manual-trigger@1": async () => ({ run: runContextValue() }),
       "ai.structured-task@2": async ({ node }) => node.id === "check"
         ? Promise.reject(Object.assign(new Error("Still invalid"), { code: "VALIDATION_FAILED", automationRetryable: false }))
         : { result: { value: "bad" } },

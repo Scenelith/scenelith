@@ -14,8 +14,8 @@ export async function POST(request: Request, context: RouteContext<"/api/automat
   const { workflowId } = await context.params;
   let result;
   try { result = await publishAutomationWorkflow(auth.user.id, workflowId); }
-  catch (error) { return automationApiErrorResponse(error, "Workflow could not be published"); }
+  catch (error) { return automationApiErrorResponse(error, "Workflow could not be taken live"); }
   if (!result) return Response.json({ error: "Workflow is read-only, unavailable or has no draft" }, { status: 404 });
-  if (!result.validation.valid) return Response.json({ error: "Fix validation issues before publishing", ...result }, { status: 422 });
+  if (!result.validation.valid) return Response.json({ error: "Fix validation issues before going live", ...result }, { status: 422 });
   return Response.json(result.detail);
 }

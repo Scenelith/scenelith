@@ -35,10 +35,7 @@ export const automationScheduleConfigSchema = z.discriminatedUnion("mode", [
 export type AutomationScheduleConfig = z.infer<typeof automationScheduleConfigSchema>;
 
 export function parseAutomationScheduleConfig(value: unknown): AutomationScheduleConfig {
-  const legacy = value && typeof value === "object" && !Array.isArray(value) && "everyMinutes" in value && !("mode" in value)
-    ? { mode: "interval", everyMinutes: Number((value as { everyMinutes: unknown }).everyMinutes), misfirePolicy: "catch-up-once" }
-    : value;
-  return automationScheduleConfigSchema.parse(legacy);
+  return automationScheduleConfigSchema.parse(value);
 }
 
 export function nextAutomationScheduleAt(configValue: unknown, after: Date | string = new Date()) {

@@ -1,6 +1,8 @@
 import { automationMergeInputs, automationNodeDefinition, automationNodeInputPorts, automationPortTypesCompatible } from "./registry";
 import { automationJsonSchemaDefinitionIssues } from "./json-schema";
-import { automationCreativeControlIssues } from "./creative-direction-contract";
+import { automationCreativeControlIssues, automationCreativeRequirementOptionIssues } from "./creative-direction-contract";
+import { automationTemplateIssues, automationTemplateStrings } from "./template-contract";
+import { automationValuePathIssues } from "./value-path";
 import {
   automationWorkflowGraphSchema,
   type AutomationNode,
@@ -20,7 +22,7 @@ function emptySetting(value: unknown) {
 }
 
 const embeddedCredential = /(?:\bsk-(?:or-v1-)?[A-Za-z0-9_-]{16,}|\bBearer\s+[A-Za-z0-9._~+/-]{16,}|\bAKIA[A-Z0-9]{16}\b)/i;
-const sensitiveConfigKey = /^(?:authorization|proxy-authorization|cookie|api[_-]?key|access[_-]?token|refresh[_-]?token|client[_-]?secret|password|secret)$/i;
+const sensitiveConfigKey = /^(?:authorization|proxy-authorization|cookie|(?:x[_-]?)?api[_-]?key|(?:x[_-]?)?auth[_-]?token|access[_-]?token|refresh[_-]?token|client[_-]?secret|password|secret)$/i;
 
 function containsStoredCredential(value: unknown, inspectKeys: boolean, seen = new Set<unknown>()): boolean {
   if (typeof value === "string") return embeddedCredential.test(value);
@@ -60,7 +62,8 @@ export function validateAutomationConnection(
   if (sourcePort && targetPort && !automationPortTypesCompatible(sourcePort.type, targetPort.type)) {
     issues.push(issue("INCOMPATIBLE_PORTS", `${sourcePort.label} (${sourcePort.type}) cannot connect to ${targetPort.label} (${targetPort.type}).`));
   }
-  const role = connection.role || (sourcePort?.type === "error" ? "error" : "flow");
+  const role = connection.role;
+  if (!role) issues.push(issue("CONNECTION_ROLE_REQUIRED", "Choose whether this connection is a main route, supporting data, an error route or a Retry route."));
   if (sourcePort?.type === "error" && role !== "error") issues.push(issue("ERROR_ROUTE_ROLE", "An error output must use an Error recovery route."));
   if (sourcePort?.type !== "error" && role === "error") issues.push(issue("ERROR_ROUTE_ROLE", "Only an error output can create an Error recovery route."));
   const isRetryTarget = target.type === "logic.retry-gate" && connection.targetPort === "feedback";
@@ -133,7 +136,7 @@ export function validateAutomationWorkflowGraph(value: unknown): AutomationValid
     }
     if (source.id === target.id) issues.push(issue("SELF_CONNECTION", `“${source.name}” cannot connect back to itself.`, { edgeId: edge.id, nodeId: source.id }));
     if (source.disabled || target.disabled) {
-      issues.push(issue("CONNECTED_DISABLED_NODE", "Disabled nodes must be bypassed or disconnected before publishing.", { edgeId: edge.id }));
+      issues.push(issue("CONNECTED_DISABLED_NODE", "Disabled nodes must be bypassed or disconnected before going live.", { edgeId: edge.id }));
       continue;
     }
     const sourceDefinition = automationNodeDefinition(source.type, source.version);
@@ -145,7 +148,7 @@ export function validateAutomationWorkflowGraph(value: unknown): AutomationValid
     if (sourcePort && targetPort && !automationPortTypesCompatible(sourcePort.type, targetPort.type)) {
       issues.push(issue("INCOMPATIBLE_PORTS", `${sourcePort.label} (${sourcePort.type}) cannot connect to ${targetPort.label} (${targetPort.type}).`, { edgeId: edge.id }));
     }
-    const role = edge.role || (sourcePort?.type === "error" ? "error" : "flow");
+    const role = edge.role;
     if (sourcePort?.type === "error" && role !== "error") issues.push(issue("ERROR_ROUTE_ROLE", `“${sourcePort.label}” must use an Error recovery route.`, { edgeId: edge.id, nodeId: source.id }));
     if (sourcePort?.type !== "error" && role === "error") issues.push(issue("ERROR_ROUTE_ROLE", `“${sourcePort?.label || edge.sourcePort}” is normal data and cannot use an Error recovery route.`, { edgeId: edge.id, nodeId: source.id }));
     const isRetryTarget = target.type === "logic.retry-gate" && edge.targetPort === "feedback";
@@ -159,15 +162,6 @@ export function validateAutomationWorkflowGraph(value: unknown): AutomationValid
     outgoing.push(edge);
     outgoingByNode.set(source.id, outgoing);
   }
-
-  const effectiveEdgeRole = (edge: AutomationWorkflowGraph["edges"][number]) => {
-    if (edge.role) return edge.role;
-    const source = nodeById.get(edge.source);
-    const output = source
-      ? automationNodeDefinition(source.type, source.version)?.outputs.find((port) => port.id === edge.sourcePort)
-      : null;
-    return output?.type === "error" ? "error" : "flow";
-  };
 
   for (const node of graph.nodes.filter((item) => !item.disabled)) {
     const definition = automationNodeDefinition(node.type, node.version);
@@ -205,6 +199,9 @@ export function validateAutomationWorkflowGraph(value: unknown): AutomationValid
       }
       if (emptySetting(value)) continue;
       if (field.kind === "boolean" && typeof value !== "boolean") issues.push(issue("INVALID_SETTING_TYPE", `“${field.label}” must be enabled or disabled.`, { nodeId: node.id }));
+      if (["text", "textarea", "prompt", "select", "model"].includes(field.kind) && typeof value !== "string") {
+        issues.push(issue("INVALID_SETTING_TYPE", `“${field.label}” must be text.`, { nodeId: node.id }));
+      }
       if (field.kind === "number") {
         const numeric = Number(value);
         if (!Number.isFinite(numeric)) issues.push(issue("INVALID_SETTING_TYPE", `“${field.label}” must be a number.`, { nodeId: node.id }));
@@ -230,10 +227,63 @@ export function validateAutomationWorkflowGraph(value: unknown): AutomationValid
           issues.push(issue("INVALID_CREATIVE_CONTROL", `“${node.name}”: ${message}.`, { nodeId: node.id }));
         }
       }
+      if (node.type === "logic.prepare-creative-direction" && field.id === "requirementCategories") {
+        for (const message of automationCreativeRequirementOptionIssues(value, "Requirement categories").slice(0, 24)) {
+          issues.push(issue("INVALID_CREATIVE_TAXONOMY", `“${node.name}”: ${message}.`, { nodeId: node.id }));
+        }
+      }
+      if (node.type === "logic.prepare-creative-direction" && field.id === "requirementPlacements") {
+        for (const message of automationCreativeRequirementOptionIssues(value, "Requirement placements").slice(0, 24)) {
+          issues.push(issue("INVALID_CREATIVE_TAXONOMY", `“${node.name}”: ${message}.`, { nodeId: node.id }));
+        }
+      }
     }
     const effectiveSetting = (fieldId: string) => node.bindings[fieldId]?.mode === "fixed" && node.bindings[fieldId].value !== undefined
       ? node.bindings[fieldId].value
       : node.config[fieldId] ?? definition.fields.find((field) => field.id === fieldId)?.defaultValue;
+    const validatePathSetting = (fieldId: string, allowEmpty: boolean) => {
+      const value = effectiveSetting(fieldId);
+      if (typeof value !== "string") return;
+      for (const message of automationValuePathIssues(value, { allowEmpty })) {
+        issues.push(issue("INVALID_VALUE_PATH", `“${node.name}” ${definition.fields.find((field) => field.id === fieldId)?.label || fieldId}: ${message}.`, { nodeId: node.id }));
+      }
+    };
+    const validateTemplates = (fieldId: string, value: unknown, roots: readonly string[]) => {
+      for (const template of automationTemplateStrings(value)) {
+        for (const message of automationTemplateIssues(template, new Set(roots))) {
+          issues.push(issue("INVALID_TEMPLATE", `“${node.name}” ${definition.fields.find((field) => field.id === fieldId)?.label || fieldId} ${message}.`, { nodeId: node.id }));
+        }
+      }
+    };
+    if (node.type === "input.workflow-data") validatePathSetting("payloadPath", true);
+    if (node.type === "input.tiktok-source" && node.version >= 2
+      && effectiveSetting("captionMode") === "replacement"
+      && node.bindings.caption?.mode !== "ask-on-run"
+      && !String(effectiveSetting("caption") || "").trim()) {
+      issues.push(issue("MISSING_REPLACEMENT_CAPTION", `“${node.name}” needs replacement caption text or a different Caption mode.`, { nodeId: node.id }));
+    }
+    if (node.type === "logic.select-path") validatePathSetting("path", false);
+    if (node.type === "logic.retry-gate") validatePathSetting("feedbackPath", true);
+    if (node.type === "logic.condition") validatePathSetting("path", true);
+    if (node.type === "logic.prepare-creative-direction") {
+      validatePathSetting("briefPath", false);
+      validatePathSetting("policyPath", false);
+    }
+    if (node.type === "ai.structured-task") {
+      validateTemplates("userPrompt", effectiveSetting("userPrompt"), ["primary", "context", "identity", "connected", "run", "trigger"]);
+      validateTemplates("systemPrompt", effectiveSetting("systemPrompt"), []);
+    }
+    if (node.type === "ai.interpret-creative-direction") {
+      validateTemplates("taskInstructions", effectiveSetting("taskInstructions"), ["primary", "connected", "run", "trigger"]);
+      validateTemplates("systemInstructions", effectiveSetting("systemInstructions"), []);
+    }
+    if (node.type === "logic.transform") validateTemplates("template", effectiveSetting("template"), ["data", "inputs", "byNode", "byNodePort", "sources", "run", "trigger"]);
+    if (node.type === "integration.http-request") {
+      validateTemplates("url", effectiveSetting("url"), ["data", "run", "trigger"]);
+      validateTemplates("headers", effectiveSetting("headers"), ["data", "run", "trigger"]);
+      validateTemplates("body", effectiveSetting("body"), ["data", "run", "trigger"]);
+    }
+    if (node.type === "output.finish") validateTemplates("message", effectiveSetting("message"), ["data", "run", "trigger"]);
     if (node.type === "logic.merge") {
       const rawInputs = effectiveSetting("inputs");
       const inputs = automationMergeInputs({ ...node, config: { ...node.config, inputs: rawInputs } });
@@ -253,6 +303,17 @@ export function validateAutomationWorkflowGraph(value: unknown): AutomationValid
         if (ids.has(input.id)) issues.push(issue("DUPLICATE_MERGE_INPUT", `“${node.name}” uses input id “${input.id}” more than once.`, { nodeId: node.id }));
         if (names.has(input.name)) issues.push(issue("DUPLICATE_MERGE_INPUT", `“${node.name}” uses input name “${input.name}” more than once.`, { nodeId: node.id }));
         ids.add(input.id); names.add(input.name);
+      }
+    }
+    if (node.type === "logic.condition") {
+      const operator = effectiveSetting("operator");
+      const comparison = effectiveSetting("compareValue");
+      if (["contains", "greater-than", "less-than"].includes(String(operator))
+        && (comparison === undefined || comparison === null || comparison === "")) {
+        issues.push(issue("MISSING_CONDITION_COMPARISON", `“${node.name}” needs a comparison value for this rule.`, { nodeId: node.id }));
+      }
+      if (["greater-than", "less-than"].includes(String(operator)) && comparison !== undefined && comparison !== null && comparison !== "" && !Number.isFinite(Number(comparison))) {
+        issues.push(issue("INVALID_CONDITION_COMPARISON", `“${node.name}” needs a numeric comparison value for this rule.`, { nodeId: node.id }));
       }
     }
     if (node.type === "ai.structured-task") {
@@ -285,6 +346,24 @@ export function validateAutomationWorkflowGraph(value: unknown): AutomationValid
           issues.push(issue("INVALID_HTTP_URL", `“${node.name}” needs a complete public HTTP or HTTPS address without credentials in the URL.`, { nodeId: node.id }));
         }
       }
+      const headers = effectiveSetting("headers");
+      if (!headers || typeof headers !== "object" || Array.isArray(headers)) {
+        issues.push(issue("INVALID_HTTP_HEADERS", `“${node.name}” needs Extra request headers to be one JSON object.`, { nodeId: node.id }));
+      } else {
+        const method = String(effectiveSetting("method") || "GET");
+        const attempts = Number(effectiveSetting("maxAttempts") ?? 1);
+        const idempotencyHeader = Object.entries(headers as Record<string, unknown>)
+          .find(([key]) => key.toLowerCase() === "idempotency-key");
+        if (!["GET", "HEAD"].includes(method) && attempts > 1 && (!idempotencyHeader || !String(idempotencyHeader[1] ?? "").trim())) {
+          issues.push(issue("HTTP_RETRY_NOT_IDEMPOTENT", `“${node.name}” may retry ${method} only when Extra request headers contains a non-empty Idempotency-Key.`, { nodeId: node.id }));
+        }
+      }
+    }
+    if (node.type === "logic.run-subworkflow" || node.type === "logic.map-subworkflow") {
+      const childInputs = effectiveSetting("childInputs");
+      if (!childInputs || typeof childInputs !== "object" || Array.isArray(childInputs)) {
+        issues.push(issue("INVALID_SUBWORKFLOW_INPUTS", `“${node.name}” needs Extra fixed information to be one JSON object.`, { nodeId: node.id }));
+      }
     }
     if (containsStoredCredential(node.config, node.type === "integration.http-request")) {
       issues.push(issue("SECRET_IN_WORKFLOW", `“${node.name}” appears to contain a stored credential. Move it to a deployment credential slot.`, { nodeId: node.id }));
@@ -312,7 +391,7 @@ export function validateAutomationWorkflowGraph(value: unknown): AutomationValid
       } else if (!current) deploymentSlots.set(subworkflowSlot, { type: "subworkflow", nodeId: node.id });
     }
     const incoming = incomingByNode.get(node.id) || [];
-    if (definition.category !== "trigger" && incoming.length && !incoming.some((edge) => !["data", "retry"].includes(effectiveEdgeRole(edge)))) {
+    if (definition.category !== "trigger" && incoming.length && !incoming.some((edge) => !["data", "retry"].includes(edge.role))) {
       issues.push(issue(
         "MISSING_FLOW_ROUTE",
         `“${node.name}” is connected only as supporting data. Mark one incoming connection as Main execution route so the step remains visible and runnable.`,
@@ -352,8 +431,8 @@ export function validateAutomationWorkflowGraph(value: unknown): AutomationValid
 
   const triggers = graph.nodes.filter((node) => !node.disabled && automationNodeDefinition(node.type, node.version)?.category === "trigger");
   const terminals = graph.nodes.filter((node) => !node.disabled && automationNodeDefinition(node.type, node.version)?.terminal);
-  if (triggers.length !== 1) issues.push(issue("TRIGGER_COUNT", `A published workflow needs exactly one trigger; found ${triggers.length}.`));
-  if (!terminals.length) issues.push(issue("MISSING_TERMINAL", "A published workflow needs at least one output step."));
+  if (triggers.length !== 1) issues.push(issue("TRIGGER_COUNT", `A live workflow needs exactly one trigger; found ${triggers.length}.`));
+  if (!terminals.length) issues.push(issue("MISSING_TERMINAL", "A live workflow needs at least one output step."));
 
   const groupIds = new Set<string>();
   const groupedNodeIds = new Set<string>();
@@ -374,7 +453,7 @@ export function validateAutomationWorkflowGraph(value: unknown): AutomationValid
 
   const activeNodes = graph.nodes.filter((node) => !node.disabled);
   const indegree = new Map(activeNodes.map((node) => [node.id, 0]));
-  for (const edge of graph.edges.filter((item) => effectiveEdgeRole(item) !== "retry")) {
+  for (const edge of graph.edges.filter((item) => item.role !== "retry")) {
     if (indegree.has(edge.source) && indegree.has(edge.target)) indegree.set(edge.target, (indegree.get(edge.target) || 0) + 1);
   }
   const queue = [...indegree.entries()].filter(([, degree]) => degree === 0).map(([nodeId]) => nodeId);
@@ -382,7 +461,7 @@ export function validateAutomationWorkflowGraph(value: unknown): AutomationValid
   while (queue.length) {
     const nodeId = queue.shift()!;
     ordered.push(nodeId);
-    for (const edge of (outgoingByNode.get(nodeId) || []).filter((item) => effectiveEdgeRole(item) !== "retry")) {
+    for (const edge of (outgoingByNode.get(nodeId) || []).filter((item) => item.role !== "retry")) {
       if (!indegree.has(edge.target)) continue;
       const next = (indegree.get(edge.target) || 0) - 1;
       indegree.set(edge.target, next);
@@ -391,8 +470,8 @@ export function validateAutomationWorkflowGraph(value: unknown): AutomationValid
   }
   if (ordered.length !== activeNodes.length) issues.push(issue("UNBOUNDED_CYCLE", "The workflow contains an unbounded cycle. Return corrected data only through a bounded Retry gate."));
 
-  const forwardEdges = graph.edges.filter((edge) => effectiveEdgeRole(edge) !== "retry");
-  for (const retryEdge of graph.edges.filter((edge) => effectiveEdgeRole(edge) === "retry")) {
+  const forwardEdges = graph.edges.filter((edge) => edge.role !== "retry");
+  for (const retryEdge of graph.edges.filter((edge) => edge.role === "retry")) {
     const gate = nodeById.get(retryEdge.target);
     const source = nodeById.get(retryEdge.source);
     if (!gate || !source || gate.type !== "logic.retry-gate" || retryEdge.targetPort !== "feedback") continue;
@@ -482,7 +561,7 @@ export function validateAutomationRunInputs(graph: AutomationWorkflowGraph, valu
     issues.push(issue("INVALID_RUN_INPUT", "Run inputs must be serializable."));
   }
   for (const key of Object.keys(values)) {
-    if (!byKey.has(key)) issues.push(issue("UNEXPECTED_RUN_INPUT", `Run input “${key}” is not used by this published workflow.`));
+    if (!byKey.has(key)) issues.push(issue("UNEXPECTED_RUN_INPUT", `Run input “${key}” is not used by this live workflow.`));
   }
   for (const field of fields) {
     const value = values[field.key];

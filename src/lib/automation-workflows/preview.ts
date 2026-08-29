@@ -1,8 +1,8 @@
-import { evaluateAutomationCondition } from "./condition";
+import { evaluateAutomationCondition, evaluateAutomationConditionV2 } from "./condition";
 import { automationNodeDefinition, automationNodeInputPorts } from "./registry";
 import type { AutomationNode, AutomationWorkflowGraph } from "./types";
 import { topologicalAutomationNodeIds } from "./validation";
-import { automationCreativeControls, splitAutomationCreativeDirection } from "./creative-direction-contract";
+import { automationCreativeControls, automationCreativeRequirementOptions, splitAutomationCreativeDirection } from "./creative-direction-contract";
 
 const unknownPreviewValue = Symbol("automation-preview-value");
 
@@ -66,12 +66,14 @@ export function previewAutomationPaths(graph: AutomationWorkflowGraph, runtimeIn
         const record = settings as Record<string, unknown>;
         const rawBrief = String(record[String(config.briefPath || "creativeBrief")] || "").trim();
         outputs.set(`${node.id}:request`, {
-          contractVersion: 2,
+          contractVersion: 3,
           briefHash: rawBrief ? "preview-nonempty" : "preview-empty",
           rawBrief,
           clauses: splitAutomationCreativeDirection(rawBrief),
           settings: record,
           controls: automationCreativeControls(config.controls),
+          requirementCategories: automationCreativeRequirementOptions(config.requirementCategories),
+          requirementPlacements: automationCreativeRequirementOptions(config.requirementPlacements),
           policy: String(record[String(config.policyPath || "creativeDirectionPolicy")] || "propose"),
           sourceSlideIndexes: [],
         });
@@ -112,7 +114,8 @@ export function previewAutomationPaths(graph: AutomationWorkflowGraph, runtimeIn
         outputs.set(`${node.id}:yes`, unknownPreviewValue);
         outputs.set(`${node.id}:no`, unknownPreviewValue);
       } else {
-        outputs.set(`${node.id}:${evaluateAutomationCondition(data, config) ? "yes" : "no"}`, data);
+        const matches = node.version >= 2 ? evaluateAutomationConditionV2(data, config) : evaluateAutomationCondition(data, config);
+        outputs.set(`${node.id}:${matches ? "yes" : "no"}`, data);
       }
       continue;
     }

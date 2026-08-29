@@ -10,11 +10,14 @@ const workflowDetailRouteSource = readFileSync(new URL("../src/app/api/automatio
 const systemModelRouteSource = readFileSync(new URL("../src/app/api/automation-workflows/[workflowId]/system-model/route.ts", import.meta.url), "utf8");
 const workflowRunsSource = readFileSync(new URL("../src/lib/automation-workflows/runs.ts", import.meta.url), "utf8");
 const workflowEditorSource = readFileSync(new URL("../src/components/automation/AutomationWorkflowEditorOverlay.tsx", import.meta.url), "utf8");
+const workflowOperationsSource = readFileSync(new URL("../src/components/automation/AutomationWorkflowOperations.tsx", import.meta.url), "utf8");
 const referencePickerSource = readFileSync(new URL("../src/components/automation/AutomationReferencePicker.tsx", import.meta.url), "utf8");
 const referenceMenuShellSource = readFileSync(new URL("../src/components/ReferenceMenuShell.tsx", import.meta.url), "utf8");
 const frameNodeSource = readFileSync(new URL("../src/components/FrameNode.tsx", import.meta.url), "utf8");
 const defaultWorkflowSource = readFileSync(new URL("../src/lib/automation-workflows/default-tiktok.ts", import.meta.url), "utf8");
 const registrySource = readFileSync(new URL("../src/lib/automation-workflows/registry.ts", import.meta.url), "utf8");
+const nodeHandlersSource = readFileSync(new URL("../src/lib/automation-workflows/node-handlers.ts", import.meta.url), "utf8");
+const creativeDirectionSource = readFileSync(new URL("../src/lib/automation-workflows/creative-direction-contract.ts", import.meta.url), "utf8");
 const workflowTypesSource = readFileSync(new URL("../src/lib/automation-workflows/types.ts", import.meta.url), "utf8");
 const themeSource = readFileSync(new URL("../src/app/theme.css", import.meta.url), "utf8");
 const globalsSource = readFileSync(new URL("../src/app/globals.css", import.meta.url), "utf8");
@@ -53,6 +56,18 @@ test("automation image generation matches the Canvas Image Generator identity an
   assert.match(themeSource, /automation-flow-node\.is-image/);
   assert.doesNotMatch(defaultWorkflowSource, /bindings: \{ modelId: \{ mode: "ask-on-run"/);
   assert.match(defaultWorkflowSource, /config: \{ modelId: "nano-banana-2"/);
+  assert.deepEqual(definition?.inputs.map((port) => port.id), ["requests"]);
+  assert.ok(definition?.fields.filter((field) => ["modelId", "ratio", "resolution"].includes(field.id)).every((field) => field.required));
+  assert.match(defaultWorkflowSource, /id: "prepare-image-requests"/);
+  assert.match(defaultWorkflowSource, /edge\("prepare-image-requests", "requests", "generate-images", "requests"/);
+});
+
+test("automation semantics come only from visible node configuration", () => {
+  assert.doesNotMatch(nodeHandlersSource, /connectorWords|keywordRules|negationWords/);
+  assert.match(creativeDirectionSource, /export function splitAutomationCreativeDirection[\s\S]*?return \[\{ id: "creative-direction", text: raw, start: 0, end: raw\.length \}\];\n\}/);
+  assert.match(creativeDirectionSource, /complete primary creative-direction request/i);
+  assert.match(registrySource, /The server does not add its own categories/);
+  assert.match(registrySource, /The server accepts only these configured ids/);
 });
 
 test("protected system templates expose only primary AI and image model controls with reset", () => {
@@ -256,7 +271,8 @@ test("automation steps separate a plain-language guide from configuration and de
   assert.doesNotMatch(themeSource, /automation-execution-particle/);
   assert.match(workflowEditorSource, /edgeTypes=\{edgeTypes\}/);
   assert.match(workflowEditorSource, /Collapse workflow editor/);
-  assert.match(workflowEditorSource, /PanelRightClose/);
+  assert.match(workflowEditorSource, /ChevronLeft/);
+  assert.doesNotMatch(workflowEditorSource, /PanelRightClose/);
   assert.match(workflowEditorSource, /appliedLayoutKeyRef/);
   assert.match(workflowEditorSource, /position: existing\.position/);
   assert.match(themeSource, /\.automation-editor-title > button\.automation-editor-collapse[^}]*border:0/);
@@ -309,7 +325,7 @@ test("every registered node type owns hand-written user help and technical notes
   assert.match(registrySource, /Missing help content for automation node type/);
   const registeredTypes = [...registrySource.matchAll(/^\s+type: "([^"]+)"/gm)].map((match) => match[1]);
   const helpedTypes = [...registrySource.matchAll(/^\s+"([^"]+)": \{/gm)].map((match) => match[1]);
-  assert.equal(new Set(registeredTypes).size, 24);
+  assert.equal(new Set(registeredTypes).size, 25);
   assert.deepEqual(new Set(helpedTypes), new Set(registeredTypes));
   for (const definition of automationNodeDefinitions()) {
     assert.ok(definition.description.trim(), `${definition.type} needs a plain-language description`);
@@ -362,11 +378,49 @@ test("the editor keeps system, draft, and published workflows switchable", () =>
   assert.match(workflowEditorSource, /Switch workflow/);
   assert.match(workflowEditorSource, /group: "Scenelith"/);
   assert.match(workflowEditorSource, /group: "My workflows"/);
-  assert.match(workflowEditorSource, /Draft · publish before running/);
-  assert.match(workflowEditorSource, /pendingWorkflowId/);
-  assert.match(workflowEditorSource, /Save & switch/);
-  assert.match(workflowEditorSource, /Discard &amp; switch/);
+  assert.match(workflowEditorSource, /Auto-saved draft · take it live before running/);
+  assert.match(workflowEditorSource, /if \(dirty && !await saveDraft\(\)\) return/);
+  assert.doesNotMatch(workflowEditorSource, /UNSAVED CHANGES|Save & switch|Discard &amp; switch/);
   assert.match(themeSource, /\.automation-workflow-switcher/);
+});
+
+test("workflow editing auto-saves while the live version changes only through an explicit action", () => {
+  assert.match(workflowEditorSource, /window\.setTimeout\(\(\) => void saveDraft\(\), 850\)/);
+  assert.doesNotMatch(workflowEditorSource, />Save draft</);
+  assert.match(workflowEditorSource, /"Go live"/);
+  assert.match(workflowEditorSource, /"Update live"/);
+  assert.match(workflowEditorSource, /"Live"/);
+  assert.match(workflowEditorSource, /const dirty = editRevision !== savedRevision/);
+  assert.match(workflowEditorSource, /setSavedRevision\(\(current\) => Math\.max\(current, revisionToSave\)\)/);
+  assert.match(workflowEditorSource, /const closeEditor = useCallback/);
+  assert.doesNotMatch(workflowEditorSource, /Close without saving|Save this draft before switching/);
+  assert.match(canvasSource, /setAutomationEditorWorkflowId\(\(current\) => current === workflowId \? null : workflowId\)/);
+});
+
+test("automation toolbar and management UI use plain labels and explain non-obvious sections", () => {
+  assert.match(workflowEditorSource, /className=\{`automation-validation-pill/);
+  assert.doesNotMatch(workflowEditorSource, /automation-validation-pill[\s\S]{0,500}<Check/);
+  assert.match(workflowEditorSource, /aria-expanded=\{manageOpen\}/);
+  assert.match(workflowEditorSource, />Manage<\/button>/);
+  assert.match(workflowOperationsSource, /Automatic starts/);
+  assert.match(workflowOperationsSource, /Test a step/);
+  assert.match(workflowOperationsSource, /Opening the latest run/);
+  assert.match(workflowOperationsSource, /latestResponse = await fetch\(`\/api\/automation-runs\/\$\{encodeURIComponent\(runList\[0\]\.id\)\}/);
+});
+
+test("automation model fields reuse the same InspectorSelect as the main Canvas inspector", () => {
+  assert.match(canvasSource, /<InspectorSelect label="Output type and model"/);
+  assert.match(workflowEditorSource, /field\.kind === "model"[^?]*\? <InspectorSelect/s);
+  assert.match(workflowEditorSource, /is-system-model[\s\S]*<InspectorSelect label=\{field\.label\}/);
+  assert.doesNotMatch(workflowEditorSource, /is-system-model[\s\S]{0,500}<select disabled=\{saving\}/);
+  assert.match(workflowEditorSource, /Saved model override needs attention/);
+  assert.match(workflowEditorSource, /Clear override/);
+});
+
+test("the slide-plan validator exposes when its optional contract is not connected", () => {
+  assert.match(workflowEditorSource, /Structural validation only/);
+  assert.match(workflowEditorSource, /selectedValidatorHasContract/);
+  assert.match(registrySource, /Without it, this step performs structural checks only/);
 });
 
 test("workflow dropdown closes outside even when the editor stops pointer bubbling", () => {

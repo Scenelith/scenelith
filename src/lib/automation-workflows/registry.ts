@@ -1,6 +1,12 @@
 import { assistantModels } from "@/lib/assistant-models";
 import type { AutomationNode, AutomationNodeDefinition, AutomationNodeHelp, AutomationNodePortDefinition, AutomationPortType } from "./types";
-import { AUTOMATION_CREATIVE_DIRECTION_SYSTEM_PROMPT, DEFAULT_AUTOMATION_CREATIVE_CONTROLS } from "./creative-direction-contract";
+import {
+  AUTOMATION_CREATIVE_DIRECTION_SYSTEM_PROMPT,
+  AUTOMATION_CREATIVE_DIRECTION_USER_PROMPT,
+  DEFAULT_AUTOMATION_CREATIVE_CONTROLS,
+  DEFAULT_AUTOMATION_REQUIREMENT_CATEGORIES,
+  DEFAULT_AUTOMATION_REQUIREMENT_PLACEMENTS,
+} from "./creative-direction-contract";
 
 export type AutomationMergeInput = { id: string; name: string };
 
@@ -41,10 +47,10 @@ const optionalAssistantModelOptions = [{ value: "", label: "No backup model" }, 
 
 const helpByType: Record<string, AutomationNodeHelp> = {
   "core.manual-trigger": {
-    whenToUse: "Use this as the start of a workflow. A person can press Run, and a configured schedule, event or webhook can start the same published workflow automatically.",
+    whenToUse: "Use this as the start of a workflow. A person can press Run, and a configured schedule, event or webhook can start the same live workflow automatically.",
     setup: ["Place it at the start of the workflow.", "Connect its Run output to every input step that must prepare a value before the work begins.", "Mark changeable fields on later steps as Ask on run so they appear in the Automation panel."],
     exampleFlow: { before: "Automation panel", after: "Source and creative inputs", explanation: "The person presses Run once. This step creates the run context that wakes the connected input steps." },
-    tips: ["A workflow needs exactly one start card.", "Schedules, events and webhooks are configured for the published workflow in Manage → Triggers."],
+    tips: ["A workflow needs exactly one start card.", "Schedules, events and webhooks are configured for the live workflow in Manage → Automatic starts."],
     technicalNotes: ["Emits one run-context object containing run metadata and the trigger payload when one exists.", "It does not transform creative data or call an external provider."],
   },
   "input.tiktok-source": {
@@ -87,7 +93,7 @@ const helpByType: Record<string, AutomationNodeHelp> = {
     setup: ["Connect the main information the AI must work on.", "Connect optional context or identity only when the job needs it.", "Write the task in What should the AI do? and describe the expected result, not implementation details.", "Choose a model.", "If later steps need exact fields, open Advanced settings and define the answer format.", "Connect AI answer to the next step; connect Error path only when the workflow has an explicit recovery branch."],
     exampleFlow: { before: "Source analysis and creative choices", after: "Review copy", explanation: "The AI receives connected context, performs one named job, and passes a reusable answer to the reviewer." },
     tips: ["Split analyze, write and review into separate AI steps so failures are understandable.", "Use a strict answer format only when downstream steps depend on named fields."],
-    technicalNotes: ["Runs a server-side multimodal AI task. Text mode returns plain text; Structured data mode validates the result against the configured field contract.", "Connected values are included automatically; {{ primary }}, {{ context }}, {{ identity }}, {{ run }} and {{ trigger }} place exact values in the task.", "Permanent instructions are kept separate from connected content and cannot contain workflow variables in the current node version."],
+    technicalNotes: ["Runs a server-side multimodal AI task. Text mode returns plain text; Structured data mode validates the result against the configured field contract.", "Connected values are included automatically; {{ primary }}, {{ context }}, {{ identity }}, {{ run }} and {{ trigger }} place exact values in the task.", "Permanent instructions are kept separate from connected content and cannot contain workflow variables in the current node version.", "The runtime prepends only immutable execution-safety instructions: connected data cannot rewrite the node instructions, and the node cannot claim actions outside its visible step. These instructions do not classify or alter creative content."],
   },
   "logic.transform": {
     whenToUse: "Use this when the next step needs only part of earlier results, renamed fields, or one combined object.",
@@ -98,7 +104,7 @@ const helpByType: Record<string, AutomationNodeHelp> = {
   },
   "logic.select-one": {
     whenToUse: "Use this after mutually exclusive branches when exactly one completed result must continue unchanged.",
-    setup: ["Connect every mutually exclusive branch to the same input.", "Connect Selected information to the next step.", "Test both branch outcomes before publishing."],
+    setup: ["Connect every mutually exclusive branch to the same input.", "Connect Selected information to the next step.", "Test both branch outcomes before going live."],
     exampleFlow: { before: "Approved plan or repaired plan", after: "Validate plans", explanation: "Exactly one completed branch continues with the same value and field names." },
     tips: ["Use this only for alternatives where one and only one path can complete.", "Use Merge paths when the next step needs several results together."],
     technicalNotes: ["Fails unless exactly one connected branch produced a value.", "Passes that value unchanged without wrapping, renaming, coercion or fallback."],
@@ -127,16 +133,16 @@ const helpByType: Record<string, AutomationNodeHelp> = {
   "logic.prepare-creative-direction": {
     whenToUse: "Use this before the creative-direction AI step to freeze the exact comment, visible choices, configurable choice map and real source slide indexes into one request contract.",
     setup: ["Connect Creative choices to Settings.", "Connect the raw TikTok Source, not an AI summary, to Source.", "Configure which setting paths and options the interpreter may recognize.", "Connect Request to both Interpret creative direction and Resolve creative direction."],
-    exampleFlow: { before: "Creative choices and source slideshow", after: "Interpret creative direction", explanation: "The deterministic step splits the exact comment into clauses and defines the only choices the model is allowed to recognize." },
+    exampleFlow: { before: "Creative choices and source slideshow", after: "Interpret creative direction", explanation: "The deterministic step preserves the complete comment unchanged and defines the only choices and requirement taxonomy the model may return." },
     tips: ["Keep the default controls or add your own through the visual choice editor.", "Use a strict or confirmation policy unless automatic changes are intentionally allowed."],
-    technicalNotes: ["Hashes the exact comment, verifies every current setting maps to one configured option and rejects invalid choice maps.", "Provides real source indexes directly from the source node so an AI summary cannot invent slide scope."],
+    technicalNotes: ["Hashes and forwards the complete comment without splitting it by words, punctuation or language.", "Verifies every current setting maps to one configured option and provides real source indexes directly from the source node."],
   },
   "ai.interpret-creative-direction": {
     whenToUse: "Use this only for classifying a prepared creative-direction request into configured choices, atomic requirements, ambiguities or explicitly ignored wording.",
     setup: ["Connect a Prepared creative direction request.", "Choose the assistant model and retry limit.", "Connect Analysis to Resolve creative direction.", "Use the Error path only for an explicit recovery branch."],
-    exampleFlow: { before: "Prepared creative direction", after: "Resolve creative direction", explanation: "The model classifies every exact clause under an immutable system contract; it cannot itself change settings." },
+    exampleFlow: { before: "Prepared creative direction", after: "Resolve creative direction", explanation: "The model classifies the complete exact comment under the workflow author's visible instructions; it cannot itself change settings." },
     tips: ["Do not replace this with a generic prose parser when downstream switches matter.", "Keep failure mode on Stop or Error path; an empty interpretation is not a valid fallback."],
-    technicalNotes: ["The node builds a strict schema from the configured control and option IDs.", "Every clause must be covered exactly once and evidence must later match an exact phrase in the original comment."],
+    technicalNotes: ["The node builds a strict schema from the configured control, category and placement IDs.", "Every non-whitespace character must belong to an exact evidence range; the runtime has no language-specific word list."],
   },
   "logic.resolve-creative-direction": {
     whenToUse: "Use this after Interpret creative direction to verify that the model classified the exact current comment without omissions or invented evidence.",
@@ -160,11 +166,11 @@ const helpByType: Record<string, AutomationNodeHelp> = {
     technicalNotes: ["Requires at least two configured inputs. Every input is a stable single-connection port, so removing a connected input is blocked until its edge is disconnected.", "List mode flattens connected lists by one level in configured input order. Named object mode uses the input names as keys and keeps every value intact.", "Branches are not claimed to execute simultaneously; the runtime may schedule them in a deterministic order before the merge."],
   },
   "logic.run-subworkflow": {
-    whenToUse: "Use this to reuse one published workflow as a single step, for example publishing, moderation or asset processing.",
-    setup: ["Connect the information to send.", "Give the connection a stable name.", "In Settings, connect that name to a published child workflow.", "Confirm the child has a compatible Workflow input step.", "Connect its result or error path."],
+    whenToUse: "Use this to reuse one live workflow as a single step, for example publishing, moderation or asset processing.",
+    setup: ["Connect the information to send.", "Give the connection a stable name.", "In Settings, connect that name to a live child workflow.", "Confirm the child has a compatible Workflow input step.", "Connect its result or error path."],
     exampleFlow: { before: "Finished image and caption", after: "Publishing result", explanation: "This workflow pauses while the child workflow completes, then continues with the child result." },
-    tips: ["Use a child workflow for genuinely reusable behavior, not to hide a confusing local graph.", "Publish and test the child before connecting it."],
-    technicalNotes: ["Invokes a pinned published workflow through a deployment binding.", "The connected value becomes the child workflow payload; the child Workflow input reads it without depending on either card's node ID.", "The output is an envelope with the child run id, its final output and warning count."],
+    tips: ["Use a child workflow for genuinely reusable behavior, not to hide a confusing local graph.", "Take the child live and test it before connecting it."],
+    technicalNotes: ["Invokes a pinned live workflow through a deployment binding.", "The connected value becomes the child workflow payload; the child Workflow input reads it without depending on either card's node ID.", "The output is an envelope with the child run id, its final output and warning count."],
   },
   "logic.map-subworkflow": {
     whenToUse: "Use this as an explicit bounded loop when every item in a list must go through the same reusable workflow.",
@@ -182,17 +188,24 @@ const helpByType: Record<string, AutomationNodeHelp> = {
   },
   "logic.validate-slide-plans": {
     whenToUse: "Use this as the final deterministic gate before image generation when the workflow creates structured slide plans.",
-    setup: ["Connect the completed slide plans.", "Also connect the original slideshow and optional identity so indexes and reference IDs can be checked.", "Set the maximum number of slides.", "Connect Checked plans to image creation.", "When repair is allowed, set failure behavior to Send the error and connect the error to a repair step and bounded Retry gate."],
+    setup: ["Connect the completed slide plans.", "Connect Original generation contract for full choice, copy and prompt enforcement. Without it, this step performs structural checks only.", "Also connect the original slideshow and optional identity so indexes and reference IDs can be checked.", "Set the maximum number of slides.", "Connect Checked plans to image creation.", "When repair is allowed, set failure behavior to Send the error and connect the error to a repair step and bounded Retry gate."],
     exampleFlow: { before: "Plan and review slides", after: "Image Generator", explanation: "Only complete, ordered and bounded plans reach the image provider." },
     tips: ["Keep this check even when an AI review step already approved the content.", "AI review judges quality; this step enforces the mechanical contract."],
-    technicalNotes: ["Validates the model-authored slide-plan-set contract without adding, rewriting or repairing prompt fields.", "Rejects missing JSON fields, mismatched indexes, changed run choices, altered text operations, invalid reference roles, unavailable references and excessive slide counts. Model reference capacity is checked by generation because the model can be chosen at run time.", "Error output contains the exact deterministic failure and never substitutes a fallback plan."],
+    technicalNotes: ["Validates the model-authored slide-plan-set contract without adding, rewriting or repairing prompt fields.", "When Original generation contract is connected, it rejects changed run choices, altered text operations and missing prompt requirements. Without that optional connection, validation is explicitly structural: schema, indexes, reference availability and slide limits only.", "Model reference capacity is checked by generation because the model can be chosen at run time.", "Error output contains the exact deterministic failure and never substitutes a fallback plan."],
+  },
+  "logic.prepare-slideshow-image-requests": {
+    whenToUse: "Use this after TikTok slide-plan validation to turn the checked domain contract into the one generic image-request contract.",
+    setup: ["Connect Checked plans and the original slideshow.", "Connect the same optional identity and visual-reference packages used by validation.", "Connect Image requests to the generic Image Generator."],
+    exampleFlow: { before: "Validated TikTok slide plans", after: "Image Generator", explanation: "This visible adapter serializes each approved prompt and exact reference list; the generator itself does not know about TikTok, clothing, locations or text policy." },
+    tips: ["Keep domain-specific transformations in explicit adapter nodes.", "Do not bypass validation when the source plans came from an AI step."],
+    technicalNotes: ["Outputs schemaVersion 1 image requests with one exact prompt, ordered asset ids, roles and labels per item.", "It does not call a provider or choose model settings."],
   },
   "generation.image": {
-    whenToUse: "Use this when checked slide plans should become generated image assets using the selected provider model and references.",
-    setup: ["Connect Checked plans and the original source.", "Connect Identity when consistent people or characters are required.", "Choose the image model, shape and quality.", "Choose how partial failures should behave.", "Connect Created images to Add slideshow to canvas or another asset-processing step."],
-    exampleFlow: { before: "Checked slide plans", after: "Add slideshow to canvas", explanation: "Each plan becomes an image request with its source and identity evidence; successful assets continue together." },
-    tips: ["Validate plans before this step to avoid spending credits on broken inputs.", "Keep concurrency within the provider capacity configured for the deployment."],
-    technicalNotes: ["Consumes a typed slide-plan-set plus source and optional identity.", "Per-item retries, bounded concurrency and partial-failure behavior are explicit settings.", "Stopping after a partial failure prevents results from being added to the canvas, but provider work that already completed may still be billed."],
+    whenToUse: "Use this when one or more explicit image requests should become generated assets with the selected model settings.",
+    setup: ["Connect an Image requests package produced by a visible planning or adapter step.", "Choose the image model, shape and quality.", "Choose how partial failures should behave.", "Connect Created images to a canvas or another asset-processing step."],
+    exampleFlow: { before: "Prepared image requests", after: "Canvas output", explanation: "The generator sends each exact prompt and ordered reference list without interpreting their creative meaning." },
+    tips: ["Build prompts and reference roles upstream so every creative decision stays visible.", "Keep concurrency within the provider capacity configured for the deployment."],
+    technicalNotes: ["Consumes only the canonical image-request batch; it contains no TikTok, wardrobe, location or text-policy logic.", "Model, ratio and resolution are mandatory visible settings. Per-item retries and partial-failure behavior are explicit.", "An explicit retry from this step runs image creation again; only completed upstream nodes before the selected retry point are reused.", "Stopping after a partial failure prevents results from being added to the canvas, but provider work that already completed may still be billed."],
   },
   "output.add-to-canvas": {
     whenToUse: "Use this when generated assets should appear on the main content canvas as an editable result branch.",
@@ -218,7 +231,7 @@ function withHelp(definition: Omit<AutomationNodeDefinition, "help">): Automatio
 
 const rawDefinitions: Array<Omit<AutomationNodeDefinition, "help">> = [
   {
-    type: "core.manual-trigger", version: 1, title: "Start workflow", description: "Starts one workflow run from the Automation panel or a configured trigger.", example: "Use this once at the beginning. A person, schedule, event or webhook can start the published workflow.", category: "trigger", icon: "play", accent: "mint",
+    type: "core.manual-trigger", version: 1, title: "Start workflow", description: "Starts one workflow run from the Automation panel or a configured trigger.", example: "Use this once at the beginning. A person, schedule, event or webhook can start the live workflow.", category: "trigger", icon: "play", accent: "mint",
     inputs: [], outputs: [{ id: "run", label: "Run", type: "run-context" }], fields: [],
   },
   {
@@ -226,6 +239,16 @@ const rawDefinitions: Array<Omit<AutomationNodeDefinition, "help">> = [
     inputs: [{ id: "run", label: "Run", type: "run-context", required: true }], outputs: [{ id: "source", label: "Source", type: "tiktok-source" }], fields: [
       { id: "source", label: "Source slideshow", description: "Choose it now, or ask for a different slideshow whenever this workflow runs.", kind: "select", runtimeBindable: true, runtimeValueType: "tiktok-source", required: true },
       { id: "caption", label: "Use different caption", description: "Optional. Leave empty to use the original TikTok caption.", placeholder: "Write a replacement caption only when you need one…", kind: "textarea", runtimeBindable: true, runtimeValueType: "string" },
+    ],
+  },
+  {
+    type: "input.tiktok-source", version: 2, title: "TikTok source", description: "Brings the chosen TikTok slideshow and an explicitly selected caption mode into the workflow.", example: "Choose a viral slideshow, then preserve, replace or intentionally clear its caption.", category: "input", icon: "source", accent: "amber",
+    inputs: [{ id: "run", label: "Run", type: "run-context", required: true }], outputs: [{ id: "source", label: "Source", type: "tiktok-source" }], fields: [
+      { id: "source", label: "Source slideshow", description: "Choose it now, or ask for a different slideshow whenever this workflow runs.", kind: "select", runtimeBindable: true, runtimeValueType: "tiktok-source", required: true },
+      { id: "captionMode", label: "Caption", description: "Choose explicitly whether to preserve, replace or remove the original caption.", kind: "select", defaultValue: "original", runtimeBindable: true, runtimeValueType: "string", options: [
+        { value: "original", label: "Use original caption" }, { value: "replacement", label: "Use replacement caption" }, { value: "empty", label: "Use no caption" },
+      ] },
+      { id: "caption", label: "Replacement caption", description: "Used only when Caption is set to Use replacement caption.", placeholder: "Write the replacement caption…", kind: "textarea", defaultValue: "", runtimeBindable: true, runtimeValueType: "string", visibleWhen: { fieldId: "captionMode", values: ["replacement"] } },
     ],
   },
   {
@@ -262,7 +285,7 @@ const rawDefinitions: Array<Omit<AutomationNodeDefinition, "help">> = [
   {
     type: "input.workflow-data", version: 1, title: "Input from another workflow", description: "Receives information from a trigger or another workflow.", example: "A scheduled workflow can pass a campaign brief into this workflow without asking a person to type it again.", category: "input", icon: "inbox", accent: "amber",
     inputs: [{ id: "run", label: "Run", type: "run-context", required: true }], outputs: [{ id: "data", label: "Received information", type: "data" }], fields: [
-      { id: "value", label: "Manual or fallback value", description: "Used only when no trigger or parent workflow supplied a payload. Choose Ask on run when a person should enter it.", kind: "json", runtimeBindable: true, runtimeValueType: "json", defaultValue: {} },
+      { id: "value", label: "Manual value", description: "Used only for a manual run. Automatic triggers and parent workflows supply their own payload instead. Choose Ask on run when a person should enter it.", kind: "json", runtimeBindable: true, runtimeValueType: "json", defaultValue: {} },
       { id: "payloadPath", label: "Read one field from the payload", description: "Optional. Example: campaign.brief returns only that nested value. Leave empty to receive the whole payload.", placeholder: "campaign.brief", kind: "text", defaultValue: "", advanced: true },
     ],
   },
@@ -343,6 +366,22 @@ const rawDefinitions: Array<Omit<AutomationNodeDefinition, "help">> = [
     ],
   },
   {
+    type: "logic.condition", version: 2, title: "Choose a path", description: "Checks one explicit typed rule and sends the information down the matching path.", example: "If review status equals true, generate images. Otherwise, send the plan back for repair.", category: "logic", icon: "condition", accent: "amber", retrySafe: true,
+    inputs: [{ id: "data", label: "Information to check", type: "data", required: true }], outputs: [
+      { id: "yes", label: "Rule matches", type: "data", required: true }, { id: "no", label: "Rule does not match", type: "data", required: true },
+    ], fields: [
+      { id: "path", label: "What should be checked?", placeholder: "Example: review.approved", kind: "text", defaultValue: "", description: "Enter the field name from the incoming result. Leave empty to check the whole result." },
+      { id: "operator", label: "What must match?", description: "True and false require actual boolean values; text such as false is never silently coerced.", kind: "select", defaultValue: "is-true", options: [
+        { value: "is-true", label: "Is exactly true" }, { value: "is-false", label: "Is exactly false" },
+        { value: "is-empty", label: "Is empty" }, { value: "is-not-empty", label: "Is not empty" },
+        { value: "equals", label: "Equals this value" }, { value: "not-equals", label: "Does not equal this value" },
+        { value: "contains", label: "Contains this value" }, { value: "greater-than", label: "Is greater than" },
+        { value: "less-than", label: "Is less than" },
+      ] },
+      { id: "compareValue", label: "Compare with", placeholder: "Example: approved, 10, or true", kind: "value", defaultValue: null, description: "Type ordinary text, a number, true, false, or leave it empty.", visibleWhen: { fieldId: "operator", values: ["equals", "not-equals", "contains", "greater-than", "less-than"] } },
+    ],
+  },
+  {
     type: "logic.prepare-creative-direction", version: 1, title: "Prepare creative direction", description: "Creates the exact typed request that defines what the interpreter is allowed to recognize.", example: "Freeze the comment, visible switches and raw source slide indexes before asking a model to classify anything.", category: "logic", icon: "prepare-direction", accent: "neutral", retrySafe: true,
     inputs: [
       { id: "settings", label: "Creative choices", type: "creative-settings", required: true },
@@ -350,7 +389,7 @@ const rawDefinitions: Array<Omit<AutomationNodeDefinition, "help">> = [
     ],
     outputs: [{ id: "request", label: "Prepared request", type: "creative-direction-request", required: true }],
     fields: [
-      { id: "controls", label: "Choices the comment may affect", description: "Define each real setting and explain to the AI what every option means. These node settings, not hidden server rules, control classification.", kind: "creative-controls", defaultValue: DEFAULT_AUTOMATION_CREATIVE_CONTROLS },
+      { id: "controls", label: "Choices the comment may affect", description: "Define each real setting and explain to the AI what every option means.", kind: "creative-controls", defaultValue: DEFAULT_AUTOMATION_CREATIVE_CONTROLS },
       { id: "briefPath", label: "Comment field path", description: "Field inside Creative choices containing the written direction.", kind: "text", defaultValue: "creativeBrief", advanced: true },
       { id: "policyPath", label: "Policy field path", description: "Field inside Creative choices containing the change policy.", kind: "text", defaultValue: "creativeDirectionPolicy", advanced: true },
       { id: "minConfidence", label: "Minimum interpretation confidence", description: "Lower-confidence classifications stop for clarification.", kind: "number", defaultValue: 0.9, min: 0.5, max: 1, advanced: true },
@@ -362,11 +401,44 @@ const rawDefinitions: Array<Omit<AutomationNodeDefinition, "help">> = [
     ],
   },
   {
+    type: "logic.prepare-creative-direction", version: 2, title: "Prepare creative direction", description: "Creates the exact typed request that defines what the interpreter is allowed to recognize.", example: "Freeze the comment, visible switches and raw source slide indexes before asking a model to classify anything.", category: "logic", icon: "prepare-direction", accent: "neutral", retrySafe: true,
+    inputs: [
+      { id: "settings", label: "Creative choices", type: "creative-settings", required: true },
+      { id: "source", label: "Source slideshow", type: "tiktok-source", required: true },
+    ],
+    outputs: [{ id: "request", label: "Prepared request", type: "creative-direction-request", required: true }],
+    fields: [
+      { id: "controls", label: "Choices the comment may affect", description: "Define each real setting and explain to the AI what every option means. These node settings, not hidden server rules, control classification.", kind: "creative-controls", defaultValue: DEFAULT_AUTOMATION_CREATIVE_CONTROLS, required: true },
+      { id: "briefPath", label: "Comment field path", description: "Field inside Creative choices containing the written direction.", kind: "text", defaultValue: "creativeBrief", advanced: true },
+      { id: "policyPath", label: "Policy field path", description: "Field inside Creative choices containing the change policy.", kind: "text", defaultValue: "creativeDirectionPolicy", advanced: true },
+      { id: "minConfidence", label: "Minimum interpretation confidence", description: "Lower-confidence classifications stop for clarification.", kind: "number", defaultValue: 0.9, min: 0.5, max: 1, required: true, advanced: true },
+      { id: "maxBriefCharacters", label: "Maximum comment length", description: "Stops an unexpectedly large comment before it reaches a model.", kind: "number", defaultValue: 5000, min: 100, max: 20000, required: true, advanced: true },
+      { id: "requirementCategories", label: "Requirement categories", description: "Define the category ids and meanings that this workflow accepts. The server does not add its own categories.", kind: "json", defaultValue: DEFAULT_AUTOMATION_REQUIREMENT_CATEGORIES, required: true, advanced: true },
+      { id: "requirementPlacements", label: "Requirement destinations", description: "Define where accepted requirements go and explain each destination to the AI. The server accepts only these configured ids.", kind: "json", defaultValue: DEFAULT_AUTOMATION_REQUIREMENT_PLACEMENTS, required: true, advanced: true },
+      { id: "maxRequirements", label: "Maximum accepted requirements", description: "Stops a model response that expands the comment into too many instructions.", kind: "number", defaultValue: 24, min: 1, max: 80, required: true, advanced: true },
+      { id: "allowIgnoredClauses", label: "Allow explicitly ignored wording", description: "Keep disabled when every clause must become a choice, requirement or clarification error.", kind: "boolean", defaultValue: false, advanced: true },
+    ],
+  },
+  {
     type: "ai.interpret-creative-direction", version: 1, title: "Interpret creative direction", description: "Classifies every exact comment clause under a fixed, strict system contract.", example: "Recognize an explicit Preserve location request while keeping a tone request as an atomic requirement.", category: "ai", icon: "interpret-direction", accent: "blue", retrySafe: true,
     inputs: [{ id: "request", label: "Prepared request", type: "creative-direction-request", required: true }],
     outputs: [{ id: "analysis", label: "Direction analysis", type: "creative-direction-analysis", required: true }, { id: "error", label: "Error path", type: "error" }],
     fields: [
-      { id: "systemInstructions", label: "Built-in interpretation contract", description: "Visible for audit. It defines the output contract and requires semantic interpretation from this node's configured option meanings; it contains no hidden keyword rules.", kind: "prompt", defaultValue: AUTOMATION_CREATIVE_DIRECTION_SYSTEM_PROMPT, readOnly: true, advanced: true },
+      { id: "systemInstructions", label: "Built-in interpretation contract", description: "Visible for audit.", kind: "prompt", defaultValue: AUTOMATION_CREATIVE_DIRECTION_SYSTEM_PROMPT, readOnly: true, advanced: true },
+      { id: "modelId", label: "AI model", description: "Choose this step's text model independently.", kind: "model", runtimeBindable: true, runtimeValueType: "assistant-model", modelCapability: "assistant", required: true, options: assistantModelOptions },
+      { id: "maxAttempts", label: "How many times to retry", description: "Retries provider or strict-schema failures only.", kind: "number", defaultValue: 3, min: 1, max: 8, advanced: true },
+      { id: "fallbackModelId", label: "Backup AI model", description: "Optional model for a later attempt.", kind: "model", modelCapability: "assistant", options: optionalAssistantModelOptions, advanced: true },
+      { id: "failureMode", label: "If interpretation still fails", description: "Stop or route the exact error.", kind: "select", defaultValue: "stop", options: [{ value: "stop", label: "Stop and show the error" }, { value: "error-output", label: "Send the error to another path" }], advanced: true },
+    ],
+  },
+  {
+    type: "ai.interpret-creative-direction", version: 2, title: "Interpret creative direction", description: "Classifies the complete comment and returns exact evidence spans under a visible, strict system contract.", example: "Recognize an explicit Preserve location request while keeping a tone request as an atomic requirement.", category: "ai", icon: "interpret-direction", accent: "blue", retrySafe: true,
+    inputs: [{ id: "request", label: "Prepared request", type: "creative-direction-request", required: true }],
+    outputs: [{ id: "analysis", label: "Direction analysis", type: "creative-direction-analysis", required: true }, { id: "error", label: "Error path", type: "error" }],
+    fields: [
+      { id: "systemInstructions", label: "Permanent interpretation instructions", description: "Visible and editable in duplicated workflows. This template default defines semantic classification without hidden keyword rules.", kind: "prompt", defaultValue: AUTOMATION_CREATIVE_DIRECTION_SYSTEM_PROMPT, required: true, advanced: true },
+      { id: "taskInstructions", label: "Interpretation task", description: "The exact task sent with the prepared request. Keep the output aligned with the configured strict contract.", kind: "prompt", defaultValue: AUTOMATION_CREATIVE_DIRECTION_USER_PROMPT, required: true, advanced: true },
+      { id: "creativity", label: "Answer consistency", description: "Use consistent for classification; other modes are available when a custom workflow intentionally wants broader interpretation.", kind: "select", defaultValue: "consistent", required: true, options: [{ value: "consistent", label: "Consistent" }, { value: "balanced", label: "Balanced" }, { value: "exploratory", label: "Exploratory" }], advanced: true },
       { id: "modelId", label: "AI model", description: "Choose this step's text model independently from the same models available to Canvas Assistant.", kind: "model", runtimeBindable: true, runtimeValueType: "assistant-model", modelCapability: "assistant", required: true, options: assistantModelOptions },
       { id: "maxAttempts", label: "How many times to retry", description: "Retries provider or strict-schema failures only; it never weakens the contract.", kind: "number", defaultValue: 3, min: 1, max: 8, advanced: true },
       { id: "fallbackModelId", label: "Backup AI model", description: "Optional model for a later attempt when the main model cannot return the strict contract.", kind: "model", modelCapability: "assistant", options: optionalAssistantModelOptions, advanced: true },
@@ -375,6 +447,18 @@ const rawDefinitions: Array<Omit<AutomationNodeDefinition, "help">> = [
   },
   {
     type: "logic.resolve-creative-direction", version: 2, title: "Resolve creative direction", description: "Verifies the exact interpretation and applies only policy-approved configured choices.", example: "Reject missing clauses or invented evidence before any route can change.", category: "logic", icon: "resolve-direction", accent: "amber", retrySafe: true,
+    inputs: [
+      { id: "request", label: "Prepared request", type: "creative-direction-request", required: true },
+      { id: "analysis", label: "Direction analysis", type: "creative-direction-analysis", required: true },
+    ],
+    outputs: [
+      { id: "resolved", label: "Resolved choices", type: "resolved-creative-settings", required: true },
+      { id: "conflict", label: "Conflict", type: "error", required: true },
+    ],
+    fields: [],
+  },
+  {
+    type: "logic.resolve-creative-direction", version: 3, title: "Resolve creative direction", description: "Verifies the exact interpretation and applies only policy-approved configured choices.", example: "Reject missing clauses or invented evidence before any route can change.", category: "logic", icon: "resolve-direction", accent: "amber", retrySafe: true,
     inputs: [
       { id: "request", label: "Prepared request", type: "creative-direction-request", required: true },
       { id: "analysis", label: "Direction analysis", type: "creative-direction-analysis", required: true },
@@ -401,7 +485,7 @@ const rawDefinitions: Array<Omit<AutomationNodeDefinition, "help">> = [
     ],
   },
   {
-    type: "logic.run-subworkflow", version: 1, title: "Run another workflow", description: "Hands information to another published workflow, waits for it, then continues with its result.", example: "Send a finished image to a separate workflow that writes and schedules the social post.", category: "logic", icon: "workflow", accent: "mint",
+    type: "logic.run-subworkflow", version: 1, title: "Run another workflow", description: "Hands information to another live workflow, waits for it, then continues with its result.", example: "Send a finished image to a separate workflow that writes and schedules the social post.", category: "logic", icon: "workflow", accent: "mint",
     inputs: [{ id: "data", label: "Information to send", type: "data", required: true }], outputs: [{ id: "result", label: "Workflow result", type: "data" }, { id: "error", label: "Error path", type: "error" }], fields: [
       { id: "subworkflowSlot", label: "Connection name", description: "A safe name for the workflow you will connect below. The connected workflow can be changed after import.", placeholder: "Example: publish-content", kind: "text", required: true, defaultValue: "child-workflow" },
       { id: "childInputs", label: "Extra fixed information", description: "Advanced. Values that should be sent on every run in addition to the connected input.", kind: "json", defaultValue: {}, advanced: true },
@@ -431,7 +515,7 @@ const rawDefinitions: Array<Omit<AutomationNodeDefinition, "help">> = [
       ] },
       { id: "headers", label: "Extra request headers", description: "Advanced. Add only headers required by the external service; secrets belong in the saved connection below.", kind: "json", defaultValue: {}, advanced: true },
       { id: "timeoutSeconds", label: "Stop waiting after, seconds", description: "How long to wait before treating the service as unavailable.", kind: "number", defaultValue: 30, min: 1, max: 120, advanced: true },
-      { id: "maxAttempts", label: "How many times to try", description: "Retries temporary network or service failures.", kind: "number", defaultValue: 2, min: 1, max: 5, advanced: true },
+      { id: "maxAttempts", label: "How many times to try", description: "Retries temporary network or service failures. Create or change requests need an explicit Idempotency-Key header before more than one attempt is allowed.", kind: "number", defaultValue: 1, min: 1, max: 5, advanced: true },
       { id: "failureMode", label: "If the service still fails", description: "Stop, route a safe error response to a recovery path, or continue with an empty service response.", kind: "select", defaultValue: "stop", options: [
         { value: "stop", label: "Stop and show the error" }, { value: "error-output", label: "Send the error to another path" }, { value: "continue-empty", label: "Continue without an answer" },
       ], advanced: true },
@@ -468,6 +552,35 @@ const rawDefinitions: Array<Omit<AutomationNodeDefinition, "help">> = [
     ],
   },
   {
+    type: "logic.prepare-slideshow-image-requests", version: 1, title: "Prepare slideshow image requests", description: "Converts checked TikTok slide plans into exact generic image requests without changing their prompts.", example: "Serialize every approved slide prompt and its ordered references before provider execution.", category: "logic", icon: "image-requests", accent: "neutral", retrySafe: true,
+    inputs: [
+      { id: "plans", label: "Checked slide plans", type: "slide-plan-set", required: true },
+      { id: "source", label: "Original slideshow", type: "tiktok-source", required: true },
+      { id: "identity", label: "Person or character", type: "identity" },
+      { id: "references", label: "Visual references", type: "visual-references" },
+    ],
+    outputs: [{ id: "requests", label: "Image requests", type: "image-request-batch", required: true }],
+    fields: [],
+  },
+  {
+    type: "generation.image", version: 2, title: "Image Generator", description: "Creates images from exact prompts and reference roles prepared by connected workflow nodes.", example: "Create a batch of images without adding or reinterpreting creative instructions.", category: "generation", icon: "generate", accent: "image",
+    inputs: [
+      { id: "requests", label: "Image requests", type: "image-request-batch", required: true },
+    ], outputs: [{ id: "assets", label: "Created images", type: "generated-assets" }, { id: "error", label: "Error path", type: "error" }], fields: [
+      { id: "modelId", label: "Image model", description: "Choose this step's image model independently from the same models available to Canvas Image Generator.", kind: "model", runtimeBindable: true, runtimeValueType: "image-model", modelCapability: "image", required: true },
+      { id: "ratio", label: "Image shape", description: "Choose the format required by the destination, for example 9:16 for TikTok.", kind: "select", runtimeBindable: true, runtimeValueType: "aspect-ratio", required: true },
+      { id: "resolution", label: "Image quality", description: "Higher resolutions may cost more and take longer, depending on the provider.", kind: "select", runtimeBindable: true, runtimeValueType: "resolution", required: true },
+      { id: "partialFailure", label: "If only some images fail", description: "Keep the successful images, or stop without adding any result to the canvas.", kind: "select", defaultValue: "keep-successful", options: [
+        { value: "keep-successful", label: "Keep the images that succeeded" }, { value: "stop", label: "Stop without adding results" },
+      ] },
+      { id: "concurrency", label: "How many images to create at once", description: "Higher is faster but uses more provider capacity at the same time.", kind: "number", defaultValue: 3, min: 1, max: 8, advanced: true },
+      { id: "maxAttempts", label: "Attempts for each image", description: "Retries a slide when the provider request fails.", kind: "number", defaultValue: 3, min: 1, max: 5, advanced: true },
+      { id: "failureMode", label: "If every image fails", description: "Stop the run or send the generation error to a connected recovery path.", kind: "select", defaultValue: "stop", options: [
+        { value: "stop", label: "Stop and show the error" }, { value: "error-output", label: "Send the error to another path" },
+      ], advanced: true },
+    ],
+  },
+  {
     type: "output.add-to-canvas", version: 1, title: "Add slideshow to canvas", description: "Places the created slideshow images back on the content canvas where they stay editable.", example: "Put the new slideshow beside its TikTok source so you can compare, edit and continue from either version.", category: "output", icon: "canvas", accent: "mint", terminal: true,
     inputs: [{ id: "assets", label: "Created images", type: "generated-assets", required: true }, { id: "source", label: "Original source", type: "tiktok-source" }], outputs: [{ id: "result", label: "Canvas update receipt", type: "canvas-result", connectable: false }], fields: [
       { id: "layout", label: "Where should results appear?", description: "Choose whether to keep the new branch beside the source or place it on a separate row.", kind: "select", defaultValue: "beside-source", options: [
@@ -490,9 +603,14 @@ const rawDefinitions: Array<Omit<AutomationNodeDefinition, "help">> = [
 const definitions: AutomationNodeDefinition[] = rawDefinitions.map(withHelp);
 
 const registry = new Map(definitions.map((definition) => [`${definition.type}@${definition.version}`, definition]));
+const latestDefinitions = [...definitions.reduce((byType, definition) => {
+  const current = byType.get(definition.type);
+  if (!current || definition.version > current.version) byType.set(definition.type, definition);
+  return byType;
+}, new Map<string, AutomationNodeDefinition>()).values()];
 
 export function automationNodeDefinitions() {
-  return definitions;
+  return latestDefinitions;
 }
 
 export function automationNodeDefinition(type: string, version: number) {

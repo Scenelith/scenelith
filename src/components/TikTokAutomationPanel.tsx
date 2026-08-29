@@ -303,7 +303,7 @@ export function TikTokAutomationPanel({
 
   return <aside className="tiktok-automation-panel" onPointerDown={(event) => event.stopPropagation()}>
     <header className="tiktok-automation-head">
-      <div><span className="eyebrow">AUTOMATION</span><h2>{selectedWorkflow?.name || "Choose a workflow"}</h2><p>{selectedWorkflow?.description || "Select, configure and run a published workflow."}</p></div>
+      <div><span className="eyebrow">AUTOMATION</span><h2>{selectedWorkflow?.name || "Choose a workflow"}</h2><p>{selectedWorkflow?.description || "Select, configure and run a live workflow."}</p></div>
       <div className="tiktok-automation-head-actions">
         <input ref={importInputRef} type="file" accept="application/json,.json,.scenelith-automation.json" hidden onChange={(event) => void importWorkflow(event.target.files?.[0])} />
         {capabilities.edit && <button type="button" disabled={busy || creatingWorkflow} onClick={() => importInputRef.current?.click()} aria-label="Import workflow JSON" title="Import Scenelith automation JSON"><FileUp size={16} /></button>}
@@ -317,7 +317,7 @@ export function TikTokAutomationPanel({
       <label><span>Workflow</span><InspectorSelect label="Workflow" value={workflowId} onChange={setWorkflowId} disabled={busy || !workflows.length} options={workflows.map((workflow) => ({
         value: workflow.id,
         label: workflow.name,
-        description: workflow.status === "system" ? "System template" : workflow.status === "published" ? "Published custom workflow" : workflow.publishedVersionId ? "Draft changes · runs last published version" : "Draft · publish before running",
+        description: workflow.status === "system" ? "System template" : workflow.status === "published" ? "Live custom workflow" : workflow.publishedVersionId ? "Auto-saved changes · runs the last live version" : "Auto-saved draft · take it live before running",
       }))} />{workflowError && <small className="tiktok-automation-inline-error" role="alert">{workflowError}</small>}</label>
 
       <section className="tiktok-automation-runtime-fields">
@@ -358,7 +358,7 @@ export function TikTokAutomationPanel({
     </section>}
 
     <footer>
-      <p>{!capabilities.run ? "Your workspace role can view this automation but cannot run it" : !runnable ? "Publish this workflow before running it" : selectedSource ? `${selectedSource.assetIds.length} source ${selectedSource.assetIds.length === 1 ? "slide" : "slides"} · exact published version will run` : `${visibleRunInputs.length} run ${visibleRunInputs.length === 1 ? "input" : "inputs"} · exact published version will run`}</p>
+      <p>{!capabilities.run ? "Your workspace role can view this automation but cannot run it" : !runnable ? "Take this workflow live before running it" : selectedSource ? `${selectedSource.assetIds.length} source ${selectedSource.assetIds.length === 1 ? "slide" : "slides"} · exact live version will run` : `${visibleRunInputs.length} run ${visibleRunInputs.length === 1 ? "input" : "inputs"} · exact live version will run`}</p>
       <div className="tiktok-automation-run-control">
         {busy
           ? capabilities.run && <button type="button" className="is-cancel" onClick={onCancel} title="Cancel workflow run">Cancel run</button>

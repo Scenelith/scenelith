@@ -4644,7 +4644,10 @@ function CanvasWorkspace({ initialProject, projects: initialProjects, initialWor
         workflowId={automationWorkflowId}
         setWorkflowId={(value) => { setAutomationWorkflowId(value); setAutomationRuntimePreview(null); setAutomationStatus("idle"); setAutomationSlideStates([]); setAutomationExecution(null); setAutomationChoiceConfirmation(null); }}
         workflowRefreshKey={automationWorkflowRefreshKey}
-        onConfigure={(workflowId) => { setTikTokAutomationOpen(true); setAutomationEditorWorkflowId(workflowId); }}
+        onConfigure={(workflowId) => {
+          setTikTokAutomationOpen(true);
+          setAutomationEditorWorkflowId((current) => current === workflowId ? null : workflowId);
+        }}
         sources={tiktokAutomationSources}
         personas={personas}
         models={models}

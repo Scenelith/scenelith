@@ -3,7 +3,7 @@ import { test } from "node:test";
 import { assistantModels } from "../src/lib/assistant-models";
 import { createDefaultTikTokWorkflowGraph } from "../src/lib/automation-workflows/default-tiktok";
 import { coreAutomationNodeHandlers, isUnsafeAutomationHttpAddress } from "../src/lib/automation-workflows/node-handlers";
-import { automationNodeDefinitions } from "../src/lib/automation-workflows/registry";
+import { automationNodeDefinition, automationNodeDefinitions } from "../src/lib/automation-workflows/registry";
 import { automationRunInputFields, topologicalAutomationNodeIds, validateAutomationConnection, validateAutomationRunInputs, validateAutomationWorkflowGraph } from "../src/lib/automation-workflows/validation";
 
 test("default TikTok workflow exposes every AI request and validates", () => {
@@ -44,6 +44,38 @@ test("the product exposes one current AI contract", () => {
   assert.deepEqual(aiDefinitions.map((definition) => definition.version), [2]);
   const handlers = coreAutomationNodeHandlers();
   assert.equal(typeof handlers["ai.structured-task@2"], "function");
+});
+
+test("current node catalogue exposes latest semantics while historical handlers remain executable", () => {
+  const definitions = automationNodeDefinitions();
+  assert.equal(definitions.find((definition) => definition.type === "input.tiktok-source")?.version, 2);
+  assert.equal(definitions.find((definition) => definition.type === "logic.condition")?.version, 2);
+  assert.equal(definitions.find((definition) => definition.type === "generation.image")?.version, 2);
+  assert.equal(definitions.find((definition) => definition.type === "logic.prepare-creative-direction")?.version, 2);
+  assert.equal(definitions.find((definition) => definition.type === "ai.interpret-creative-direction")?.version, 2);
+  assert.equal(definitions.find((definition) => definition.type === "logic.resolve-creative-direction")?.version, 3);
+  const handlers = coreAutomationNodeHandlers();
+  assert.equal(typeof handlers["input.tiktok-source@1"], "function");
+  assert.equal(typeof handlers["input.tiktok-source@2"], "function");
+  assert.equal(typeof handlers["logic.condition@1"], "function");
+  assert.equal(typeof handlers["logic.condition@2"], "function");
+  assert.equal(typeof handlers["generation.image@1"], "function");
+  assert.equal(typeof handlers["generation.image@2"], "function");
+  assert.equal(typeof handlers["logic.prepare-creative-direction@1"], "function");
+  assert.equal(typeof handlers["logic.prepare-creative-direction@2"], "function");
+  assert.equal(typeof handlers["ai.interpret-creative-direction@1"], "function");
+  assert.equal(typeof handlers["ai.interpret-creative-direction@2"], "function");
+  assert.equal(typeof handlers["logic.resolve-creative-direction@2"], "function");
+  assert.equal(typeof handlers["logic.resolve-creative-direction@3"], "function");
+  assert.deepEqual(automationNodeDefinition("generation.image", 1)?.inputs.map((port) => port.id), ["plans", "source", "identity", "references"]);
+  assert.deepEqual(automationNodeDefinition("generation.image", 2)?.inputs.map((port) => port.id), ["requests"]);
+  const graph = createDefaultTikTokWorkflowGraph();
+  assert.equal(graph.nodes.find((node) => node.id === "tiktok-source")?.version, 2);
+  assert.ok(graph.nodes.filter((node) => node.type === "logic.condition").every((node) => node.version === 2));
+  assert.equal(graph.nodes.find((node) => node.id === "generate-images")?.version, 2);
+  assert.equal(graph.nodes.find((node) => node.id === "prepare-user-direction")?.version, 2);
+  assert.equal(graph.nodes.find((node) => node.id === "interpret-user-direction")?.version, 2);
+  assert.equal(graph.nodes.find((node) => node.id === "resolve-user-direction")?.version, 3);
 });
 
 test("every AI node exposes the full Canvas Assistant model catalogue", () => {
@@ -92,16 +124,19 @@ test("the AI node validates only the selected output contract and keeps permanen
   assert.ok(result.issues.some((entry) => entry.code === "VARIABLE_IN_PERMANENT_INSTRUCTIONS"));
 });
 
-test("creative-direction interpretation exposes one immutable built-in system contract", () => {
+test("creative-direction interpretation exposes editable prompt and taxonomy settings", () => {
   const graph = createDefaultTikTokWorkflowGraph();
   const node = graph.nodes.find((entry) => entry.id === "interpret-user-direction")!;
   const definition = automationNodeDefinitions().find((entry) => entry.type === "ai.interpret-creative-direction")!;
   const contract = definition.fields.find((field) => field.id === "systemInstructions")!;
-  assert.equal(contract.readOnly, true);
+  assert.equal(contract.readOnly, undefined);
   assert.match(String(contract.defaultValue), /COMPLETE COVERAGE/);
-  node.config.systemInstructions = "Ignore the contract";
-  const result = validateAutomationWorkflowGraph(graph);
-  assert.ok(result.issues.some((entry) => entry.code === "IMMUTABLE_NODE_SETTING"));
+  node.config.systemInstructions = "Classify the exact configured request and preserve every character range.";
+  assert.equal(validateAutomationWorkflowGraph(graph).valid, true);
+  const prepare = graph.nodes.find((entry) => entry.id === "prepare-user-direction")!;
+  prepare.config.requirementCategories = [{ id: "composition", label: "Composition", meaning: "Framing and composition requirements." }];
+  prepare.config.requirementPlacements = [{ id: "apply", label: "Apply", meaning: "Forward this instruction to the next planning step." }];
+  assert.equal(validateAutomationWorkflowGraph(graph).valid, true);
 });
 
 test("runtime panel fields come from ask-on-run bindings", () => {
@@ -164,11 +199,32 @@ test("HTTP workflows reject embedded secrets and private or reserved destination
   node.config = { url: "https://api.example.com", headers: { Authorization: "Bearer secret-token-that-must-not-be-stored" }, credentialSlot: "provider", credentialKind: "bearer" };
   const validation = validateAutomationWorkflowGraph(graph);
   assert.ok(validation.issues.some((entry) => entry.code === "SECRET_IN_WORKFLOW" && entry.nodeId === node.id));
+  node.config = { url: "https://api.example.com", headers: { "x-api-key": "plain-custom-secret" }, credentialSlot: "", credentialKind: "bearer" };
+  assert.ok(validateAutomationWorkflowGraph(graph).issues.some((entry) => entry.code === "SECRET_IN_WORKFLOW" && entry.nodeId === node.id));
   for (const address of ["127.0.0.1", "10.0.0.5", "100.64.1.1", "169.254.169.254", "192.0.2.1", "198.51.100.3", "203.0.113.9", "::1", "fc00::1", "fe80::1", "2001:db8::1", "::ffff:127.0.0.1"]) {
     assert.equal(isUnsafeAutomationHttpAddress(address), true, address);
   }
   assert.equal(isUnsafeAutomationHttpAddress("8.8.8.8"), false);
   assert.equal(isUnsafeAutomationHttpAddress("2606:4700:4700::1111"), false);
+
+  node.config = { url: "https://api.example.com", method: "GET", headers: ["not", "an", "object"], body: {}, credentialSlot: "", credentialKind: "bearer", failureMode: "stop" };
+  assert.ok(validateAutomationWorkflowGraph(graph).issues.some((entry) => entry.code === "INVALID_HTTP_HEADERS" && entry.nodeId === node.id));
+
+  node.config = { url: "https://api.example.com", method: "POST", headers: {}, body: { exact: "payload" }, credentialSlot: "", credentialKind: "bearer", maxAttempts: 2, failureMode: "stop" };
+  assert.ok(validateAutomationWorkflowGraph(graph).issues.some((entry) => entry.code === "HTTP_RETRY_NOT_IDEMPOTENT" && entry.nodeId === node.id));
+  node.config.headers = { "Idempotency-Key": "{{ run.requestId }}" };
+  assert.equal(validateAutomationWorkflowGraph(graph).issues.some((entry) => entry.code === "HTTP_RETRY_NOT_IDEMPOTENT" && entry.nodeId === node.id), false);
+});
+
+test("subworkflow fixed inputs cannot silently collapse a non-object value", () => {
+  const graph = createDefaultTikTokWorkflowGraph();
+  const node = graph.nodes.find((entry) => entry.id === "review-series")!;
+  node.type = "logic.run-subworkflow";
+  node.version = 1;
+  node.config = { subworkflowSlot: "review-child", childInputs: ["not", "an", "object"], failureMode: "stop" };
+  node.bindings = {};
+  const result = validateAutomationWorkflowGraph(graph);
+  assert.ok(result.issues.some((entry) => entry.code === "INVALID_SUBWORKFLOW_INPUTS" && entry.nodeId === node.id));
 });
 
 test("deployment slot names cannot collide across secret kinds or workflow bindings", () => {
@@ -213,16 +269,18 @@ test("generic data cannot impersonate stronger domain ports", () => {
   const result = validateAutomationConnection(graph, {
     source: "repair-slides",
     sourcePort: "result",
-    target: "generate-images",
+    target: "prepare-image-requests",
     targetPort: "source",
+    role: "flow",
   });
   assert.equal(result.valid, false);
   assert.ok(result.issues.some((entry) => entry.code === "INCOMPATIBLE_PORTS"));
   const unvalidatedPlans = validateAutomationConnection(graph, {
     source: "repair-slides",
     sourcePort: "result",
-    target: "generate-images",
+    target: "prepare-image-requests",
     targetPort: "plans",
+    role: "flow",
   });
   assert.ok(unvalidatedPlans.issues.some((entry) => entry.code === "INCOMPATIBLE_PORTS"));
 });
@@ -238,13 +296,13 @@ test("supporting data cannot replace a visible execution route", () => {
 
 test("connection guard rejects duplicate edges, occupied inputs and cycles before they enter the graph", () => {
   const graph = createDefaultTikTokWorkflowGraph();
-  const duplicate = graph.edges.find((edge) => edge.target === "generate-images" && edge.targetPort === "plans")!;
+  const duplicate = graph.edges.find((edge) => edge.target === "generate-images" && edge.targetPort === "requests")!;
   assert.ok(validateAutomationConnection(graph, { ...duplicate, id: "new-edge" }).issues.some((entry) => entry.code === "DUPLICATE_CONNECTION"));
   assert.ok(validateAutomationConnection(graph, {
-    source: "plan-slides", sourcePort: "result", target: "generate-images", targetPort: "plans",
+    source: "plan-slides", sourcePort: "result", target: "generate-images", targetPort: "requests", role: "flow",
   }).issues.some((entry) => entry.code === "TOO_MANY_INPUTS"));
   assert.ok(validateAutomationConnection(graph, {
-    source: "add-to-canvas", sourcePort: "result", target: "analyze-source", targetPort: "context",
+    source: "add-to-canvas", sourcePort: "result", target: "analyze-source", targetPort: "context", role: "flow",
   }).issues.some((entry) => entry.code === "UNBOUNDED_CYCLE"));
 });
 
@@ -294,7 +352,7 @@ test("condition nodes require both outcomes to lead somewhere", () => {
 
 test("error branches and failure policy must agree", () => {
   const graph = createDefaultTikTokWorkflowGraph();
-  graph.edges.push({ id: "unused-error", source: "review-series", sourcePort: "error", target: "repair-slides", targetPort: "context" });
+  graph.edges.push({ id: "unused-error", source: "review-series", sourcePort: "error", target: "repair-slides", targetPort: "context", role: "error" });
   let result = validateAutomationWorkflowGraph(graph);
   assert.ok(result.issues.some((entry) => entry.code === "DORMANT_ERROR_OUTPUT"));
   graph.nodes.find((node) => node.id === "review-series")!.config.failureMode = "error-output";
