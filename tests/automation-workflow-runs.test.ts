@@ -241,6 +241,46 @@ test("queued runs keep the exact source, identity and visual references captured
   assert.equal(completed?.events.filter((event) => event.type === "node.input_snapshotted").length, 4);
 });
 
+test("active-run deduplication includes the exact resolved input snapshot", async () => {
+  const owner = await seedOwner();
+  const inputs = await seedSnapshotInputs(owner);
+  const workflow = await repository.createAutomationWorkflow({ userId: owner.userId, projectId: owner.projectId, name: "Snapshot-aware dedupe" });
+  await repository.saveAutomationWorkflowDraft({
+    userId: owner.userId,
+    workflowId: workflow!.workflow.id,
+    baseDraftVersionId: workflow!.draft!.id,
+    graph: inputSnapshotGraph(inputs),
+  });
+  const first = await runs.enqueueAutomationWorkflowRun({ userId: owner.userId, projectId: owner.projectId, workflowId: workflow!.workflow.id, runtimeInputs: {}, mode: "test" });
+  assert.ok("runId" in first);
+  stopScheduledWorkflowDrain();
+
+  const changedGraph = structuredClone(inputs.projectGraph);
+  changedGraph.nodes[0].data.title = "Changed caption before the second run";
+  const { writeProjectGraphSnapshot } = await import("../src/lib/postgres-db");
+  assert.equal((await writeProjectGraphSnapshot(owner.projectId, changedGraph)).ok, true);
+
+  const second = await runs.enqueueAutomationWorkflowRun({ userId: owner.userId, projectId: owner.projectId, workflowId: workflow!.workflow.id, runtimeInputs: {}, mode: "test" });
+  assert.ok("runId" in second);
+  stopScheduledWorkflowDrain();
+  assert.notEqual("runId" in first ? first.runId : "", "runId" in second ? second.runId : "", "a changed input snapshot must create a distinct run");
+  assert.equal(second.deduplicated, false);
+
+  const duplicate = await runs.enqueueAutomationWorkflowRun({ userId: owner.userId, projectId: owner.projectId, workflowId: workflow!.workflow.id, runtimeInputs: {}, mode: "test" });
+  stopScheduledWorkflowDrain();
+  assert.equal(duplicate.deduplicated, true, "an unchanged snapshot still collapses a duplicate submission");
+  assert.equal(Number((await db.prepare("SELECT COUNT(*) AS count FROM automation_runs WHERE workflow_id = ?").get(workflow!.workflow.id) as { count: number }).count), 2);
+
+  const snapshots = await db.prepare("SELECT input_snapshot_json FROM automation_runs WHERE workflow_id = ? ORDER BY created_at, id")
+    .all(workflow!.workflow.id) as Array<{ input_snapshot_json: unknown }>;
+  const captions = snapshots.map((row) => {
+    const snapshot = (typeof row.input_snapshot_json === "string" ? JSON.parse(row.input_snapshot_json) : row.input_snapshot_json) as Record<string, { output: { source?: { caption?: string } } }>;
+    return snapshot.source.output.source?.caption;
+  }).sort();
+  assert.deepEqual(captions, ["Changed caption before the second run", "Original caption"]);
+  await runs.drainAutomationWorkflowRuns();
+});
+
 test("a referenced asset revoked after enqueue fails explicitly when a later step tries to use it", async () => {
   const owner = await seedOwner();
   const inputs = await seedSnapshotInputs(owner);
@@ -422,6 +462,21 @@ function nestedGraph(slot: string): AutomationWorkflowGraph {
   ] };
 }
 
+function replayableChildGraph(): AutomationWorkflowGraph {
+  return { schemaVersion: 1, settings: { ...DEFAULT_AUTOMATION_WORKFLOW_SETTINGS, timeoutSeconds: 120, maxSubworkflowDepth: 3 }, groups: [], nodes: [
+    { id: "manual", type: "core.manual-trigger", version: 1, name: "Run", description: "", position: { x: 0, y: 0 }, groupId: null, config: {}, bindings: {}, disabled: false },
+    { id: "workflow-input", type: "input.workflow-data", version: 1, name: "Input", description: "", position: { x: 180, y: 0 }, groupId: null, config: {}, bindings: { value: { mode: "ask-on-run", required: true } }, disabled: false },
+    { id: "transform", type: "logic.transform", version: 1, name: "Prepare child input", description: "", position: { x: 360, y: 0 }, groupId: null, config: { template: { item: "{{ inputs.0 }}" } }, bindings: {}, disabled: false },
+    { id: "child", type: "logic.run-subworkflow", version: 1, name: "Run child", description: "", position: { x: 540, y: 0 }, groupId: null, config: { subworkflowSlot: "item-workflow", childInputs: {}, failureMode: "stop" }, bindings: {}, disabled: false },
+    { id: "finish", type: "output.finish", version: 1, name: "Fail after child", description: "", position: { x: 720, y: 0 }, groupId: null, config: { outcome: "failed", message: "retry child" }, bindings: {}, disabled: false },
+  ], edges: [
+    { id: "a", source: "manual", sourcePort: "run", target: "workflow-input", targetPort: "run" },
+    { id: "b", source: "workflow-input", sourcePort: "data", target: "transform", targetPort: "data" },
+    { id: "c", source: "transform", sourcePort: "result", target: "child", targetPort: "data" },
+    { id: "d", source: "child", sourcePort: "result", target: "finish", targetPort: "data" },
+  ] };
+}
+
 test("Map creates durable pinned child runs and rejects recursive bindings", async () => {
   const owner = await seedOwner();
   const child = await repository.createAutomationWorkflow({ userId: owner.userId, projectId: owner.projectId, name: "Child" });
@@ -472,6 +527,56 @@ test("Map creates durable pinned child runs and rejects recursive bindings", asy
   const childrenAfterResume = await db.prepare("SELECT id FROM automation_runs WHERE parent_run_id = ?").all(completed!.id);
   assert.equal(childrenAfterResume.length, 3);
   assert.equal(resumed?.events.filter((event) => event.type === "subworkflow.reused").length, 3);
+});
+
+test("a replay reuses a child workflow only when its exact inputs still match", async () => {
+  const owner = await seedOwner();
+  const child = await repository.createAutomationWorkflow({ userId: owner.userId, projectId: owner.projectId, name: "Replay child" });
+  await repository.saveAutomationWorkflowDraft({ userId: owner.userId, workflowId: child!.workflow.id, baseDraftVersionId: child!.draft!.id, graph: childGraph() });
+  await repository.publishAutomationWorkflow(owner.userId, child!.workflow.id);
+
+  const parent = await repository.createAutomationWorkflow({ userId: owner.userId, projectId: owner.projectId, name: "Replay parent" });
+  await repository.saveAutomationWorkflowDraft({ userId: owner.userId, workflowId: parent!.workflow.id, baseDraftVersionId: parent!.draft!.id, graph: replayableChildGraph() });
+  await credentials.bindAutomationSubworkflow({ userId: owner.userId, workflowId: parent!.workflow.id, workspaceId: owner.workspaceId, slotKey: "item-workflow", targetWorkflowId: child!.workflow.id });
+  await repository.publishAutomationWorkflow(owner.userId, parent!.workflow.id);
+
+  const queued = await runs.enqueueAutomationWorkflowRun({
+    userId: owner.userId,
+    projectId: owner.projectId,
+    workflowId: parent!.workflow.id,
+    runtimeInputs: { "workflow-input.value": { id: 1 } },
+  });
+  assert.ok("runId" in queued);
+  stopScheduledWorkflowDrain();
+  await runs.drainAutomationWorkflowRuns();
+  const source = await runs.getAutomationWorkflowRun(owner.userId, "runId" in queued ? queued.runId : "");
+  assert.equal(source?.status, "failed");
+  const sourceChild = await db.prepare("SELECT id FROM automation_runs WHERE parent_run_id = ? AND parent_node_id = 'child'")
+    .get(source!.id) as { id: string };
+
+  const exactReplay = await runs.retryAutomationWorkflowRun({ userId: owner.userId, runId: source!.id, nodeId: "transform" });
+  assert.ok("runId" in exactReplay);
+  stopScheduledWorkflowDrain();
+  await runs.drainAutomationWorkflowRuns();
+  const exactChild = await db.prepare("SELECT replay_of_run_id FROM automation_runs WHERE parent_run_id = ? AND parent_node_id = 'child'")
+    .get("runId" in exactReplay ? exactReplay.runId : "") as { replay_of_run_id: string | null };
+  assert.equal(exactChild.replay_of_run_id, sourceChild.id, "an exact replay may reuse the successful child side effect");
+
+  const changedReplay = await runs.retryAutomationWorkflowRun({ userId: owner.userId, runId: source!.id, nodeId: "transform" });
+  assert.ok("runId" in changedReplay);
+  stopScheduledWorkflowDrain();
+  if (!("runId" in changedReplay)) throw new Error("Changed replay was not queued");
+  const now = new Date().toISOString();
+  await db.prepare(`INSERT INTO automation_node_runs
+    (id, run_id, node_id, node_type, attempt, status, input_json, output_json, output_ports_json, charged_credits, started_at, completed_at, created_at, updated_at)
+    VALUES (?, ?, 'transform', 'logic.transform', 1, 'completed', ?, ?, '["result"]', 0, ?, ?, ?, ?)`)
+    .run(crypto.randomUUID(), changedReplay.runId, JSON.stringify({ data: [{ id: 1 }] }), JSON.stringify({ result: { item: { id: 2 } } }), now, now, now, now);
+  await runs.drainAutomationWorkflowRuns();
+  const changedChild = await db.prepare("SELECT replay_of_run_id, input_snapshot_json FROM automation_runs WHERE parent_run_id = ? AND parent_node_id = 'child'")
+    .get(changedReplay.runId) as { replay_of_run_id: string | null; input_snapshot_json: unknown };
+  const changedSnapshot = (typeof changedChild.input_snapshot_json === "string" ? JSON.parse(changedChild.input_snapshot_json) : changedChild.input_snapshot_json) as Record<string, { output: { data: unknown } }>;
+  assert.equal(changedChild.replay_of_run_id, null, "changed child input must execute a new child run");
+  assert.deepEqual(changedSnapshot["workflow-input"].output.data, { item: { id: 2 } });
 });
 
 test("run preflight blocks an unbound credential before any node executes", async () => {

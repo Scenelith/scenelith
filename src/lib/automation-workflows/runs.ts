@@ -232,8 +232,14 @@ export async function enqueueAutomationWorkflowRun(input: {
   }
   const requestJson = canonicalJson(input.runtimeInputs);
   const inputSnapshotJson = canonicalJson(inputSnapshot);
+  const resolvedInputNodeIds = new Set(version.graph.nodes.filter((node) => node.type.startsWith("input.")).map((node) => node.id));
+  const dedupeInputSnapshotJson = canonicalJson(Object.fromEntries(Object.entries(inputSnapshot)
+    .filter(([nodeId]) => resolvedInputNodeIds.has(nodeId))
+    .map(([nodeId, entry]) => [nodeId, { nodeType: entry.nodeType, nodeVersion: entry.nodeVersion, output: entry.output }])));
   const triggerJson = input.trigger ? canonicalJson(input.trigger.payload) : "";
-  const dedupeKey = createHash("sha256").update(`${input.userId}:${input.projectId}:${version.id}:${runKind}:${requestJson}:${triggerJson}`).digest("hex");
+  const dedupeKey = createHash("sha256")
+    .update(`${input.userId}:${input.projectId}:${version.id}:${runKind}:${requestJson}:${dedupeInputSnapshotJson}:${triggerJson}`)
+    .digest("hex");
   const queued = await db.transaction(async () => {
     await db.prepare("SELECT pg_advisory_xact_lock(hashtextextended(?, 0))").get(`automation-admission:${admissionKey}`);
     if (input.trigger?.deliveryId) {
@@ -643,7 +649,10 @@ async function executeBoundSubworkflow(parent: RunRow, input: { parentNodeId: st
   if (parent.replay_of_run_id) {
     const prior = await db.prepare(`SELECT * FROM automation_runs WHERE parent_run_id = ? AND parent_node_id = ?
       AND item_index IS NOT DISTINCT FROM ? AND workflow_id = ? AND status IN ('completed','completed_with_warnings')
-      AND workflow_version_id = ? ORDER BY completed_at DESC LIMIT 1`).get(parent.replay_of_run_id, input.parentNodeId, input.itemIndex ?? null, target.workflow_id, target.published_version_id) as RunRow | undefined;
+      AND workflow_version_id = ? AND input_json = ?::jsonb
+      AND trigger_payload_json IS NOT DISTINCT FROM ?::jsonb
+      ORDER BY completed_at DESC LIMIT 1`).get(parent.replay_of_run_id, input.parentNodeId, input.itemIndex ?? null,
+        target.workflow_id, target.published_version_id, inputJson, payloadJson) as RunRow | undefined;
     if (prior) {
       const id = randomUUID(); const now = new Date().toISOString();
       await db.prepare(`INSERT INTO automation_runs
@@ -776,7 +785,7 @@ async function processRun(run: RunRow) {
   const attemptBaseByNode = new Map(priorAttemptRows.map((row) => [row.node_id, Number(row.attempt || 0)]));
   const completedRows = await db.prepare(`SELECT DISTINCT ON (node_id) node_id, output_json
     FROM automation_node_runs WHERE run_id = ? AND status = 'completed' AND output_json IS NOT NULL
-    ORDER BY node_id, completed_at DESC`).all(run.id) as Array<{ node_id: string; output_json: unknown }>;
+    ORDER BY node_id, attempt DESC, completed_at DESC, id DESC`).all(run.id) as Array<{ node_id: string; output_json: unknown }>;
   const initialOutputs = new Map(completedRows.map((row) => [row.node_id, jsonValue<Record<string, unknown>>(row.output_json)]));
   const executionAbort = new AbortController();
   let cancellationCheckPending = false;
