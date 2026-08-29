@@ -323,18 +323,6 @@ function selectedControlOption(settings: Record<string, unknown>, control: Autom
   return control.options.find((option) => isDeepStrictEqual(option.value, pathValue(settings, control.path)));
 }
 
-function normalizedRecognitionText(value: string) {
-  return value.normalize("NFKC").toLocaleLowerCase().replace(/[^\p{L}\p{N}]+/gu, " ").trim().replace(/\s+/g, " ");
-}
-
-function evidenceRecognizesOption(evidence: string, option: AutomationCreativeControl["options"][number]) {
-  const normalizedEvidence = normalizedRecognitionText(evidence);
-  const negativeCues = ["do not", "dont", "never", "not", "without", "no", "не", "без", "никогда"];
-  const evidenceIsNegative = negativeCues.some((cue) => normalizedEvidence.includes(cue));
-  const matching = option.matchPhrases.map(normalizedRecognitionText).filter((phrase) => phrase && normalizedEvidence.includes(phrase));
-  return matching.length > 0 && (!evidenceIsNegative || matching.some((phrase) => negativeCues.some((cue) => phrase.includes(cue))));
-}
-
 async function resolveCreativeDirection(execution: AutomationNodeExecution) {
   const request = recordValue(execution.inputs.request);
   const direction = recordValue(execution.inputs.analysis);
@@ -403,8 +391,8 @@ async function resolveCreativeDirection(execution: AutomationNodeExecution) {
         const optionId = String(item.optionId || "");
         const control = controlsById.get(controlId);
         const option = control?.options.find((candidate) => candidate.id === optionId);
-        if (!control || !option || !evidenceRecognizesOption(evidence, option) || String(item.instruction || "") || String(item.category || "") || String(item.placement || "") || (Array.isArray(item.slideIndexes) && item.slideIndexes.length)) {
-          conflicts.push({ field: "creativeBrief", kind: "invalid-choice", message: `${clauseId} requests a choice that is not configured or not supported by its recognition phrases`, evidence, controlId, optionId });
+        if (!control || !option || String(item.instruction || "") || String(item.category || "") || String(item.placement || "") || (Array.isArray(item.slideIndexes) && item.slideIndexes.length)) {
+          conflicts.push({ field: "creativeBrief", kind: "invalid-choice", message: `${clauseId} requests a choice that is not configured in this node`, evidence, controlId, optionId });
           continue;
         }
         normalizedRequests.push({ controlId, optionId, evidence, clauseId, confidence });

@@ -349,7 +349,7 @@ const rawDefinitions: Array<Omit<AutomationNodeDefinition, "help">> = [
     ],
     outputs: [{ id: "request", label: "Prepared request", type: "creative-direction-request", required: true }],
     fields: [
-      { id: "controls", label: "Choices the comment may affect", description: "Define the visible setting paths and exact options that written direction may request.", kind: "creative-controls", defaultValue: DEFAULT_AUTOMATION_CREATIVE_CONTROLS },
+      { id: "controls", label: "Choices the comment may affect", description: "Define each real setting and explain to the AI what every option means. These node settings, not hidden server rules, control classification.", kind: "creative-controls", defaultValue: DEFAULT_AUTOMATION_CREATIVE_CONTROLS },
       { id: "briefPath", label: "Comment field path", description: "Field inside Creative choices containing the written direction.", kind: "text", defaultValue: "creativeBrief", advanced: true },
       { id: "policyPath", label: "Policy field path", description: "Field inside Creative choices containing the change policy.", kind: "text", defaultValue: "creativeDirectionPolicy", advanced: true },
       { id: "minConfidence", label: "Minimum interpretation confidence", description: "Lower-confidence classifications stop for clarification.", kind: "number", defaultValue: 0.9, min: 0.5, max: 1, advanced: true },
@@ -365,7 +365,7 @@ const rawDefinitions: Array<Omit<AutomationNodeDefinition, "help">> = [
     inputs: [{ id: "request", label: "Prepared request", type: "creative-direction-request", required: true }],
     outputs: [{ id: "analysis", label: "Direction analysis", type: "creative-direction-analysis", required: true }, { id: "error", label: "Error path", type: "error" }],
     fields: [
-      { id: "systemInstructions", label: "Built-in interpretation contract", description: "Visible for audit. This fixed contract defines authority, clause coverage, evidence, negation and safe classification rules and cannot be edited.", kind: "prompt", defaultValue: AUTOMATION_CREATIVE_DIRECTION_SYSTEM_PROMPT, readOnly: true, advanced: true },
+      { id: "systemInstructions", label: "Built-in interpretation contract", description: "Visible for audit. It defines the output contract and requires semantic interpretation from this node's configured option meanings; it contains no hidden keyword rules.", kind: "prompt", defaultValue: AUTOMATION_CREATIVE_DIRECTION_SYSTEM_PROMPT, readOnly: true, advanced: true },
       { id: "modelId", label: "AI model", description: "Choose the model that should classify the prepared request.", kind: "model", runtimeBindable: true, runtimeValueType: "assistant-model", modelCapability: "assistant", required: true, options: planningModelOptions },
       { id: "maxAttempts", label: "How many times to retry", description: "Retries provider or strict-schema failures only; it never weakens the contract.", kind: "number", defaultValue: 3, min: 1, max: 8, advanced: true },
       { id: "fallbackModelId", label: "Backup AI model", description: "Optional model for a later attempt when the main model cannot return the strict contract.", kind: "model", modelCapability: "assistant", options: planningModelOptions, advanced: true },

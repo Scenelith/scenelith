@@ -349,7 +349,7 @@ test("creative direction accepts only complete exact-evidence contracts and conf
     inputs: { settings: { ...settings, newLocation: "false" }, source: { slides: [{ index: 1 }] } },
   }), /no single selected option/);
 
-  const customControls = [{ id: "language", label: "Output language", path: "campaign.language", options: [{ id: "english", label: "English", value: "en", matchPhrases: ["English"] }, { id: "french", label: "French", value: "fr", matchPhrases: ["French"] }] }];
+  const customControls = [{ id: "language", label: "Output language", path: "campaign.language", options: [{ id: "english", label: "English", value: "en", meaning: "The person wants the resulting creative written in English." }, { id: "french", label: "French", value: "fr", meaning: "The person wants the resulting creative written in French, regardless of the language used to ask for it." }] }];
   const customPrepared = await prepare({
     ...base,
     node: { id: "prepare", type: "logic.prepare-creative-direction", version: 1, name: "Prepare", description: "", position: { x: 0, y: 0 }, groupId: null, config: {}, bindings: {}, disabled: false },
@@ -364,16 +364,16 @@ test("creative direction accepts only complete exact-evidence contracts and conf
   });
   assert.equal(((customResult.resolved as { campaign: { language: string } }).campaign.language), "fr", "custom user-authored controls must work without hardcoded fields");
 
-  const negatedPrepared = await prepare({
+  const contextualPrepared = await prepare({
     ...base,
     node: { id: "prepare", type: "logic.prepare-creative-direction", version: 1, name: "Prepare", description: "", position: { x: 0, y: 0 }, groupId: null, config: {}, bindings: {}, disabled: false },
     config: { controls: DEFAULT_AUTOMATION_CREATIVE_CONTROLS },
-    inputs: { settings: { ...settings, creativeBrief: "Do not remove text." }, source: { slides: [{ index: 1 }] } },
+    inputs: { settings: { ...settings, creativeBrief: "Текст оставь как есть, удалять его не нужно." }, source: { slides: [{ index: 1 }] } },
   });
-  const negatedRequest = negatedPrepared.request as { briefHash: string; clauses: Array<{ id: string }> };
-  const negatedEvidence = "Do not remove text";
-  const negatedResult = await resolve({ ...execution, inputs: { request: negatedRequest, analysis: { briefHash: negatedRequest.briefHash, clauseResults: [{ clauseId: negatedRequest.clauses[0].id, items: [{ kind: "choice", evidence: negatedEvidence, evidenceStart: 0, evidenceEnd: negatedEvidence.length, controlId: "on-screen-text", optionId: "remove", instruction: "", category: "", placement: "", slideIndexes: [], confidence: 1, reason: "" }] }] } } });
-  assert.match(String((negatedResult.conflict as { message: string }).message), /recognition phrases/, "negation must not be accepted as the opposite option just because it contains the same words");
+  const contextualRequest = contextualPrepared.request as { briefHash: string; clauses: Array<{ id: string; text: string }> };
+  const contextualEvidence = contextualRequest.clauses[0].text;
+  const contextualResult = await resolve({ ...execution, inputs: { request: contextualRequest, analysis: { briefHash: contextualRequest.briefHash, clauseResults: [{ clauseId: contextualRequest.clauses[0].id, items: [{ kind: "choice", evidence: contextualEvidence, evidenceStart: 0, evidenceEnd: contextualEvidence.length, controlId: "on-screen-text", optionId: "keep", instruction: "", category: "", placement: "", slideIndexes: [], confidence: 1, reason: "" }] }] } } });
+  assert.equal((contextualResult.resolved as { textStrategy: string }).textStrategy, "keep", "the model's configured semantic classification must not be overridden by hidden keyword rules");
 });
 
 test("slide validator carries immutable choices, exact text and reference roles into generation", async () => {
