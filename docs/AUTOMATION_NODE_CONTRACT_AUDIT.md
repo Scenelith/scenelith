@@ -35,7 +35,7 @@ Node defaults are runtime behavior. Changing a default, port, field meaning, out
 | `logic.validate-slide-plans@2` | Visible `Recreate TikTok v1` profile, slide limit and failure mode | Validates without repairing or rewriting; with the contract input it enforces that profile's visible choices, copy, prompt and reference rules | Schema, index, reference availability and bounded-size checks |
 | `logic.prepare-slideshow-image-requests@1` | Connected validated plans and references | Serializes every approved prompt unchanged and preserves ordered reference IDs/labels | Rejects unavailable, reordered or mismatched references |
 | `generation.image@2` | Model, ratio, resolution, concurrency, attempts and failure behavior | Sends each exact prompt and ordered reference package and returns the provider result | Model capacity, access, cost, workflow policy and admission limits stop work but do not rewrite it |
-| `output.add-to-canvas@1` | Layout and plan-note flag | Creates editable generated-image nodes, optional plan note and source lineage links | Preview/test runs are side-effect free; repeated completion is idempotent |
+| `output.add-to-canvas@2` | Layout and plan-note flag | Accepts only canonical generated assets, then creates editable generated-image nodes, optional plan note and source lineage links | Preview/test runs are side-effect free; repeated completion is idempotent |
 | `output.finish@1` | Outcome and rendered message | Stores the exact final data on success or deliberately fails with the rendered message | Terminal output only |
 
 ## Domain boundary

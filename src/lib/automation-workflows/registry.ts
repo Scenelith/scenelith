@@ -223,9 +223,58 @@ const helpByType: Record<string, AutomationNodeHelp> = {
   },
 };
 
+const helpOverridesByVersion: Record<string, Partial<AutomationNodeHelp>> = {
+  "input.tiktok-source@1": {
+    setup: ["Connect Start workflow to the Run input.", "Choose a fixed slideshow, or enable Ask on run so the person can choose one each time.", "Optionally enter replacement caption text. An empty replacement preserves the original caption in this historical version.", "Connect Source to the next step."],
+    technicalNotes: ["Historical contract: one caption field is both the replacement and the fallback switch.", "An empty caption field preserves the source title; use version 2 when preserve, replace and empty must be separate explicit choices."],
+  },
+  "logic.condition@1": {
+    technicalNotes: ["Historical predicate contract: yes/no rules use JavaScript truthiness, so non-empty text such as false counts as yes.", "Use version 2 for exact booleans and typed empty rules. The original incoming value is still passed unchanged."],
+  },
+  "logic.prepare-creative-direction@1": {
+    whenToUse: "Use this only to execute a saved historical creative-direction graph that uses request contract v2.",
+    setup: ["Connect the historical Creative choices and TikTok Source inputs.", "Review its fixed field paths, clause limits and configured controls.", "Connect the same request to Interpret v1 and Resolve v2."],
+    technicalNotes: ["Historical contract v2 splits text into punctuation-delimited clauses and applies versioned fallback defaults for missing limits.", "Requirement category and destination vocabularies belong to that historical contract; migrate to Prepare v3 for author-configured taxonomy and explicit read/write paths."],
+  },
+  "logic.prepare-creative-direction@2": {
+    whenToUse: "Use this only to execute a saved creative-direction graph that uses request contract v3.",
+    setup: ["Connect Creative choices and the raw TikTok Source.", "Configure controls, comment and policy paths, categories and destinations.", "Connect the same request to Interpret v2 and Resolve v3."],
+    technicalNotes: ["Contract v3 preserves the complete comment and configured taxonomy, but its paired historical resolver writes evidence to the fixed direction field.", "Migrate to Prepare v3 and Resolve v4 when the evidence destination must be author-controlled."],
+  },
+  "ai.interpret-creative-direction@1": {
+    whenToUse: "Use this only with a saved Prepare v1 request contract.",
+    setup: ["Connect Prepare creative direction v1.", "Choose the model and retry behavior.", "Connect Analysis to Resolve creative direction v2."],
+    technicalNotes: ["Uses the built-in, read-only interpretation prompts and the historical contract-v2 schema.", "It does not change settings; Resolve v2 performs the historical deterministic checks."],
+  },
+  "ai.interpret-creative-direction@2": {
+    whenToUse: "Use this only with a saved Prepare v2 request contract.",
+    setup: ["Connect Prepare creative direction v2.", "Review the visible instructions, model, consistency and retry settings.", "Connect Analysis to Resolve creative direction v3."],
+    technicalNotes: ["Accepts exactly request contract v3 and builds a strict schema from its controls and taxonomy.", "Use version 3 for the current path-explicit contract v4 chain."],
+  },
+  "logic.resolve-creative-direction@2": {
+    whenToUse: "Use this only to resolve a saved contract-v2 request produced by Prepare v1 and Interpret v1.",
+    setup: ["Connect the same historical v2 request and analysis.", "Route Resolved choices and Conflict explicitly.", "Migrate the chain when editing its behavior."],
+    technicalNotes: ["Accepts exactly contract v2, including its historical fixed requirement taxonomy and clause coverage rules.", "On success it writes normalized comment and evidence to the historical creativeBrief and direction fields."],
+  },
+  "logic.resolve-creative-direction@3": {
+    whenToUse: "Use this only to resolve a saved contract-v3 request produced by Prepare v2 and Interpret v2.",
+    setup: ["Connect the same v3 request and analysis.", "Route Resolved choices and Conflict explicitly.", "Use Resolve v4 for a configurable evidence destination."],
+    technicalNotes: ["Accepts exactly contract v3 and uses its configured controls and taxonomy.", "On success this historical version writes normalized comment and evidence to the fixed creativeBrief and direction fields."],
+  },
+  "generation.image@1": {
+    whenToUse: "Use this only to execute a saved slideshow graph that connects checked plans, source and reference packages directly to generation.",
+    setup: ["Connect validated slide plans and the original source.", "Connect optional identity and visual references.", "Review model and format settings, then migrate to the explicit request adapter plus Image Generator v2 when editing the workflow."],
+    technicalNotes: ["Historical combined adapter/generator: it builds image requests internally and may select versioned model, ratio or resolution fallbacks when old saved settings are absent.", "Version 2 requires a canonical image-request batch and explicit model, ratio and resolution."],
+  },
+  "output.add-to-canvas@1": {
+    technicalNotes: ["Historical output accepts both historical and canonical generated-assets shapes and normalizes missing legacy reference labels and effective settings.", "Use version 2 when the workflow must reject non-canonical generator output. Preview/test runs remain side-effect free."],
+  },
+};
+
 function withHelp(definition: Omit<AutomationNodeDefinition, "help">): AutomationNodeDefinition {
-  const help = helpByType[definition.type];
-  if (!help) throw new Error(`Missing help content for automation node type ${definition.type}`);
+  const baseHelp = helpByType[definition.type];
+  if (!baseHelp) throw new Error(`Missing help content for automation node type ${definition.type}`);
+  const help = { ...baseHelp, ...helpOverridesByVersion[`${definition.type}@${definition.version}`] };
   return { ...definition, help };
 }
 
@@ -638,6 +687,15 @@ const rawDefinitions: Array<Omit<AutomationNodeDefinition, "help">> = [
   },
   {
     type: "output.add-to-canvas", version: 1, title: "Add slideshow to canvas", description: "Places the created slideshow images back on the content canvas where they stay editable.", example: "Put the new slideshow beside its TikTok source so you can compare, edit and continue from either version.", category: "output", icon: "canvas", accent: "mint", terminal: true,
+    inputs: [{ id: "assets", label: "Created images", type: "generated-assets", required: true }, { id: "source", label: "Original source", type: "tiktok-source" }], outputs: [{ id: "result", label: "Canvas update receipt", type: "canvas-result", connectable: false }], fields: [
+      { id: "layout", label: "Where should results appear?", description: "Choose whether to keep the new branch beside the source or place it on a separate row.", kind: "select", defaultValue: "beside-source", options: [
+        { value: "beside-source", label: "Beside the source" }, { value: "new-row", label: "On a new row" },
+      ] },
+      { id: "includePlanNote", label: "Show the plan beside the images", description: "Adds a note explaining what each generated slide was meant to do.", kind: "boolean", defaultValue: true },
+    ],
+  },
+  {
+    type: "output.add-to-canvas", version: 2, title: "Add slideshow to canvas", description: "Places canonical generated-image results on the content canvas without guessing an older output format.", example: "Put the new slideshow beside its TikTok source so you can compare, edit and continue from either version.", category: "output", icon: "canvas", accent: "mint", terminal: true,
     inputs: [{ id: "assets", label: "Created images", type: "generated-assets", required: true }, { id: "source", label: "Original source", type: "tiktok-source" }], outputs: [{ id: "result", label: "Canvas update receipt", type: "canvas-result", connectable: false }], fields: [
       { id: "layout", label: "Where should results appear?", description: "Choose whether to keep the new branch beside the source or place it on a separate row.", kind: "select", defaultValue: "beside-source", options: [
         { value: "beside-source", label: "Beside the source" }, { value: "new-row", label: "On a new row" },

@@ -324,9 +324,20 @@ test("every registered node type owns hand-written user help and technical notes
   assert.match(registrySource, /const helpByType: Record<string, AutomationNodeHelp>/);
   assert.match(registrySource, /Missing help content for automation node type/);
   const registeredTypes = [...registrySource.matchAll(/^\s+type: "([^"]+)"/gm)].map((match) => match[1]);
-  const helpedTypes = [...registrySource.matchAll(/^\s+"([^"]+)": \{/gm)].map((match) => match[1]);
+  const helpByTypeSource = registrySource.slice(
+    registrySource.indexOf("const helpByType"),
+    registrySource.indexOf("const helpOverridesByVersion"),
+  );
+  const helpedTypes = [...helpByTypeSource.matchAll(/^\s+"([^"]+)": \{/gm)].map((match) => match[1]);
+  const registeredVersions = new Set(
+    [...registrySource.matchAll(/type: "([^"]+)", version: (\d+)/g)].map((match) => `${match[1]}@${match[2]}`),
+  );
+  const overriddenVersions = [...registrySource.matchAll(/^\s+"([^"@]+@\d+)": \{/gm)].map((match) => match[1]);
   assert.equal(new Set(registeredTypes).size, 25);
   assert.deepEqual(new Set(helpedTypes), new Set(registeredTypes));
+  for (const versionKey of overriddenVersions) {
+    assert.ok(registeredVersions.has(versionKey), `${versionKey} help override must target a registered node version`);
+  }
   for (const definition of automationNodeDefinitions()) {
     assert.ok(definition.description.trim(), `${definition.type} needs a plain-language description`);
     assert.ok(definition.example?.trim(), `${definition.type} needs a non-developer example`);

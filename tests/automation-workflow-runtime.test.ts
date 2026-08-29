@@ -10,7 +10,7 @@ import { parseAutomationImageGenerationRequestBatch } from "../src/lib/automatio
 import type { AutomationWorkflowGraph } from "../src/lib/automation-workflows/types";
 import { validateAutomationWorkflowGraph } from "../src/lib/automation-workflows/validation";
 import { DEFAULT_AUTOMATION_CREATIVE_CONTROLS, DEFAULT_AUTOMATION_REQUIREMENT_CATEGORIES, DEFAULT_AUTOMATION_REQUIREMENT_PLACEMENTS } from "../src/lib/automation-workflows/creative-direction-contract";
-import { parseAutomationGeneratedAssets, parseAutomationPortValue } from "../src/lib/automation-workflows/port-contracts";
+import { parseAutomationGeneratedAssets, parseAutomationPortValue, parseCurrentAutomationGeneratedAssets } from "../src/lib/automation-workflows/port-contracts";
 
 const context = { runId: "run", userId: "user", workspaceId: "workspace", projectId: "project", runtimeInputs: { "source.source": "canvas-source" } };
 const runContextValue = () => ({ runId: context.runId, projectId: context.projectId, startedBy: context.userId, trigger: null });
@@ -29,7 +29,7 @@ const generatedAssetsValue = () => ({
 const canvasResultValue = () => ({ nodeIds: ["generated-node"], noteId: null, sourceNodeId: "canvas-source", added: 1, failures: [] });
 
 test("historical image-generator outputs normalize into the current generated-assets contract", () => {
-  const parsed = parseAutomationGeneratedAssets({
+  const legacy = {
     items: [{
       index: 1,
       role: "scene",
@@ -49,11 +49,13 @@ test("historical image-generator outputs normalize into the current generated-as
     }],
     failures: [{ index: 2, error: "provider failed" }],
     model: { id: "image-model", label: "Image model", defaultRatio: "1:1", defaultResolution: "1K" },
-  });
+  };
+  const parsed = parseAutomationGeneratedAssets(legacy);
   assert.equal(parsed.items[0]?.requestKey, "1");
   assert.deepEqual(parsed.items[0]?.referenceLabels, ["@Source_composition_1_1"]);
   assert.deepEqual(parsed.failures, [{ key: "2", error: "provider failed" }]);
   assert.deepEqual(parsed.effectiveSettings, { aspectRatio: "1:1", resolution: "1K", concurrency: 1, attempts: 1 });
+  assert.throws(() => parseCurrentAutomationGeneratedAssets(legacy), /current contract/, "current output nodes must not guess fields missing from a historical generator result");
 });
 const creativePreparationConfig = {
   controls: DEFAULT_AUTOMATION_CREATIVE_CONTROLS,
@@ -785,7 +787,7 @@ test("default automation keeps every selected rule through an approved no-repair
         throw new Error(`Unexpected AI node ${node.id}`);
       },
       "generation.image@2": async ({ inputs }) => { generatedRequests = inputs.requests as Record<string, unknown>; return { assets: generatedAssetsValue() }; },
-      "output.add-to-canvas@1": async () => ({ result: canvasResultValue() }),
+      "output.add-to-canvas@2": async () => ({ result: canvasResultValue() }),
     },
   });
   assert.deepEqual(result.outputs.get("add-to-canvas")?.result, canvasResultValue());

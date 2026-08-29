@@ -307,3 +307,11 @@ export function parseAutomationGeneratedAssets(value: unknown) {
     },
   } satisfies AutomationGeneratedAssets;
 }
+
+export function parseCurrentAutomationGeneratedAssets(value: unknown): AutomationGeneratedAssets {
+  const rawIssue = rawJsonIssue(value);
+  if (rawIssue) throw new Error(`generated-assets does not match its current contract: ${rawIssue}`);
+  const result = generatedAssetsSchema.safeParse(value);
+  if (!result.success) throw new Error(`generated-assets does not match its current contract: ${formatIssues(result.error)}`);
+  return result.data;
+}

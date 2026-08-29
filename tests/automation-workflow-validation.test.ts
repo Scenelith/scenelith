@@ -58,6 +58,7 @@ test("current node catalogue exposes latest semantics while historical handlers 
   assert.equal(definitions.find((definition) => definition.type === "logic.prepare-creative-direction")?.version, 3);
   assert.equal(definitions.find((definition) => definition.type === "ai.interpret-creative-direction")?.version, 3);
   assert.equal(definitions.find((definition) => definition.type === "logic.resolve-creative-direction")?.version, 4);
+  assert.equal(definitions.find((definition) => definition.type === "output.add-to-canvas")?.version, 2);
   const handlers = coreAutomationNodeHandlers();
   assert.equal(typeof handlers["input.tiktok-source@1"], "function");
   assert.equal(typeof handlers["input.tiktok-source@2"], "function");
@@ -76,6 +77,8 @@ test("current node catalogue exposes latest semantics while historical handlers 
   assert.equal(typeof handlers["logic.resolve-creative-direction@2"], "function");
   assert.equal(typeof handlers["logic.resolve-creative-direction@3"], "function");
   assert.equal(typeof handlers["logic.resolve-creative-direction@4"], "function");
+  assert.equal(typeof handlers["output.add-to-canvas@1"], "function");
+  assert.equal(typeof handlers["output.add-to-canvas@2"], "function");
   assert.deepEqual(automationNodeDefinition("generation.image", 1)?.inputs.map((port) => port.id), ["plans", "source", "identity", "references"]);
   assert.deepEqual(automationNodeDefinition("generation.image", 2)?.inputs.map((port) => port.id), ["requests"]);
   assert.equal(automationNodeDefinition("logic.prepare-creative-direction", 2)?.inputs.find((port) => port.id === "settings")?.type, "creative-settings");
@@ -88,6 +91,7 @@ test("current node catalogue exposes latest semantics while historical handlers 
   assert.equal(graph.nodes.find((node) => node.id === "prepare-user-direction")?.version, 3);
   assert.equal(graph.nodes.find((node) => node.id === "interpret-user-direction")?.version, 3);
   assert.equal(graph.nodes.find((node) => node.id === "resolve-user-direction")?.version, 4);
+  assert.equal(graph.nodes.find((node) => node.id === "add-to-canvas")?.version, 2);
 });
 
 test("every AI node exposes the full Canvas Assistant model catalogue", () => {
@@ -273,6 +277,16 @@ test("every node exposed in the editor has a server runtime handler", () => {
 test("the settings-to-runtime audit covers every current node version", () => {
   const missing = automationNodeDefinitions().map((definition) => `${definition.type}@${definition.version}`).filter((key) => !nodeContractAudit.includes(`\`${key}\``));
   assert.deepEqual(missing, []);
+});
+
+test("historical node guides describe their own version instead of current semantics", () => {
+  assert.match(automationNodeDefinition("input.tiktok-source", 1)!.help.technicalNotes!.join(" "), /Historical contract/);
+  assert.match(automationNodeDefinition("logic.condition", 1)!.help.technicalNotes!.join(" "), /truthiness/);
+  assert.match(automationNodeDefinition("logic.prepare-creative-direction", 2)!.help.technicalNotes!.join(" "), /fixed direction field/);
+  assert.match(automationNodeDefinition("logic.resolve-creative-direction", 3)!.help.technicalNotes!.join(" "), /fixed creativeBrief and direction fields/);
+  assert.match(automationNodeDefinition("generation.image", 1)!.help.technicalNotes!.join(" "), /Historical combined adapter\/generator/);
+  assert.match(automationNodeDefinition("output.add-to-canvas", 1)!.help.technicalNotes!.join(" "), /accepts both historical and canonical/);
+  assert.match(automationNodeDefinition("output.add-to-canvas", 2)!.description, /without guessing an older output format/);
 });
 
 test("validation rejects incompatible ports and cycles", () => {

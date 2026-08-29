@@ -456,7 +456,7 @@ export function createDefaultTikTokWorkflowGraph(): AutomationWorkflowGraph {
       config: { modelId: "nano-banana-2", ratio: "9:16", resolution: "1K", concurrency: 3, maxAttempts: 3, partialFailure: "keep-successful" },
     }),
     node({
-      id: "add-to-canvas", type: "output.add-to-canvas", name: "Add slideshow to canvas", description: "Place the finished images beside their source so you can keep editing them.", position: { x: 7360, y: 120 },
+      id: "add-to-canvas", type: "output.add-to-canvas", version: 2, name: "Add slideshow to canvas", description: "Place canonical generated images beside their source without legacy format guessing.", position: { x: 7360, y: 120 },
       config: { layout: "beside-source", includePlanNote: true },
     }),
   ];

@@ -24,7 +24,7 @@ import { evaluateAutomationCondition, evaluateAutomationConditionV2 } from "./co
 import { resolveAutomationCredential } from "./credentials";
 import { parseAutomationSlidePlanCollection, parseAutomationSlidePlanSet, type AutomationSlidePlan } from "./slide-plan-contract";
 import { parseAutomationImageGenerationRequestBatch } from "./image-generation-request";
-import { parseAutomationGeneratedAssets } from "./port-contracts";
+import { parseAutomationGeneratedAssets, parseCurrentAutomationGeneratedAssets } from "./port-contracts";
 import { automationMergeInputs } from "./registry";
 import { parseAutomationTriggerEnvelope } from "./trigger-envelope";
 import { automationValueAtPath, automationValuePathIssues } from "./value-path";
@@ -1853,6 +1853,11 @@ async function addToCanvas(execution: AutomationNodeExecution) {
   return { result };
 }
 
+async function addToCanvasV2(execution: AutomationNodeExecution) {
+  parseCurrentAutomationGeneratedAssets(execution.inputs.assets);
+  return await addToCanvas(execution);
+}
+
 async function finishWorkflow(execution: AutomationNodeExecution) {
   const renderedMessage = renderAutomationTemplate(stringSetting(execution, "message"), { data: execution.inputs.data, run: execution.context.runtimeInputs, trigger: execution.context.triggerPayload });
   const message = printAutomationValue(renderedMessage);
@@ -1897,6 +1902,7 @@ export function coreAutomationNodeHandlers(): AutomationNodeHandlers {
     "generation.image@1": imageGenerationV1,
     "generation.image@2": imageGenerationV2,
     "output.add-to-canvas@1": addToCanvas,
+    "output.add-to-canvas@2": addToCanvasV2,
     "output.finish@1": finishWorkflow,
   };
 }
