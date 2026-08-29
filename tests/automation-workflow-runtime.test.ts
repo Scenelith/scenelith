@@ -8,6 +8,7 @@ import { validateAutomationStructuredValue } from "../src/lib/automation-workflo
 import { parseAutomationSlidePlanSet } from "../src/lib/automation-workflows/slide-plan-contract";
 import type { AutomationWorkflowGraph } from "../src/lib/automation-workflows/types";
 import { validateAutomationWorkflowGraph } from "../src/lib/automation-workflows/validation";
+import { DEFAULT_AUTOMATION_CREATIVE_CONTROLS } from "../src/lib/automation-workflows/creative-direction-contract";
 
 const context = { runId: "run", userId: "user", workspaceId: "workspace", projectId: "project", runtimeInputs: { "source.source": "canvas-source" } };
 
@@ -294,21 +295,138 @@ test("select-information returns the exact nested value and never guesses anothe
   await assert.rejects(handler({ ...execution, config: { path: "review.missing" }, inputs: { data: { review: { plans }, selected: "legacy" } } }), /could not find/);
 });
 
+test("creative direction accepts only complete exact-evidence contracts and configurable choices", async () => {
+  const handlers = coreAutomationNodeHandlers();
+  const prepare = handlers["logic.prepare-creative-direction@1"];
+  const resolve = handlers["logic.resolve-creative-direction@2"];
+  const base = { attempt: 1, context, outputsByNode: new Map<string, Record<string, unknown>>() };
+  const settings = { mode: "concept", newOutfit: false, newLocation: true, textStrategy: "rewrite", creativeBrief: "Keep the same room, remove text and make it warm.", creativeDirectionPolicy: "auto-explicit" };
+  const prepared = await prepare({
+    ...base,
+    node: { id: "prepare", type: "logic.prepare-creative-direction", version: 1, name: "Prepare", description: "", position: { x: 0, y: 0 }, groupId: null, config: {}, bindings: {}, disabled: false },
+    config: { controls: DEFAULT_AUTOMATION_CREATIVE_CONTROLS, minConfidence: 0.9, maxClauses: 16, maxRequirements: 24 },
+    inputs: { settings, source: { slides: [{ index: 1 }, { index: 2 }] } },
+  });
+  const request = prepared.request as { briefHash: string; clauses: Array<{ id: string; text: string }> };
+  const clauseId = request.clauses[0].id;
+  const withSpan = (evidence: string, item: Record<string, unknown>) => {
+    const evidenceStart = request.clauses[0].text.indexOf(evidence);
+    return { ...item, evidence, evidenceStart, evidenceEnd: evidenceStart + evidence.length };
+  };
+  const analysis = { briefHash: request.briefHash, clauseResults: [{ clauseId, items: [
+    withSpan("Keep the same room", { kind: "choice", controlId: "location-setting", optionId: "preserve", instruction: "", category: "", placement: "", slideIndexes: [], confidence: 1, reason: "" }),
+    withSpan("remove text", { kind: "choice", controlId: "on-screen-text", optionId: "remove", instruction: "", category: "", placement: "", slideIndexes: [], confidence: 1, reason: "" }),
+    withSpan("make it warm", { kind: "requirement", controlId: "", optionId: "", instruction: "make it warm", category: "tone", placement: "change", slideIndexes: [], confidence: 1, reason: "" }),
+  ] }] };
+  const execution = {
+    ...base,
+    node: { id: "resolve", type: "logic.resolve-creative-direction", version: 2, name: "Resolve", description: "", position: { x: 0, y: 0 }, groupId: null, config: {}, bindings: {}, disabled: false },
+    config: {}, inputs: { request, analysis },
+  };
+  const result = await resolve(execution);
+  const resolved = result.resolved as Record<string, unknown>;
+  assert.equal(resolved.newLocation, false);
+  assert.equal(resolved.textStrategy, "remove");
+  assert.equal(resolved.newOutfit, false, "unmentioned choices must remain unchanged");
+  const requirements = (resolved.direction as { requirements: Array<{ id: string; evidence: string }> }).requirements;
+  assert.equal(requirements.length, 1);
+  assert.match(requirements[0].id, /^creative-direction-[a-f0-9]{16}$/);
+  assert.equal(requirements[0].evidence, "make it warm");
+
+  const inventedEvidence = await resolve({ ...execution, inputs: { request, analysis: { ...analysis, clauseResults: [{ clauseId, items: [{ ...analysis.clauseResults[0].items[0], evidence: "keep the same room" }] }] } } });
+  assert.match(String((inventedEvidence.conflict as { message: string }).message), /exact phrase/);
+
+  const inventedInstruction = await resolve({ ...execution, inputs: { request, analysis: { ...analysis, clauseResults: [{ clauseId, items: analysis.clauseResults[0].items.map((item) => item.kind === "requirement" ? { ...item, instruction: "Show a 50% discount" } : item) }] } } });
+  assert.match(String((inventedInstruction.conflict as { message: string }).message), /incomplete creative requirement/);
+
+  const missingCoverage = await resolve({ ...execution, inputs: { request, analysis: { briefHash: request.briefHash, clauseResults: [] } } });
+  assert.match(String((missingCoverage.conflict as { message: string }).message), /every creative-direction clause/);
+
+  await assert.rejects(prepare({
+    ...base,
+    node: { id: "prepare", type: "logic.prepare-creative-direction", version: 1, name: "Prepare", description: "", position: { x: 0, y: 0 }, groupId: null, config: {}, bindings: {}, disabled: false },
+    config: { controls: DEFAULT_AUTOMATION_CREATIVE_CONTROLS },
+    inputs: { settings: { ...settings, newLocation: "false" }, source: { slides: [{ index: 1 }] } },
+  }), /no single selected option/);
+
+  const customControls = [{ id: "language", label: "Output language", path: "campaign.language", options: [{ id: "english", label: "English", value: "en", meaning: "The person wants the resulting creative written in English." }, { id: "french", label: "French", value: "fr", meaning: "The person wants the resulting creative written in French, regardless of the language used to ask for it." }] }];
+  const customPrepared = await prepare({
+    ...base,
+    node: { id: "prepare", type: "logic.prepare-creative-direction", version: 1, name: "Prepare", description: "", position: { x: 0, y: 0 }, groupId: null, config: {}, bindings: {}, disabled: false },
+    config: { controls: customControls },
+    inputs: { settings: { campaign: { language: "en" }, creativeBrief: "Use French.", creativeDirectionPolicy: "auto-explicit" }, source: { slides: [{ index: 1 }] } },
+  });
+  const customRequest = customPrepared.request as { briefHash: string; clauses: Array<{ id: string }> };
+  const customEvidence = "Use French";
+  const customResult = await resolve({
+    ...execution,
+    inputs: { request: customRequest, analysis: { briefHash: customRequest.briefHash, clauseResults: [{ clauseId: customRequest.clauses[0].id, items: [{ kind: "choice", evidence: customEvidence, evidenceStart: 0, evidenceEnd: customEvidence.length, controlId: "language", optionId: "french", instruction: "", category: "", placement: "", slideIndexes: [], confidence: 1, reason: "" }] }] } },
+  });
+  assert.equal(((customResult.resolved as { campaign: { language: string } }).campaign.language), "fr", "custom user-authored controls must work without hardcoded fields");
+
+  const contextualPrepared = await prepare({
+    ...base,
+    node: { id: "prepare", type: "logic.prepare-creative-direction", version: 1, name: "Prepare", description: "", position: { x: 0, y: 0 }, groupId: null, config: {}, bindings: {}, disabled: false },
+    config: { controls: DEFAULT_AUTOMATION_CREATIVE_CONTROLS },
+    inputs: { settings: { ...settings, creativeBrief: "Текст оставь как есть, удалять его не нужно." }, source: { slides: [{ index: 1 }] } },
+  });
+  const contextualRequest = contextualPrepared.request as { briefHash: string; clauses: Array<{ id: string; text: string }> };
+  const contextualEvidence = contextualRequest.clauses[0].text;
+  const contextualResult = await resolve({ ...execution, inputs: { request: contextualRequest, analysis: { briefHash: contextualRequest.briefHash, clauseResults: [{ clauseId: contextualRequest.clauses[0].id, items: [{ kind: "choice", evidence: contextualEvidence, evidenceStart: 0, evidenceEnd: contextualEvidence.length, controlId: "on-screen-text", optionId: "keep", instruction: "", category: "", placement: "", slideIndexes: [], confidence: 1, reason: "" }] }] } } });
+  assert.equal((contextualResult.resolved as { textStrategy: string }).textStrategy, "keep", "the model's configured semantic classification must not be overridden by hidden keyword rules");
+
+  const detailedPrepared = await prepare({
+    ...base,
+    node: { id: "prepare", type: "logic.prepare-creative-direction", version: 1, name: "Prepare", description: "", position: { x: 0, y: 0 }, groupId: null, config: {}, bindings: {}, disabled: false },
+    config: { controls: DEFAULT_AUTOMATION_CREATIVE_CONTROLS },
+    inputs: { settings: { ...settings, newOutfit: false, creativeBrief: "Одень её в белое льняное платье с длинными рукавами.", creativeDirectionPolicy: "auto-explicit" }, source: { slides: [{ index: 1 }] } },
+  });
+  const detailedRequest = detailedPrepared.request as { briefHash: string; clauses: Array<{ id: string; text: string }> };
+  const detailedEvidence = detailedRequest.clauses[0].text;
+  const detailedResult = await resolve({ ...execution, inputs: { request: detailedRequest, analysis: { briefHash: detailedRequest.briefHash, clauseResults: [{ clauseId: detailedRequest.clauses[0].id, items: [
+    { kind: "choice", evidence: detailedEvidence, evidenceStart: 0, evidenceEnd: detailedEvidence.length, controlId: "wardrobe-subjects", optionId: "change", instruction: "", category: "", placement: "", slideIndexes: [], confidence: 1, reason: "" },
+    { kind: "requirement", evidence: detailedEvidence, evidenceStart: 0, evidenceEnd: detailedEvidence.length, controlId: "", optionId: "", instruction: detailedEvidence, category: "visual", placement: "change", slideIndexes: [], confidence: 1, reason: "" },
+  ] }] } } });
+  const detailedResolved = detailedResult.resolved as { newOutfit: boolean; direction: { requirements: Array<{ instruction: string }> } };
+  assert.equal(detailedResolved.newOutfit, true, "a model-selected route change must update the configured state under auto-explicit policy");
+  assert.equal(detailedResolved.direction.requirements[0].instruction, detailedEvidence, "a route choice must not consume the user's concrete downstream instruction");
+
+  const workflow = createDefaultTikTokWorkflowGraph();
+  const wardrobeRoute = await handlers["logic.condition@1"]({
+    ...base,
+    node: workflow.nodes.find((node) => node.id === "wardrobe-choice")!,
+    config: workflow.nodes.find((node) => node.id === "wardrobe-choice")!.config,
+    inputs: { data: detailedResolved },
+  });
+  const wardrobeNode = workflow.nodes.find((node) => node.id === "allow-wardrobe-change")!;
+  const wardrobeResult = await handlers["logic.transform@1"]({
+    ...base,
+    node: wardrobeNode,
+    config: wardrobeNode.config,
+    inputs: { data: wardrobeRoute.yes },
+  });
+  const wardrobeContract = wardrobeResult.result as { choice: { direction: { requirements: Array<{ instruction: string }> } }; wardrobe: { mode: string } };
+  assert.equal(wardrobeContract.wardrobe.mode, "change");
+  assert.equal(wardrobeContract.choice.direction.requirements[0].instruction, detailedEvidence, "the active wardrobe node must carry the exact detail into the choices package");
+});
+
 test("slide validator carries immutable choices, exact text and reference roles into generation", async () => {
   const wardrobeInstruction = "Create a visibly new wardrobe on every applicable slide.";
   const locationInstruction = "Preserve the exact source location and room layout.";
   const adaptationPreserveInstruction = "Keep the source concept.";
   const adaptationChangeInstruction = "Change the person.";
   const textInstruction = "Remove and erase every existing word; do not render replacement text.";
+  const writtenInstruction = "Use a warm, candid tone suitable for women 25–35.";
+  const writtenRequirement = { id: "creative-direction-1", instruction: writtenInstruction, evidence: "make it warm for women 25–35", category: "tone", placement: "change", slideIndexes: [] };
   const contract = {
     sourceAnalysis: { slides: [{ index: 1, visibleText: "last year..." }] },
     choices: {
-      settings: { mode: "identity", newOutfit: true, newLocation: false, textStrategy: "remove" },
+      settings: { mode: "identity", newOutfit: true, newLocation: false, textStrategy: "remove", direction: { requirements: [writtenRequirement] } },
       adaptation: { adaptation: { mode: "identity", preserveInstruction: adaptationPreserveInstruction, changeInstruction: adaptationChangeInstruction } },
       wardrobe: { wardrobe: { mode: "change", instruction: wardrobeInstruction } },
       location: { location: { mode: "preserve", instruction: locationInstruction } },
     },
-    brief: { decisions: { newOutfit: true, newLocation: false, textStrategy: "remove" } },
+    brief: { requirements: [writtenRequirement], decisions: { newOutfit: true, newLocation: false, textStrategy: "remove" } },
     copy: { slides: [{ index: 1, sourceText: "last year...", overlayText: "", strategy: "remove", instruction: textInstruction, copyFunction: "hook" }] },
     references: { slides: [{ index: 1, references: [{ assetId: "person", title: "Maya identity", role: "identity", instruction: AUTOMATION_IDENTITY_REFERENCE_INSTRUCTION }] }] },
   };
@@ -325,7 +443,7 @@ test("slide validator carries immutable choices, exact text and reference roles 
       subject: { identity: "Maya", appearance: ["visibly new outfit"], pose: "source pose", expression: "relaxed" },
       scene: { environment: "source hallway", composition: "source framing", lighting: "ambient", camera: "phone" },
       preserve: [adaptationPreserveInstruction, locationInstruction],
-      change: [adaptationChangeInstruction, wardrobeInstruction, textInstruction],
+      change: [adaptationChangeInstruction, wardrobeInstruction, textInstruction, writtenInstruction],
       avoid: [AUTOMATION_NO_TEXT_AVOID_INSTRUCTION],
       output: { format: "9:16 image", style: "candid phone photo" },
     },
@@ -349,6 +467,7 @@ test("slide validator carries immutable choices, exact text and reference roles 
   assert.ok(slide.prompt.preserve.includes(locationInstruction));
   assert.ok(slide.prompt.change.includes(wardrobeInstruction));
   assert.ok(slide.prompt.change.includes(textInstruction));
+  assert.ok(slide.prompt.change.includes(writtenInstruction));
   assert.ok(slide.prompt.avoid.some((value) => /No captions/i.test(value)));
   assert.deepEqual(slide.prompt.reference_plan[1], { token: "@Maya_identity_2", title: "Maya identity", role: "identity", instruction: AUTOMATION_IDENTITY_REFERENCE_INSTRUCTION });
   const reparsedForGeneration = parseAutomationSlidePlanSet(result.plans);
@@ -366,6 +485,14 @@ test("slide validator carries immutable choices, exact text and reference roles 
     context,
     outputsByNode: new Map(),
   }), /model omitted the exact wardrobe instruction/);
+  await assert.rejects(validate({
+    node: { id: "validate", type: "logic.validate-slide-plans", version: 1, name: "Validate", description: "", position: { x: 0, y: 0 }, groupId: null, config: {}, bindings: {}, disabled: false },
+    config: { maxSlides: 40 },
+    inputs: { data: { slides: [{ ...plans.slides[0], prompt: { ...plans.slides[0].prompt, change: [adaptationChangeInstruction, wardrobeInstruction, textInstruction] } }] }, contract, source: { slides: [{ index: 1, assetId: "source" }] }, identity: { assets: [{ id: "person" }] }, references: { assets: [] } },
+    attempt: 1,
+    context,
+    outputsByNode: new Map(),
+  }), /omitted creative direction requirement creative-direction-1/);
 });
 
 test("slide validator rejects identity references assigned to wardrobe", async () => {
@@ -431,11 +558,11 @@ test("default automation keeps every selected rule through an approved no-repair
         "identity.identity": "person-identity",
         "creative-settings.mode": "identity",
         "creative-settings.newOutfit": true,
-        "creative-settings.newLocation": false,
+        "creative-settings.newLocation": true,
         "creative-settings.textStrategy": "remove",
-        "creative-settings.creativeBrief": "",
+        "creative-settings.creativeBrief": "Keep the exact source location.",
+        "creative-settings.creativeDirectionPolicy": "auto-explicit",
         "visual-references.references": [],
-        "generate-images.modelId": "nano-banana-2",
       },
     },
     handlers: {
@@ -443,6 +570,11 @@ test("default automation keeps every selected rule through an approved no-repair
       "input.tiktok-source@1": async () => ({ source: { id: "source-1", slides: [{ index: 1, assetId: "source-asset" }] } }),
       "input.identity@1": async () => ({ identity: { id: "person-identity", assets: [{ id: "person", path: "person.png", mimeType: "image/png" }] } }),
       "input.visual-references@1": async () => ({ references: { assets: [] } }),
+      "ai.interpret-creative-direction@1": async ({ inputs }) => {
+        const request = inputs.request as { briefHash: string; clauses: Array<{ id: string; text: string }> };
+        const evidence = "Keep the exact source location";
+        return { analysis: { briefHash: request.briefHash, clauseResults: [{ clauseId: request.clauses[0].id, items: [{ kind: "choice", evidence, evidenceStart: 0, evidenceEnd: evidence.length, controlId: "location-setting", optionId: "preserve", instruction: "", category: "", placement: "", slideIndexes: [], confidence: 1, reason: "" }] }] } };
+      },
       "ai.structured-task@2": async ({ node }) => {
         if (node.id === "analyze-source") return { result: { format: "slideshow", summary: "portrait", theme: "change", narrativeArc: "before to after", language: "English", transformationBoundary: 1, slides: [{ index: 1, role: "hook", visibleText: "last year...", visualBrief: "mirror portrait", faceVisibility: "clear", framing: "vertical", confidence: 1 }] } };
         if (node.id === "inspect-identity") return { result: { assets: [{ id: "person", faceAngle: "front", framing: "portrait", captureStyle: "phone", identitySignals: ["face"] }] } };
@@ -459,6 +591,7 @@ test("default automation keeps every selected rule through an approved no-repair
     },
   });
   assert.deepEqual(result.outputs.get("add-to-canvas")?.result, { ok: true });
+  assert.equal((result.outputs.get("resolve-user-direction")?.resolved as { newLocation: boolean }).newLocation, false, "the explicit comment must switch the real location branch before planning");
   assert.ok(generatedPlans);
   const generatedSlide = (generatedPlans as unknown as { slides: Array<{ prompt: { preserve: string[]; change: string[] }; text: { strategy: string; overlayText: string } }> }).slides[0];
   assert.ok(generatedSlide.prompt.preserve.includes(locationInstruction));

@@ -7,6 +7,7 @@ const canvasSource = readFileSync(new URL("../src/components/CanvasApp.tsx", imp
 const panelSource = readFileSync(new URL("../src/components/TikTokAutomationPanel.tsx", import.meta.url), "utf8");
 const legacyRouteSource = readFileSync(new URL("../src/app/api/automations/tiktok/plan/route.ts", import.meta.url), "utf8");
 const workflowDetailRouteSource = readFileSync(new URL("../src/app/api/automation-workflows/[workflowId]/route.ts", import.meta.url), "utf8");
+const systemModelRouteSource = readFileSync(new URL("../src/app/api/automation-workflows/[workflowId]/system-model/route.ts", import.meta.url), "utf8");
 const workflowRunsSource = readFileSync(new URL("../src/lib/automation-workflows/runs.ts", import.meta.url), "utf8");
 const workflowEditorSource = readFileSync(new URL("../src/components/automation/AutomationWorkflowEditorOverlay.tsx", import.meta.url), "utf8");
 const referencePickerSource = readFileSync(new URL("../src/components/automation/AutomationReferencePicker.tsx", import.meta.url), "utf8");
@@ -33,6 +34,37 @@ test("automation panel renders the selected workflow input contract", () => {
   assert.match(panelSource, /visibleRunInputs\.map/);
   assert.match(panelSource, /runtimeValuesByWorkflow/);
   assert.match(panelSource, /selectedWorkflow\?\.publishedVersionId/);
+});
+
+test("automation AI settings reuse the complete Canvas Assistant model catalogue", () => {
+  assert.match(frameNodeSource, /assistantModels\.map/);
+  assert.match(workflowEditorSource, /assistantModels\.map/);
+  assert.match(panelSource, /assistantModels\.map/);
+  assert.doesNotMatch(workflowEditorSource, /tiktokAutomationPlanningModels/);
+  assert.doesNotMatch(panelSource, /tiktokAutomationPlanningModels/);
+});
+
+test("automation image generation matches the Canvas Image Generator identity and owns its model setting", () => {
+  const definition = automationNodeDefinitions().find((candidate) => candidate.type === "generation.image");
+  assert.equal(definition?.title, "Image Generator");
+  assert.equal(definition?.icon, "generate");
+  assert.equal(definition?.accent, "image");
+  assert.match(workflowEditorSource, /generate: ImageIcon/);
+  assert.match(themeSource, /automation-flow-node\.is-image/);
+  assert.doesNotMatch(defaultWorkflowSource, /bindings: \{ modelId: \{ mode: "ask-on-run"/);
+  assert.match(defaultWorkflowSource, /config: \{ modelId: "nano-banana-2"/);
+});
+
+test("protected system templates expose only primary AI and image model controls with reset", () => {
+  assert.match(workflowEditorSource, /field\.id === "modelId"/);
+  assert.match(workflowEditorSource, /field\.modelCapability === "assistant" \|\| field\.modelCapability === "image"/);
+  assert.match(workflowEditorSource, /saveSystemModel\(selectedNode!\.id, null\)/);
+  assert.match(workflowEditorSource, /> Reset to default<\/button>/);
+  assert.match(workflowEditorSource, /prompts, connections or any other setting/);
+  assert.match(workflowEditorSource, /\/system-model/);
+  assert.match(systemModelRouteSource, /sameOriginRequest/);
+  assert.match(systemModelRouteSource, /setSystemAutomationModelOverride/);
+  assert.match(workflowDetailRouteSource, /systemModelDefaults/);
 });
 
 test("visual references are configured on their node from canvas, Library or Identities", () => {
@@ -180,7 +212,7 @@ test("automation steps separate a plain-language guide from configuration and de
   assert.match(workflowEditorSource, /sourceLabel.*targetLabel/s);
   assert.doesNotMatch(workflowEditorSource, />Overview</);
   assert.doesNotMatch(workflowEditorSource, />All steps</);
-  assert.match(workflowEditorSource, /View-only template/);
+  assert.match(workflowEditorSource, /Protected system template/);
   assert.match(workflowEditorSource, /automation-setting-summary/);
   assert.match(workflowEditorSource, /fullFieldValue/);
   assert.match(workflowEditorSource, /FULL PROMPT/);
@@ -264,7 +296,7 @@ test("every registered node type owns hand-written user help and technical notes
   assert.match(registrySource, /Missing help content for automation node type/);
   const registeredTypes = [...registrySource.matchAll(/^\s+type: "([^"]+)"/gm)].map((match) => match[1]);
   const helpedTypes = [...registrySource.matchAll(/^\s+"([^"]+)": \{/gm)].map((match) => match[1]);
-  assert.equal(new Set(registeredTypes).size, 21);
+  assert.equal(new Set(registeredTypes).size, 24);
   assert.deepEqual(new Set(helpedTypes), new Set(registeredTypes));
   for (const definition of automationNodeDefinitions()) {
     assert.ok(definition.description.trim(), `${definition.type} needs a plain-language description`);

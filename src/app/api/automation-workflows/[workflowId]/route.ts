@@ -1,6 +1,6 @@
 import { z } from "zod";
 import { requireApiUser, sameOriginRequest } from "@/lib/auth";
-import { AutomationWorkflowDraftConflictError, getAutomationWorkflow, saveAutomationWorkflowDraft } from "@/lib/automation-workflows/repository";
+import { AutomationWorkflowDraftConflictError, getAutomationWorkflow, saveAutomationWorkflowDraft, systemAutomationModelDefaults } from "@/lib/automation-workflows/repository";
 import { automationWorkflowGraphSchema } from "@/lib/automation-workflows/types";
 import { automationRunInputFields } from "@/lib/automation-workflows/validation";
 import { enforceDistributedRateLimit } from "@/lib/distributed-rate-limit";
@@ -32,6 +32,7 @@ export async function GET(_request: Request, context: RouteContext<"/api/automat
   return Response.json({
     ...visible,
     capabilities,
+    systemModelDefaults: detail.workflow.status === "system" ? systemAutomationModelDefaults(detail.workflow.systemKey) : {},
     runInputs: productionRunInputs,
     draftRunInputs,
   }, { headers: { "cache-control": "no-store" } });

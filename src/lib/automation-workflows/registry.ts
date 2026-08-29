@@ -1,5 +1,6 @@
-import { tiktokAutomationPlanningModels } from "@/lib/assistant-models";
+import { assistantModels } from "@/lib/assistant-models";
 import type { AutomationNode, AutomationNodeDefinition, AutomationNodeHelp, AutomationNodePortDefinition, AutomationPortType } from "./types";
+import { AUTOMATION_CREATIVE_DIRECTION_SYSTEM_PROMPT, DEFAULT_AUTOMATION_CREATIVE_CONTROLS } from "./creative-direction-contract";
 
 export type AutomationMergeInput = { id: string; name: string };
 
@@ -35,7 +36,8 @@ export function automationNodeInputPorts(node: Pick<AutomationNode, "type" | "ve
   }));
 }
 
-const planningModelOptions = tiktokAutomationPlanningModels.map((model) => ({ value: model.id, label: model.label }));
+const assistantModelOptions = assistantModels.map((model) => ({ value: model.id, label: model.label }));
+const optionalAssistantModelOptions = [{ value: "", label: "No backup model" }, ...assistantModelOptions];
 
 const helpByType: Record<string, AutomationNodeHelp> = {
   "core.manual-trigger": {
@@ -68,10 +70,10 @@ const helpByType: Record<string, AutomationNodeHelp> = {
   },
   "input.creative-settings": {
     whenToUse: "Use this to collect creative decisions that should be easy to change between runs without editing the workflow graph.",
-    setup: ["Connect the run trigger.", "Choose which values stay fixed and which should be Asked on run.", "Write optional creative direction in ordinary language.", "Pass Settings into the AI step that interprets the brief or plans the new content."],
-    exampleFlow: { before: "Start workflow", after: "Interpret creative brief", explanation: "The user chooses what may change; the next AI step turns those choices into an explicit creative contract." },
-    tips: ["Ask only for decisions the operator can understand.", "Keep permanent brand rules inside the AI step rather than asking for them every run."],
-    technicalNotes: ["Produces a structured data object.", "Each runtime-bindable field can be fixed or exposed as a typed run input."],
+    setup: ["Connect the run trigger.", "Choose which values stay fixed and which should be Asked on run.", "Choose whether explicit creative direction may override the switches or must agree with them.", "Write optional creative direction in ordinary language.", "Pass Settings into a direction parser and Resolve creative direction before routing any branches."],
+    exampleFlow: { before: "Start workflow", after: "Parse and resolve creative direction", explanation: "The user chooses defaults and an explicit conflict policy; later visible steps may resolve an unambiguous written instruction without hiding the branch decision." },
+    tips: ["Ask only for decisions the operator can understand.", "Never let free text silently override switches without an explicit policy.", "Keep permanent brand rules inside the AI step rather than asking for them every run."],
+    technicalNotes: ["Produces a structured data object including the selected creative-direction policy.", "Each runtime-bindable field can be fixed or exposed as a typed run input."],
   },
   "input.workflow-data": {
     whenToUse: "Use this when another workflow, a schedule or an event should supply structured information automatically.",
@@ -122,10 +124,31 @@ const helpByType: Record<string, AutomationNodeHelp> = {
     tips: ["Name the card after the decision, for example Is the plan approved?", "Always connect or intentionally finish both paths."],
     technicalNotes: ["Evaluates one deterministic predicate and passes the original incoming value unchanged.", "Contains is case-sensitive for text and checks exact items in a list. Empty lists and objects should use the explicit empty rules rather than the yes / true rule."],
   },
+  "logic.prepare-creative-direction": {
+    whenToUse: "Use this before the creative-direction AI step to freeze the exact comment, visible choices, configurable choice map and real source slide indexes into one request contract.",
+    setup: ["Connect Creative choices to Settings.", "Connect the raw TikTok Source, not an AI summary, to Source.", "Configure which setting paths and options the interpreter may recognize.", "Connect Request to both Interpret creative direction and Resolve creative direction."],
+    exampleFlow: { before: "Creative choices and source slideshow", after: "Interpret creative direction", explanation: "The deterministic step splits the exact comment into clauses and defines the only choices the model is allowed to recognize." },
+    tips: ["Keep the default controls or add your own through the visual choice editor.", "Use a strict or confirmation policy unless automatic changes are intentionally allowed."],
+    technicalNotes: ["Hashes the exact comment, verifies every current setting maps to one configured option and rejects invalid choice maps.", "Provides real source indexes directly from the source node so an AI summary cannot invent slide scope."],
+  },
+  "ai.interpret-creative-direction": {
+    whenToUse: "Use this only for classifying a prepared creative-direction request into configured choices, atomic requirements, ambiguities or explicitly ignored wording.",
+    setup: ["Connect a Prepared creative direction request.", "Choose the assistant model and retry limit.", "Connect Analysis to Resolve creative direction.", "Use the Error path only for an explicit recovery branch."],
+    exampleFlow: { before: "Prepared creative direction", after: "Resolve creative direction", explanation: "The model classifies every exact clause under an immutable system contract; it cannot itself change settings." },
+    tips: ["Do not replace this with a generic prose parser when downstream switches matter.", "Keep failure mode on Stop or Error path; an empty interpretation is not a valid fallback."],
+    technicalNotes: ["The node builds a strict schema from the configured control and option IDs.", "Every clause must be covered exactly once and evidence must later match an exact phrase in the original comment."],
+  },
+  "logic.resolve-creative-direction": {
+    whenToUse: "Use this after Interpret creative direction to verify that the model classified the exact current comment without omissions or invented evidence.",
+    setup: ["Connect the same Prepared request used by the interpreter.", "Connect its typed Analysis output.", "Route Resolved choices into the visible branch conditions.", "Connect Conflict to a failed output that shows what must be clarified."],
+    exampleFlow: { before: "Prepared request plus typed analysis", after: "Wardrobe, location, adaptation and text routes", explanation: "Only verified configured choices can change; all other accepted meaning becomes an atomic requirement." },
+    tips: ["Use Show changes for confirmation when operators should explicitly approve a switch change.", "Automatic changes still require exact evidence, complete clause coverage and high confidence."],
+    technicalNotes: ["This node is deterministic and fail closed: contract mismatch, missing clauses, paraphrased evidence, low confidence, ambiguity and invalid scope all use Conflict.", "Requirements receive content-derived stable IDs and no legacy extraction format is accepted."],
+  },
   "logic.limit-batch": {
     whenToUse: "Use this immediately before a costly repeated operation to prevent an unexpectedly large list from consuming time or credits.",
     setup: ["Connect the list you want to protect.", "Set the largest acceptable item count.", "Connect Allowed items to the expensive step.", "Optionally connect Count summary to logging or review."],
-    exampleFlow: { before: "Planned slides", after: "Create slideshow images", explanation: "Normal lists continue; an oversized list stops with a clear limit error before generation begins." },
+    exampleFlow: { before: "Planned slides", after: "Image Generator", explanation: "Normal lists continue; an oversized list stops with a clear limit error before generation begins." },
     tips: ["Set the limit from the real product constraint, not an arbitrary high number.", "Use workflow-wide safety limits as a second line of protection."],
     technicalNotes: ["Validates array length before forwarding data.", "Outputs the unchanged allowed items plus a count summary."],
   },
@@ -160,7 +183,7 @@ const helpByType: Record<string, AutomationNodeHelp> = {
   "logic.validate-slide-plans": {
     whenToUse: "Use this as the final deterministic gate before image generation when the workflow creates structured slide plans.",
     setup: ["Connect the completed slide plans.", "Also connect the original slideshow and optional identity so indexes and reference IDs can be checked.", "Set the maximum number of slides.", "Connect Checked plans to image creation.", "When repair is allowed, set failure behavior to Send the error and connect the error to a repair step and bounded Retry gate."],
-    exampleFlow: { before: "Plan and review slides", after: "Create slideshow images", explanation: "Only complete, ordered and bounded plans reach the image provider." },
+    exampleFlow: { before: "Plan and review slides", after: "Image Generator", explanation: "Only complete, ordered and bounded plans reach the image provider." },
     tips: ["Keep this check even when an AI review step already approved the content.", "AI review judges quality; this step enforces the mechanical contract."],
     technicalNotes: ["Validates the model-authored slide-plan-set contract without adding, rewriting or repairing prompt fields.", "Rejects missing JSON fields, mismatched indexes, changed run choices, altered text operations, invalid reference roles, unavailable references and excessive slide counts. Model reference capacity is checked by generation because the model can be chosen at run time.", "Error output contains the exact deterministic failure and never substitutes a fallback plan."],
   },
@@ -227,12 +250,13 @@ const rawDefinitions: Array<Omit<AutomationNodeDefinition, "help">> = [
   },
   {
     type: "input.creative-settings", version: 1, title: "Creative choices", description: "Collects the creative decisions that may change from one run to the next.", example: "Keep the original idea, replace the person and location, then rewrite the on-screen text for your campaign.", category: "input", icon: "choices", accent: "neutral",
-    inputs: [{ id: "run", label: "Run", type: "run-context", required: true }], outputs: [{ id: "settings", label: "Settings", type: "data" }], fields: [
+    inputs: [{ id: "run", label: "Run", type: "run-context", required: true }], outputs: [{ id: "settings", label: "Settings", type: "creative-settings" }], fields: [
       { id: "mode", label: "What should change", description: "Adapt concept rebuilds the idea for a new campaign. Cast identity keeps the idea and mainly replaces the person.", kind: "select", defaultValue: "concept", runtimeBindable: true, runtimeValueType: "string", options: [{ value: "concept", label: "Rebuild for a new concept" }, { value: "identity", label: "Keep concept, change the person" }] },
       { id: "newOutfit", label: "Allow new clothes or subjects", description: "Disable this when clothing and visible objects must stay close to the source.", kind: "boolean", defaultValue: true, runtimeBindable: true, runtimeValueType: "boolean" },
       { id: "newLocation", label: "Allow a new location", description: "Disable this when the setting and background must stay close to the source.", kind: "boolean", defaultValue: true, runtimeBindable: true, runtimeValueType: "boolean" },
       { id: "textStrategy", label: "What to do with on-screen text", description: "Keep the original wording, rewrite it for the new concept, or remove it.", kind: "select", defaultValue: "rewrite", runtimeBindable: true, runtimeValueType: "string", options: [{ value: "keep", label: "Keep the original text" }, { value: "rewrite", label: "Rewrite for the new version" }, { value: "remove", label: "Remove on-screen text" }] },
       { id: "creativeBrief", label: "Extra creative direction", description: "Optional. Add the audience, offer, tone or anything the new version must include.", placeholder: "Example: Make it feel like a casual home transformation for women 25–35…", kind: "textarea", defaultValue: "", runtimeBindable: true, runtimeValueType: "string" },
+      { id: "creativeDirectionPolicy", label: "How comments affect the choices", description: "Choose whether a verified written request proposes a visible change, must already agree, or may update the choice automatically.", kind: "select", defaultValue: "propose", runtimeBindable: true, runtimeValueType: "string", options: [{ value: "propose", label: "Show changes for confirmation" }, { value: "strict", label: "Comments must agree with choices" }, { value: "auto-explicit", label: "Apply verified explicit changes" }] },
     ],
   },
   {
@@ -251,7 +275,7 @@ const rawDefinitions: Array<Omit<AutomationNodeDefinition, "help">> = [
     ],
     outputs: [{ id: "result", label: "AI answer", type: "data" }, { id: "error", label: "Error path", type: "error" }],
     fields: [
-      { id: "modelId", label: "AI model", description: "Choose the model that should complete this task.", kind: "model", runtimeBindable: true, runtimeValueType: "assistant-model", modelCapability: "assistant", required: true, options: planningModelOptions },
+      { id: "modelId", label: "AI model", description: "Choose this step's text model independently from the same models available to Canvas Assistant.", kind: "model", runtimeBindable: true, runtimeValueType: "assistant-model", modelCapability: "assistant", required: true, options: assistantModelOptions },
       { id: "userPrompt", label: "What should the AI do?", description: "Describe one clear job and the result you want. Connected cards are included automatically; variables place an exact connected value.", placeholder: "Example: Study every slide and explain its hook, message and visual purpose…", kind: "prompt", required: true, defaultValue: "" },
       { id: "outputMode", label: "What should this step return?", description: "Choose readable text for writing and summaries. Choose defined fields when later steps must read exact values.", kind: "select", defaultValue: "text", options: [
         { value: "text", label: "Readable text" }, { value: "structured", label: "Defined data fields" },
@@ -265,7 +289,7 @@ const rawDefinitions: Array<Omit<AutomationNodeDefinition, "help">> = [
         { value: "consistent", label: "Consistent" }, { value: "balanced", label: "Balanced" }, { value: "exploratory", label: "More exploratory" },
       ], advanced: true },
       { id: "maxAttempts", label: "How many times to retry", description: "Retries the AI task when the request fails or a structured answer cannot be used.", kind: "number", defaultValue: 3, min: 1, max: 8, advanced: true },
-      { id: "fallbackModelId", label: "Backup AI model", kind: "model", modelCapability: "assistant", description: "Optional. Used on a later attempt when the main model cannot complete the task.", options: planningModelOptions, advanced: true },
+      { id: "fallbackModelId", label: "Backup AI model", kind: "model", modelCapability: "assistant", description: "Optional. Used on a later attempt when the main model cannot complete the task.", options: optionalAssistantModelOptions, advanced: true },
       { id: "failureMode", label: "If this step still fails", description: "Stop the run, route a safe error to a recovery path, or continue with an empty answer.", kind: "select", defaultValue: "stop", options: [
         { value: "stop", label: "Stop and show the error" }, { value: "error-output", label: "Send the error to another path" }, { value: "continue-empty", label: "Continue without an answer" },
       ], advanced: true },
@@ -317,6 +341,49 @@ const rawDefinitions: Array<Omit<AutomationNodeDefinition, "help">> = [
       ] },
       { id: "compareValue", label: "Compare with", placeholder: "Example: approved, 10, or true", kind: "value", defaultValue: null, description: "Type ordinary text, a number, true, false, or leave it empty.", visibleWhen: { fieldId: "operator", values: ["equals", "not-equals", "contains", "greater-than", "less-than"] } },
     ],
+  },
+  {
+    type: "logic.prepare-creative-direction", version: 1, title: "Prepare creative direction", description: "Creates the exact typed request that defines what the interpreter is allowed to recognize.", example: "Freeze the comment, visible switches and raw source slide indexes before asking a model to classify anything.", category: "logic", icon: "prepare-direction", accent: "neutral", retrySafe: true,
+    inputs: [
+      { id: "settings", label: "Creative choices", type: "creative-settings", required: true },
+      { id: "source", label: "Source slideshow", type: "tiktok-source", required: true },
+    ],
+    outputs: [{ id: "request", label: "Prepared request", type: "creative-direction-request", required: true }],
+    fields: [
+      { id: "controls", label: "Choices the comment may affect", description: "Define each real setting and explain to the AI what every option means. These node settings, not hidden server rules, control classification.", kind: "creative-controls", defaultValue: DEFAULT_AUTOMATION_CREATIVE_CONTROLS },
+      { id: "briefPath", label: "Comment field path", description: "Field inside Creative choices containing the written direction.", kind: "text", defaultValue: "creativeBrief", advanced: true },
+      { id: "policyPath", label: "Policy field path", description: "Field inside Creative choices containing the change policy.", kind: "text", defaultValue: "creativeDirectionPolicy", advanced: true },
+      { id: "minConfidence", label: "Minimum interpretation confidence", description: "Lower-confidence classifications stop for clarification.", kind: "number", defaultValue: 0.9, min: 0.5, max: 1, advanced: true },
+      { id: "maxBriefCharacters", label: "Maximum comment length", description: "Stops an unexpectedly large comment before it reaches a model.", kind: "number", defaultValue: 5000, min: 100, max: 20000, advanced: true },
+      { id: "maxClauses", label: "Maximum comment clauses", description: "Stops an unexpectedly large comment before it reaches a model.", kind: "number", defaultValue: 16, min: 1, max: 40, advanced: true },
+      { id: "maxClauseCharacters", label: "Maximum clause length", description: "Keeps each exact evidence unit small enough for strict structured classification.", kind: "number", defaultValue: 1000, min: 100, max: 2000, advanced: true },
+      { id: "maxRequirements", label: "Maximum accepted requirements", description: "Stops a model response that expands the comment into too many instructions.", kind: "number", defaultValue: 24, min: 1, max: 80, advanced: true },
+      { id: "allowIgnoredClauses", label: "Allow explicitly ignored wording", description: "Keep disabled when every clause must become a choice, requirement or clarification error.", kind: "boolean", defaultValue: false, advanced: true },
+    ],
+  },
+  {
+    type: "ai.interpret-creative-direction", version: 1, title: "Interpret creative direction", description: "Classifies every exact comment clause under a fixed, strict system contract.", example: "Recognize an explicit Preserve location request while keeping a tone request as an atomic requirement.", category: "ai", icon: "interpret-direction", accent: "blue", retrySafe: true,
+    inputs: [{ id: "request", label: "Prepared request", type: "creative-direction-request", required: true }],
+    outputs: [{ id: "analysis", label: "Direction analysis", type: "creative-direction-analysis", required: true }, { id: "error", label: "Error path", type: "error" }],
+    fields: [
+      { id: "systemInstructions", label: "Built-in interpretation contract", description: "Visible for audit. It defines the output contract and requires semantic interpretation from this node's configured option meanings; it contains no hidden keyword rules.", kind: "prompt", defaultValue: AUTOMATION_CREATIVE_DIRECTION_SYSTEM_PROMPT, readOnly: true, advanced: true },
+      { id: "modelId", label: "AI model", description: "Choose this step's text model independently from the same models available to Canvas Assistant.", kind: "model", runtimeBindable: true, runtimeValueType: "assistant-model", modelCapability: "assistant", required: true, options: assistantModelOptions },
+      { id: "maxAttempts", label: "How many times to retry", description: "Retries provider or strict-schema failures only; it never weakens the contract.", kind: "number", defaultValue: 3, min: 1, max: 8, advanced: true },
+      { id: "fallbackModelId", label: "Backup AI model", description: "Optional model for a later attempt when the main model cannot return the strict contract.", kind: "model", modelCapability: "assistant", options: optionalAssistantModelOptions, advanced: true },
+      { id: "failureMode", label: "If interpretation still fails", description: "Stop or route the exact error. Continuing with an empty answer is intentionally unavailable.", kind: "select", defaultValue: "stop", options: [{ value: "stop", label: "Stop and show the error" }, { value: "error-output", label: "Send the error to another path" }], advanced: true },
+    ],
+  },
+  {
+    type: "logic.resolve-creative-direction", version: 2, title: "Resolve creative direction", description: "Verifies the exact interpretation and applies only policy-approved configured choices.", example: "Reject missing clauses or invented evidence before any route can change.", category: "logic", icon: "resolve-direction", accent: "amber", retrySafe: true,
+    inputs: [
+      { id: "request", label: "Prepared request", type: "creative-direction-request", required: true },
+      { id: "analysis", label: "Direction analysis", type: "creative-direction-analysis", required: true },
+    ],
+    outputs: [
+      { id: "resolved", label: "Resolved choices", type: "resolved-creative-settings", required: true },
+      { id: "conflict", label: "Conflict", type: "error", required: true },
+    ],
+    fields: [],
   },
   {
     type: "logic.limit-batch", version: 1, title: "Limit the amount", description: "Stops an unexpectedly large list before it reaches expensive or slow steps.", example: "Allow no more than 20 slide plans to continue to image generation.", category: "logic", icon: "limit", accent: "neutral", retrySafe: true,
@@ -380,14 +447,14 @@ const rawDefinitions: Array<Omit<AutomationNodeDefinition, "help">> = [
     ],
   },
   {
-    type: "generation.image", version: 1, title: "Create slideshow images", description: "Creates one image for every checked slideshow plan with its source composition and selected identity references.", example: "Create one 9:16 image for each reviewed slide plan while keeping the selected identity consistent.", category: "generation", icon: "generate", accent: "mint",
+    type: "generation.image", version: 1, title: "Image Generator", description: "Creates one image for every checked slideshow plan with its source composition and selected identity references.", example: "Create one 9:16 image for each reviewed slide plan while keeping the selected identity consistent.", category: "generation", icon: "generate", accent: "image",
     inputs: [
       { id: "plans", label: "Image plans", type: "slide-plan-set", required: true },
       { id: "source", label: "Original slideshow", type: "tiktok-source", required: true },
       { id: "identity", label: "Person or character", type: "identity" },
       { id: "references", label: "Visual references", type: "visual-references" },
     ], outputs: [{ id: "assets", label: "Created images", type: "generated-assets" }, { id: "error", label: "Error path", type: "error" }], fields: [
-      { id: "modelId", label: "Image model", description: "Choose the provider model that should create the images.", kind: "model", runtimeBindable: true, runtimeValueType: "image-model", modelCapability: "image", required: true },
+      { id: "modelId", label: "Image model", description: "Choose this step's image model independently from the same models available to Canvas Image Generator.", kind: "model", runtimeBindable: true, runtimeValueType: "image-model", modelCapability: "image", required: true },
       { id: "ratio", label: "Image shape", description: "Choose the format required by the destination, for example 9:16 for TikTok.", kind: "select", runtimeBindable: true, runtimeValueType: "aspect-ratio" },
       { id: "resolution", label: "Image quality", description: "Higher resolutions may cost more and take longer, depending on the provider.", kind: "select", runtimeBindable: true, runtimeValueType: "resolution" },
       { id: "partialFailure", label: "If only some images fail", description: "Keep the successful images, or stop without adding any result to the canvas.", kind: "select", defaultValue: "keep-successful", options: [

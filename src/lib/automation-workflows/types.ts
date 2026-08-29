@@ -5,6 +5,10 @@ export const automationPortTypes = [
   "tiktok-source",
   "identity",
   "visual-references",
+  "creative-settings",
+  "creative-direction-request",
+  "creative-direction-analysis",
+  "resolved-creative-settings",
   "source-analysis",
   "creative-plan",
   "text-sequence",
@@ -229,7 +233,8 @@ export type AutomationNodeFieldDefinition = {
   description?: string;
   placeholder?: string;
   advanced?: boolean;
-  kind: "text" | "textarea" | "number" | "boolean" | "select" | "value" | "json" | "schema" | "prompt" | "model" | "references";
+  readOnly?: boolean;
+  kind: "text" | "textarea" | "number" | "boolean" | "select" | "value" | "json" | "schema" | "prompt" | "model" | "references" | "creative-controls";
   defaultValue?: unknown;
   options?: Array<{ value: string; label: string }>;
   runtimeBindable?: boolean;
@@ -275,8 +280,8 @@ export type AutomationNodeDefinition = {
   description: string;
   example?: string;
   category: "trigger" | "input" | "ai" | "logic" | "integration" | "generation" | "output";
-  icon: "play" | "source" | "identity" | "references" | "choices" | "inbox" | "ai" | "transform" | "select-one" | "select-path" | "condition" | "limit" | "merge" | "workflow" | "repeat" | "retry" | "http" | "validate" | "generate" | "canvas" | "finish";
-  accent: "mint" | "amber" | "blue" | "rose" | "neutral";
+  icon: "play" | "source" | "identity" | "references" | "choices" | "inbox" | "ai" | "transform" | "select-one" | "select-path" | "condition" | "prepare-direction" | "interpret-direction" | "resolve-direction" | "limit" | "merge" | "workflow" | "repeat" | "retry" | "http" | "validate" | "generate" | "canvas" | "finish";
+  accent: "mint" | "amber" | "blue" | "rose" | "image" | "neutral";
   inputs: AutomationNodePortDefinition[];
   outputs: AutomationNodePortDefinition[];
   fields: AutomationNodeFieldDefinition[];

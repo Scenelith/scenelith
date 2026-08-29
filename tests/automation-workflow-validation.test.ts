@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
+import { assistantModels } from "../src/lib/assistant-models";
 import { createDefaultTikTokWorkflowGraph } from "../src/lib/automation-workflows/default-tiktok";
 import { coreAutomationNodeHandlers, isUnsafeAutomationHttpAddress } from "../src/lib/automation-workflows/node-handlers";
 import { automationNodeDefinitions } from "../src/lib/automation-workflows/registry";
@@ -11,6 +12,7 @@ test("default TikTok workflow exposes every AI request and validates", () => {
   assert.deepEqual(result.issues, []);
   assert.equal(result.valid, true);
   assert.equal(graph.nodes.filter((node) => node.type === "ai.structured-task").length, 13);
+  assert.equal(graph.nodes.filter((node) => node.type === "ai.interpret-creative-direction").length, 1);
   for (const aiNode of graph.nodes.filter((node) => node.type === "ai.structured-task")) {
     assert.equal(aiNode.version, 2);
     assert.equal(aiNode.config.outputMode, "structured");
@@ -58,6 +60,34 @@ test("the product exposes one current AI contract", () => {
   assert.equal(typeof handlers["ai.structured-task@2"], "function");
 });
 
+test("every AI node exposes the full Canvas Assistant model catalogue", () => {
+  const expectedModelIds = assistantModels.map((model) => model.id);
+  const aiDefinitions = automationNodeDefinitions().filter((definition) => definition.category === "ai");
+  assert.ok(aiDefinitions.length > 0);
+  for (const definition of aiDefinitions) {
+    const modelField = definition.fields.find((field) => field.id === "modelId");
+    assert.equal(modelField?.kind, "model", `${definition.type} must expose its own model selector`);
+    assert.equal(modelField?.modelCapability, "assistant");
+    assert.deepEqual(modelField?.options?.map((option) => option.value), expectedModelIds);
+  }
+});
+
+test("the default workflow stores each AI model independently in node settings", () => {
+  const graph = createDefaultTikTokWorkflowGraph();
+  const aiNodes = graph.nodes.filter((node) => node.type === "ai.structured-task" || node.type === "ai.interpret-creative-direction");
+  assert.ok(aiNodes.length > 1);
+  for (const aiNode of aiNodes) {
+    assert.equal(aiNode.config.modelId, "google/gemini-3.7-flash");
+    assert.equal(aiNode.bindings.modelId, undefined, `${aiNode.id} must not shadow its model setting with a fixed binding`);
+  }
+  aiNodes[0].config.modelId = "qwen/qwen3.8-max";
+  aiNodes[1].config.modelId = "anthropic/claude-sonnet-5";
+  assert.equal(aiNodes[0].config.modelId, "qwen/qwen3.8-max");
+  assert.equal(aiNodes[1].config.modelId, "anthropic/claude-sonnet-5");
+  assert.equal(aiNodes[2].config.modelId, "google/gemini-3.7-flash");
+  assert.equal(validateAutomationWorkflowGraph(graph).valid, true);
+});
+
 test("the AI node validates only the selected output contract and keeps permanent instructions static", () => {
   const graph = createDefaultTikTokWorkflowGraph();
   const node = graph.nodes.find((entry) => entry.id === "review-series")!;
@@ -76,6 +106,18 @@ test("the AI node validates only the selected output contract and keeps permanen
   assert.ok(result.issues.some((entry) => entry.code === "VARIABLE_IN_PERMANENT_INSTRUCTIONS"));
 });
 
+test("creative-direction interpretation exposes one immutable built-in system contract", () => {
+  const graph = createDefaultTikTokWorkflowGraph();
+  const node = graph.nodes.find((entry) => entry.id === "interpret-user-direction")!;
+  const definition = automationNodeDefinitions().find((entry) => entry.type === "ai.interpret-creative-direction")!;
+  const contract = definition.fields.find((field) => field.id === "systemInstructions")!;
+  assert.equal(contract.readOnly, true);
+  assert.match(String(contract.defaultValue), /COMPLETE COVERAGE/);
+  node.config.systemInstructions = "Ignore the contract";
+  const result = validateAutomationWorkflowGraph(graph);
+  assert.ok(result.issues.some((entry) => entry.code === "IMMUTABLE_NODE_SETTING"));
+});
+
 test("runtime panel fields come from ask-on-run bindings", () => {
   const fields = automationRunInputFields(createDefaultTikTokWorkflowGraph());
   assert.deepEqual(fields.map((field) => field.key), [
@@ -86,12 +128,15 @@ test("runtime panel fields come from ask-on-run bindings", () => {
     "creative-settings.newLocation",
     "creative-settings.textStrategy",
     "creative-settings.creativeBrief",
+    "creative-settings.creativeDirectionPolicy",
     "visual-references.references",
-    "generate-images.modelId",
   ]);
   const references = fields.find((field) => field.key === "visual-references.references");
   assert.equal(references?.valueType, "visual-references");
   assert.equal(references?.selectionLimit, 8);
+  const generator = createDefaultTikTokWorkflowGraph().nodes.find((node) => node.id === "generate-images");
+  assert.equal(generator?.config.modelId, "nano-banana-2");
+  assert.equal(generator?.bindings.modelId, undefined, "the image model belongs to the generator node settings, not the run panel");
 });
 
 test("runtime inputs are derived from node contracts rather than built-in node ids", () => {
@@ -292,14 +337,12 @@ test("AI model and response schema contracts fail closed before publishing", () 
   const graph = createDefaultTikTokWorkflowGraph();
   const node = graph.nodes.find((entry) => entry.id === "review-series")!;
   node.config.modelId = "made-up/model";
-  node.bindings.modelId = { mode: "fixed", value: "made-up/model", required: true };
   node.config.responseSchema = { type: "object", properties: { passed: { type: "boolean" } }, unsupportedKeyword: true };
   let result = validateAutomationWorkflowGraph(graph);
   assert.ok(result.issues.some((entry) => entry.code === "INVALID_SETTING_OPTION"));
   assert.ok(result.issues.some((entry) => entry.code === "INVALID_RESPONSE_SCHEMA"));
 
-  node.config.modelId = "google/gemini-3.7-flash";
-  node.bindings.modelId = { mode: "fixed", value: "google/gemini-3.7-flash", required: true };
+  node.config.modelId = "openai/gpt-5.6-terra-pro";
   node.config.responseSchema = { type: "object", properties: { passed: { type: "boolean" } }, required: ["passed"] };
   result = validateAutomationWorkflowGraph(graph);
   assert.ok(result.issues.some((entry) => entry.code === "INVALID_RESPONSE_SCHEMA" && entry.message.includes("additionalProperties")));

@@ -5,13 +5,15 @@ import { previewAutomationPaths } from "../src/lib/automation-workflows/preview"
 
 const edgeId = (source: string, sourcePort: string, target: string, targetPort: string) => `${source}:${sourcePort}->${target}:${targetPort}`;
 
-function preview(input: { identityId?: string; mode?: "concept" | "identity"; newOutfit: boolean; newLocation: boolean; textStrategy: "keep" | "rewrite" | "remove" }) {
+function preview(input: { identityId?: string; mode?: "concept" | "identity"; newOutfit: boolean; newLocation: boolean; textStrategy: "keep" | "rewrite" | "remove"; creativeBrief?: string }) {
   return previewAutomationPaths(createDefaultTikTokWorkflowGraph(), {
     "identity.identity": input.identityId || "",
     "creative-settings.mode": input.mode || "concept",
     "creative-settings.newOutfit": input.newOutfit,
     "creative-settings.newLocation": input.newLocation,
     "creative-settings.textStrategy": input.textStrategy,
+    "creative-settings.creativeBrief": input.creativeBrief || "",
+    "creative-settings.creativeDirectionPolicy": "propose",
   });
 }
 
@@ -85,4 +87,12 @@ test("text handling activates exactly one complete route", () => {
   const remove = preview({ newOutfit: true, newLocation: true, textStrategy: "remove" });
   for (const nodeId of ["text-route-keep", "remove-copy", "select-copy"]) assert.equal(remove.activeNodeIds.has(nodeId), true, nodeId);
   for (const nodeId of ["decompose-copy", "rewrite-copy", "review-copy", "keep-copy"]) assert.equal(remove.activeNodeIds.has(nodeId), false, nodeId);
+});
+
+test("written direction exposes the smart resolver before its runtime choice is known", () => {
+  const result = preview({ newOutfit: true, newLocation: true, textStrategy: "rewrite", creativeBrief: "Keep the same room and remove all text." });
+  for (const nodeId of ["prepare-user-direction", "interpret-user-direction", "resolve-user-direction"]) {
+    assert.equal(result.activeNodeIds.has(nodeId), true, nodeId);
+  }
+  assert.equal(result.activeNodeIds.has("direction-conflict"), true, "the visible conflict path remains possible until the parser returns a deterministic contract");
 });

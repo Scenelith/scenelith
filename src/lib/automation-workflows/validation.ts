@@ -1,5 +1,6 @@
 import { automationMergeInputs, automationNodeDefinition, automationNodeInputPorts, automationPortTypesCompatible } from "./registry";
 import { automationJsonSchemaDefinitionIssues } from "./json-schema";
+import { automationCreativeControlIssues } from "./creative-direction-contract";
 import {
   automationWorkflowGraphSchema,
   type AutomationNode,
@@ -220,6 +221,14 @@ export function validateAutomationWorkflowGraph(value: unknown): AutomationValid
       }
       if (field.options?.length && !field.options.some((option) => option.value === String(value))) {
         issues.push(issue("INVALID_SETTING_OPTION", `“${field.label}” has an unsupported value.`, { nodeId: node.id }));
+      }
+      if (field.readOnly && field.defaultValue !== undefined && JSON.stringify(value) !== JSON.stringify(field.defaultValue)) {
+        issues.push(issue("IMMUTABLE_NODE_SETTING", `“${field.label}” is a built-in contract and cannot be changed.`, { nodeId: node.id }));
+      }
+      if (field.kind === "creative-controls") {
+        for (const message of automationCreativeControlIssues(value).slice(0, 24)) {
+          issues.push(issue("INVALID_CREATIVE_CONTROL", `“${node.name}”: ${message}.`, { nodeId: node.id }));
+        }
       }
     }
     const effectiveSetting = (fieldId: string) => node.bindings[fieldId]?.mode === "fixed" && node.bindings[fieldId].value !== undefined

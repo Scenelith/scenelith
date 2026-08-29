@@ -1,10 +1,12 @@
 import { randomUUID } from "node:crypto";
 import { db, userCanAccessProject, userCanAccessWorkspace, workspaceIdForProject } from "@/lib/postgres-db";
 import { createAutomationPackage, parseAutomationPackage } from "./portable";
-import { AUTOMATION_SYSTEM_WORKFLOW_TEMPLATES, DEFAULT_TIKTOK_AUTOMATION_TEMPLATE, type AutomationSystemWorkflowTemplate } from "./system-templates";
+import { AUTOMATION_SYSTEM_WORKFLOW_TEMPLATES, DEFAULT_TIKTOK_AUTOMATION_TEMPLATE, automationSystemWorkflowTemplate, type AutomationSystemWorkflowTemplate } from "./system-templates";
 import { automationWorkflowGraphSchema, DEFAULT_AUTOMATION_WORKFLOW_SETTINGS, type AutomationWorkflowDetail, type AutomationWorkflowGraph, type AutomationWorkflowRecord, type AutomationWorkflowVersion, type AutomationWorkflowVersionSummary } from "./types";
 import { validateAutomationRunInputs, validateAutomationWorkflowGraph } from "./validation";
 import { canPerformAutomationAction, requireAutomationPermission } from "./permissions";
+import { automationNodeDefinition } from "./registry";
+import { generationProvider } from "@/platform/providers/registry";
 
 type WorkflowRow = {
   id: string;
@@ -90,6 +92,62 @@ async function workflowRowById(id: string) {
   return await db.prepare("SELECT * FROM automation_workflows WHERE id = ?").get(id) as WorkflowRow | undefined;
 }
 
+type SystemModelOverrideRow = { node_id: string; model_id: string };
+
+function configurableSystemModelNode(graph: AutomationWorkflowGraph, nodeId: string) {
+  const node = graph.nodes.find((candidate) => candidate.id === nodeId);
+  const definition = node ? automationNodeDefinition(node.type, node.version) : null;
+  const field = definition?.fields.find((candidate) => candidate.id === "modelId" && candidate.kind === "model" && (candidate.modelCapability === "assistant" || candidate.modelCapability === "image"));
+  return node && field ? { node, field } : null;
+}
+
+function applySystemModelSelection(graph: AutomationWorkflowGraph, defaults: AutomationWorkflowGraph, nodeId: string, modelId: string | null) {
+  const configurable = configurableSystemModelNode(graph, nodeId);
+  const defaultNode = defaults.nodes.find((candidate) => candidate.id === nodeId);
+  const defaultConfigurable = configurableSystemModelNode(defaults, nodeId);
+  if (!configurable || !defaultNode || !defaultConfigurable) return false;
+  const selectedModelId = modelId || String(defaultNode.config.modelId || "");
+  if (!selectedModelId) return false;
+  if (configurable.field.modelCapability === "assistant") {
+    if (!configurable.field.options?.some((option) => option.value === selectedModelId)) return false;
+  } else {
+    try {
+      const provider = generationProvider();
+      const model = provider.getModel(selectedModelId);
+      if (model.mediaType !== "image" || model.maxReferences < 1) return false;
+    } catch {
+      return false;
+    }
+  }
+  configurable.node.config = { ...configurable.node.config, modelId: selectedModelId };
+  if (configurable.field.modelCapability !== "image") return true;
+  if (!modelId) {
+    configurable.node.config = {
+      ...configurable.node.config,
+      ...(defaultNode.config.resolution !== undefined ? { resolution: defaultNode.config.resolution } : {}),
+      ...(defaultNode.config.ratio !== undefined ? { ratio: defaultNode.config.ratio } : {}),
+    };
+    return true;
+  }
+  const provider = generationProvider();
+  const model = provider.getModel(selectedModelId);
+  const resolutions = provider.allowedResolutions(model, false);
+  const currentResolution = String(configurable.node.config.resolution || "");
+  const resolution = resolutions.includes(currentResolution) ? currentResolution : model.defaultResolution || resolutions[0] || "";
+  const ratios = provider.allowedRatios(model, resolution, true);
+  const currentRatio = String(configurable.node.config.ratio || "");
+  const ratio = ratios.includes(currentRatio) ? currentRatio : model.defaultRatio && ratios.includes(model.defaultRatio) ? model.defaultRatio : ratios[0] || "";
+  configurable.node.config = { ...configurable.node.config, resolution, ratio };
+  return true;
+}
+
+async function applyPersistedSystemModelOverrides(workflowId: string, graph: AutomationWorkflowGraph, defaults: AutomationWorkflowGraph) {
+  const rows = await db.prepare("SELECT node_id, model_id FROM automation_system_model_overrides WHERE workflow_id = ? ORDER BY node_id")
+    .all(workflowId) as SystemModelOverrideRow[];
+  for (const row of rows) applySystemModelSelection(graph, defaults, row.node_id, row.model_id);
+  return graph;
+}
+
 async function ensureSystemAutomationWorkflow(
   workspaceId: string,
   userId: string,
@@ -112,7 +170,8 @@ async function ensureSystemAutomationWorkflow(
     }
 
     const now = new Date().toISOString();
-    const graph = template.createGraph();
+    const defaults = template.createGraph();
+    const graph = await applyPersistedSystemModelOverrides(current?.id || "", structuredClone(defaults), defaults);
     const validation = validateAutomationWorkflowGraph(graph);
     if (!validation.valid) throw new Error(`System workflow ${template.key} is invalid: ${validation.issues.map((entry) => entry.message).join("; ")}`);
     const workflowId = current?.id || randomUUID();
@@ -191,6 +250,62 @@ export async function getAutomationWorkflow(userId: string, workflowId: string):
     draft: await versionById(row.draft_version_id),
     published: await versionById(row.published_version_id),
   };
+}
+
+export function systemAutomationModelDefaults(systemKey: string | null) {
+  const template = automationSystemWorkflowTemplate(systemKey || "");
+  if (!template) return {};
+  const graph = template.createGraph();
+  return Object.fromEntries(graph.nodes.flatMap((node) => configurableSystemModelNode(graph, node.id)
+    ? [[`${node.id}.modelId`, String(node.config.modelId || "")]]
+    : []));
+}
+
+export async function setSystemAutomationModelOverride(input: { userId: string; workflowId: string; nodeId: string; modelId: string | null }) {
+  const row = await workflowRowById(input.workflowId);
+  if (!row || row.status !== "system" || !row.system_key || !await userCanAccessWorkspace(input.userId, row.workspace_id)) return null;
+  await requireAutomationPermission(input.userId, row.workspace_id, "automation.edit");
+  const template = automationSystemWorkflowTemplate(row.system_key);
+  const published = await versionById(row.published_version_id);
+  if (!template || !published) return null;
+  const defaults = template.createGraph();
+  const graph = structuredClone(published.graph);
+  const defaultNode = defaults.nodes.find((node) => node.id === input.nodeId);
+  const overrideModelId = input.modelId && input.modelId !== String(defaultNode?.config.modelId || "") ? input.modelId : null;
+  if (!applySystemModelSelection(graph, defaults, input.nodeId, overrideModelId)) {
+    throw Object.assign(new Error("This system step does not support that model"), { status: 400 });
+  }
+  const validation = validateAutomationWorkflowGraph(graph);
+  if (!validation.valid) throw Object.assign(new Error(validation.issues.map((issue) => issue.message).join(" ")), { status: 400 });
+  const now = new Date().toISOString();
+  await db.transaction(async () => {
+    await db.prepare("SELECT pg_advisory_xact_lock(hashtextextended(?, 0))").get(`automation-system-model:${row.id}`);
+    const current = await workflowRowById(row.id);
+    if (!current || current.status !== "system" || current.published_version_id !== published.id) {
+      throw Object.assign(new Error("The system workflow changed. Reopen it and choose the model again."), { status: 409 });
+    }
+    if (overrideModelId) {
+      await db.prepare(`INSERT INTO automation_system_model_overrides
+        (workflow_id, workspace_id, node_id, model_id, updated_by, created_at, updated_at)
+        VALUES (?, ?, ?, ?, ?, ?, ?)
+        ON CONFLICT (workflow_id, node_id) DO UPDATE SET model_id = excluded.model_id, updated_by = excluded.updated_by, updated_at = excluded.updated_at`)
+        .run(row.id, row.workspace_id, input.nodeId, overrideModelId, input.userId, now, now);
+    } else {
+      await db.prepare("DELETE FROM automation_system_model_overrides WHERE workflow_id = ? AND node_id = ?")
+        .run(row.id, input.nodeId);
+    }
+    const latest = await db.prepare("SELECT COALESCE(MAX(version), 0) AS version FROM automation_workflow_versions WHERE workflow_id = ?")
+      .get(row.id) as { version: number };
+    const versionId = randomUUID();
+    await db.prepare("UPDATE automation_workflow_versions SET status = 'superseded' WHERE id = ? AND status = 'published'").run(published.id);
+    await db.prepare(`INSERT INTO automation_workflow_versions
+      (id, workflow_id, version, status, graph_json, validation_json, created_by, created_at, published_at, change_note)
+      VALUES (?, ?, ?, 'published', ?, ?, ?, ?, ?, ?)`)
+      .run(versionId, row.id, Number(latest.version || 0) + 1, JSON.stringify(graph), JSON.stringify(validation), input.userId, now, now, overrideModelId ? `Changed ${input.nodeId} model` : `Reset ${input.nodeId} model`);
+    await db.prepare("UPDATE automation_workflows SET published_version_id = ?, updated_at = ? WHERE id = ?")
+      .run(versionId, now, row.id);
+  })();
+  return await getAutomationWorkflow(input.userId, row.id);
 }
 
 export async function createAutomationWorkflow(input: {
