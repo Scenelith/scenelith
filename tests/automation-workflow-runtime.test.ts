@@ -374,6 +374,22 @@ test("creative direction accepts only complete exact-evidence contracts and conf
   const contextualEvidence = contextualRequest.clauses[0].text;
   const contextualResult = await resolve({ ...execution, inputs: { request: contextualRequest, analysis: { briefHash: contextualRequest.briefHash, clauseResults: [{ clauseId: contextualRequest.clauses[0].id, items: [{ kind: "choice", evidence: contextualEvidence, evidenceStart: 0, evidenceEnd: contextualEvidence.length, controlId: "on-screen-text", optionId: "keep", instruction: "", category: "", placement: "", slideIndexes: [], confidence: 1, reason: "" }] }] } } });
   assert.equal((contextualResult.resolved as { textStrategy: string }).textStrategy, "keep", "the model's configured semantic classification must not be overridden by hidden keyword rules");
+
+  const detailedPrepared = await prepare({
+    ...base,
+    node: { id: "prepare", type: "logic.prepare-creative-direction", version: 1, name: "Prepare", description: "", position: { x: 0, y: 0 }, groupId: null, config: {}, bindings: {}, disabled: false },
+    config: { controls: DEFAULT_AUTOMATION_CREATIVE_CONTROLS },
+    inputs: { settings: { ...settings, newOutfit: false, creativeBrief: "Одень её в белое льняное платье с длинными рукавами.", creativeDirectionPolicy: "auto-explicit" }, source: { slides: [{ index: 1 }] } },
+  });
+  const detailedRequest = detailedPrepared.request as { briefHash: string; clauses: Array<{ id: string; text: string }> };
+  const detailedEvidence = detailedRequest.clauses[0].text;
+  const detailedResult = await resolve({ ...execution, inputs: { request: detailedRequest, analysis: { briefHash: detailedRequest.briefHash, clauseResults: [{ clauseId: detailedRequest.clauses[0].id, items: [
+    { kind: "choice", evidence: detailedEvidence, evidenceStart: 0, evidenceEnd: detailedEvidence.length, controlId: "wardrobe-subjects", optionId: "change", instruction: "", category: "", placement: "", slideIndexes: [], confidence: 1, reason: "" },
+    { kind: "requirement", evidence: detailedEvidence, evidenceStart: 0, evidenceEnd: detailedEvidence.length, controlId: "", optionId: "", instruction: detailedEvidence, category: "visual", placement: "change", slideIndexes: [], confidence: 1, reason: "" },
+  ] }] } } });
+  const detailedResolved = detailedResult.resolved as { newOutfit: boolean; direction: { requirements: Array<{ instruction: string }> } };
+  assert.equal(detailedResolved.newOutfit, true, "a model-selected route change must update the configured state under auto-explicit policy");
+  assert.equal(detailedResolved.direction.requirements[0].instruction, detailedEvidence, "a route choice must not consume the user's concrete downstream instruction");
 });
 
 test("slide validator carries immutable choices, exact text and reference roles into generation", async () => {

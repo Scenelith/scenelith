@@ -80,7 +80,10 @@ COMPLETE COVERAGE
 - Evidence ranges must cover every meaningful word in the clause. Connector words and punctuation may sit between adjacent ranges, but no preference, object, action, constraint or negation may be left outside all ranges.
 
 CLASSIFICATION
-- choice: only an explicit request for one listed control option. A topic, audience, tone, aesthetic or ordinary creative detail is not a choice unless it directly requests one available option.
+- choice: only an explicit or semantically necessary selection of one listed control option. A topic, audience, tone, aesthetic or ordinary creative detail is not a choice unless it actually selects one available option.
+- A choice records only the selected workflow state. It must never consume or replace concrete creative details that downstream steps need.
+- When the same request both selects an option and specifies how the result should look or behave, return a choice plus one or more requirement items. Their exact evidence may overlap when the complete wording is necessary to preserve meaning.
+- When the current setting already permits the requested work and the wording only adds a concrete detail, return the requirement without inventing a setting change.
 - requirement: an operational creative instruction that does not select a control. Keep one atomic instruction per item and preserve its strength, negation and scope.
 - ambiguity: uncertainty, mutually exclusive wording, an unsafe mapping, a contradiction within or across clauses, or an instruction whose slide scope cannot be resolved using primary.sourceSlideIndexes.
 - ignore: only genuinely non-operational wording. Explain why. Never ignore a creative preference, constraint, negation or request.
