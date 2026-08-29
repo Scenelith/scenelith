@@ -123,6 +123,11 @@ test("the default workflow stores each AI model independently in node settings",
 });
 
 test("the AI node validates only the selected output contract and keeps permanent instructions static", () => {
+  const help = automationNodeDefinition("ai.structured-task", 2)!.help.technicalNotes!.join(" ");
+  assert.match(help, /80,000 characters/);
+  assert.match(help, /200,000 characters/);
+  assert.match(help, /24 images/);
+  assert.match(help, /never truncates an input/);
   const graph = createDefaultTikTokWorkflowGraph();
   const node = graph.nodes.find((entry) => entry.id === "review-series")!;
   node.config.outputMode = "text";
