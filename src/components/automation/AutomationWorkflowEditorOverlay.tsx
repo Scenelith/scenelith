@@ -34,6 +34,7 @@ import {
   Copy,
   Download,
   Flag,
+  FileInput,
   FlaskConical,
   Gauge,
   GitBranch,
@@ -42,15 +43,13 @@ import {
   Image as ImageIcon,
   Images,
   Inbox,
+  ChevronLeft,
   Layers3,
   ListTree,
   ListFilter,
   Merge,
-  MoreHorizontal,
   Play,
-  PanelRightClose,
   Plus,
-  Save,
   Search,
   Route,
   RotateCcw,
@@ -166,9 +165,9 @@ type AutomationNodeDefinitionRecord = ReturnType<typeof automationNodeDefinition
 function workflowSwitcherPresentation(workflow: AutomationWorkflowRecord) {
   if (workflow.status === "system") return { group: "Scenelith", badge: "System", description: "Read-only default workflow" };
   if (workflow.status === "archived") return { group: "My workflows", badge: "Archived", description: "Archived workflow" };
-  if (workflow.status === "published") return { group: "My workflows", badge: "Published", description: "Published and ready to run" };
-  if (workflow.publishedVersionId) return { group: "My workflows", badge: "Draft", description: "Draft changes · the published version still runs" };
-  return { group: "My workflows", badge: "Draft", description: "Draft · publish before running" };
+  if (workflow.status === "published") return { group: "My workflows", badge: "Live", description: "Live and ready to run" };
+  if (workflow.publishedVersionId) return { group: "My workflows", badge: "Draft", description: "Auto-saved changes · the live version still runs" };
+  return { group: "My workflows", badge: "Draft", description: "Auto-saved draft · take it live before running" };
 }
 
 const categoryLabels = {
@@ -213,6 +212,7 @@ const automationNodeIcons = {
   retry: RotateCcw,
   http: Globe2,
   validate: ShieldCheck,
+  "image-requests": FileInput,
   generate: ImageIcon,
   canvas: Layers3,
   finish: Flag,
@@ -433,9 +433,9 @@ function connectedStep(graph: AutomationWorkflowGraph, edge: AutomationWorkflowG
 function AutomationNodeConnections({ graph, node, onSelect }: { graph: AutomationWorkflowGraph; node: AutomationNode; onSelect: (nodeId: string) => void }) {
   const incoming = graph.edges.filter((edge) => edge.target === node.id).map((edge) => ({ edge, contract: connectedStep(graph, edge) }));
   const outgoing = graph.edges.filter((edge) => edge.source === node.id).map((edge) => ({ edge, contract: connectedStep(graph, edge) }));
-  const mainIncoming = incoming.filter(({ edge }) => (edge.role || "flow") !== "data");
+  const mainIncoming = incoming.filter(({ edge }) => edge.role !== "data");
   const dataIncoming = incoming.filter(({ edge }) => edge.role === "data");
-  const mainOutgoing = outgoing.filter(({ edge }) => (edge.role || "flow") !== "data");
+  const mainOutgoing = outgoing.filter(({ edge }) => edge.role !== "data");
   const dataOutgoing = outgoing.filter(({ edge }) => edge.role === "data");
   const connectionList = (connections: typeof incoming, empty: string) => connections.length ? connections.map(({ edge, contract }) => <button type="button" key={edge.id} onClick={() => onSelect(edge.target === node.id ? edge.source : edge.target)}>
     <i>{edge.target === node.id ? contract.sourceNode?.name || "Previous step" : contract.targetNode?.name || "Next step"}</i>
@@ -567,7 +567,7 @@ function displayGraph(
         const focused = incoming || outgoing;
         const directlyConnected = selectedNodeId === edge.target || selectedNodeId === edge.source;
         const contract = connectedStep(graph, edge);
-        const role = edge.role || (contract.dataType === "error" ? "error" : "flow");
+        const role = edge.role;
         const sourceStatus = executionStatus(edge.source);
         const targetStatus = executionStatus(edge.target);
         const edgeExecutionStatus: AutomationWorkflowNodeExecutionStatus = targetStatus === "running" && sourceStatus === "completed"
@@ -994,7 +994,8 @@ function FieldEditor({ field, node, disabled, options, referencePicker, onConfig
     {field.description && <small>{field.description}</small>}
     {field.kind === "references" ? referencePicker
       : field.kind === "boolean" ? <button type="button" className={`automation-boolean ${value ? "is-on" : ""}`} disabled={disabled || askOnRun} onClick={() => onConfig(!value)}><i />{value ? "Enabled" : "Disabled"}</button>
-      : (field.kind === "select" || field.kind === "model") && options.length ? <select disabled={disabled || askOnRun} value={String(value)} onChange={(event) => onConfig(event.target.value)}>{options.map((option) => <option key={option.value} value={option.value}>{option.label}</option>)}</select>
+      : field.kind === "model" && options.length ? <InspectorSelect label={field.label} disabled={disabled || askOnRun} value={String(value)} options={options} onChange={onConfig} />
+        : field.kind === "select" && options.length ? <select disabled={disabled || askOnRun} value={String(value)} onChange={(event) => onConfig(event.target.value)}>{options.map((option) => <option key={option.value} value={option.value}>{option.label}</option>)}</select>
         : field.kind === "json" ? <JsonEditor key={JSON.stringify(value ?? {})} disabled={disabled || askOnRun} value={value} onChange={onConfig} />
           : field.kind === "schema" ? <ResponseSchemaEditor disabled={disabled || askOnRun} value={value} onChange={onConfig} />
           : field.kind === "value" ? <SimpleValueEditor disabled={disabled || askOnRun} value={value} placeholder={field.placeholder} onChange={onConfig} />
@@ -1074,9 +1075,8 @@ export function AutomationWorkflowEditorOverlay({ workspaceId, projectId, workfl
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState("");
-  const [dirty, setDirty] = useState(false);
-  const [confirmClose, setConfirmClose] = useState(false);
-  const [pendingWorkflowId, setPendingWorkflowId] = useState<string | null>(null);
+  const [editRevision, setEditRevision] = useState(0);
+  const [savedRevision, setSavedRevision] = useState(0);
   const [availableWorkflows, setAvailableWorkflows] = useState<AutomationWorkflowRecord[]>([]);
   const [manageOpen, setManageOpen] = useState(false);
   const [mobileInspectorOpen, setMobileInspectorOpen] = useState(false);
@@ -1089,6 +1089,7 @@ export function AutomationWorkflowEditorOverlay({ workspaceId, projectId, workfl
   const [newCredentialHeaderName, setNewCredentialHeaderName] = useState("");
   const manageMenuRef = useRef<HTMLDivElement>(null);
   const flowStageRef = useRef<HTMLElement>(null);
+  const dirty = editRevision !== savedRevision;
 
   const capabilities = detail?.capabilities || { run: false, edit: false, publish: false, manageTriggers: false, manageCredentials: false };
   const systemReadOnly = detail?.workflow.status === "system";
@@ -1098,7 +1099,6 @@ export function AutomationWorkflowEditorOverlay({ workspaceId, projectId, workfl
     label: workflow.name,
     ...workflowSwitcherPresentation(workflow),
   })), [availableWorkflows]);
-  const pendingWorkflow = availableWorkflows.find((workflow) => workflow.id === pendingWorkflowId) || null;
   useEffect(() => {
     const playingVideos = Array.from(document.querySelectorAll<HTMLVideoElement>(".canvas-stage video")).filter((video) => !video.paused);
     playingVideos.forEach((video) => video.pause());
@@ -1128,20 +1128,6 @@ export function AutomationWorkflowEditorOverlay({ workspaceId, projectId, workfl
       stopSpacePanning();
     };
   }, []);
-  useEffect(() => {
-    const onKeyDown = (event: KeyboardEvent) => {
-      if (event.key !== "Escape") return;
-      if (operationsView) return;
-      if (manageOpen) { setManageOpen(false); return; }
-      if (pendingWorkflowId) { setPendingWorkflowId(null); return; }
-      if (confirmClose) { setConfirmClose(false); return; }
-      if (mobileInspectorOpen) { setMobileInspectorOpen(false); return; }
-      if (dirty) setConfirmClose(true);
-      else onClose();
-    };
-    window.addEventListener("keydown", onKeyDown);
-    return () => window.removeEventListener("keydown", onKeyDown);
-  }, [confirmClose, dirty, manageOpen, mobileInspectorOpen, onClose, operationsView, pendingWorkflowId]);
   useEffect(() => {
     if (!manageOpen) return;
     const onPointerDown = (event: PointerEvent) => {
@@ -1182,6 +1168,8 @@ export function AutomationWorkflowEditorOverlay({ workspaceId, projectId, workfl
         setGraph(loadedGraph);
         setName(body.workflow.name);
         setValidation(version.validation);
+        setEditRevision(0);
+        setSavedRevision(0);
         setLoading(false);
       })
       .catch((loadError) => {
@@ -1207,11 +1195,14 @@ export function AutomationWorkflowEditorOverlay({ workspaceId, projectId, workfl
 
   useEffect(() => { const timer = window.setTimeout(() => void refreshBindings(), 0); return () => window.clearTimeout(timer); }, [refreshBindings]);
 
+  const markDirty = useCallback(() => {
+    setEditRevision((current) => current + 1);
+  }, []);
   const mutateGraph = useCallback((mutator: (current: AutomationWorkflowGraph) => AutomationWorkflowGraph) => {
     if (readOnly) return;
     setGraph((current) => current ? mutator(structuredClone(current)) : current);
-    setDirty(true);
-  }, [readOnly]);
+    markDirty();
+  }, [markDirty, readOnly]);
 
   const updateFixedNodeReferences = useCallback((nodeId: string, assetIds: string[]) => {
     mutateGraph((current) => ({
@@ -1294,7 +1285,15 @@ export function AutomationWorkflowEditorOverlay({ workspaceId, projectId, workfl
       ...(!field.required ? [{ value: "", label: "No backup model" }] : []),
       ...assistantModels.map((model) => ({ value: model.id, label: model.label })),
     ];
-    if (field.runtimeValueType === "image-model" || field.modelCapability === "image") return models.filter((model) => model.mediaType === "image" && model.maxReferences > 0).map((model) => ({ value: model.id, label: model.label }));
+    if (field.runtimeValueType === "image-model" || field.modelCapability === "image") return models.filter((model) => {
+      if (model.mediaType !== "image") return false;
+      if (!systemReadOnly) return true;
+      if (model.maxReferences < 1) return false;
+      const resolution = String(selectedNode.config.resolution || "");
+      const ratio = String(selectedNode.config.ratio || "");
+      return generatorResolutionsFor(model, false).includes(resolution)
+        && generatorRatiosFor(model, resolution, true).includes(ratio);
+    }).map((model) => ({ value: model.id, label: model.label }));
     const boundValue = (fieldId: string) => selectedNode.bindings[fieldId]?.mode === "fixed" && selectedNode.bindings[fieldId]?.value !== undefined
       ? selectedNode.bindings[fieldId].value
       : selectedNode.config[fieldId];
@@ -1315,8 +1314,8 @@ export function AutomationWorkflowEditorOverlay({ workspaceId, projectId, workfl
         duration: 280,
       });
     }));
-    if (!readOnly) setDirty(true);
-  }, [flowNodes, readOnly]);
+    if (!readOnly) markDirty();
+  }, [flowNodes, markDirty, readOnly]);
 
   const moveFlowNode = useCallback((flowNode: Node<AutomationFlowData>) => {
     setGraph((current) => {
@@ -1327,8 +1326,8 @@ export function AutomationWorkflowEditorOverlay({ workspaceId, projectId, workfl
       }
       return { ...current, nodes: current.nodes.map((node) => node.id === flowNode.id ? { ...node, position: flowNode.position } : node) };
     });
-    if (!readOnly) setDirty(true);
-  }, [readOnly]);
+    if (!readOnly) markDirty();
+  }, [markDirty, readOnly]);
 
   const magnetizeFlowNode = useCallback((flowNode: Node<AutomationFlowData>) => {
     setFlowNodes((current) => {
@@ -1350,7 +1349,7 @@ export function AutomationWorkflowEditorOverlay({ workspaceId, projectId, workfl
     const sourcePort = sourceDefinition?.outputs.find((port) => port.id === connection.sourceHandle);
     const targetNode = graph.nodes.find((node) => node.id === connection.target);
     const retryTarget = targetNode?.type === "logic.retry-gate" && connection.targetHandle === "feedback";
-    const alreadyHasMainRoute = graph.edges.some((edge) => edge.target === connection.target && (edge.role || "flow") === "flow");
+    const alreadyHasMainRoute = graph.edges.some((edge) => edge.target === connection.target && edge.role === "flow");
     const role: AutomationEdgeRole = retryTarget ? "retry" : sourcePort?.type === "error" ? "error" : alreadyHasMainRoute ? "data" : "flow";
     const candidate = {
       id: crypto.randomUUID(),
@@ -1505,8 +1504,9 @@ export function AutomationWorkflowEditorOverlay({ workspaceId, projectId, workfl
     finally { setSaving(false); }
   }
 
-  async function saveDraft() {
+  const saveDraft = useCallback(async () => {
     if (!graph || readOnly) return detail;
+    const revisionToSave = editRevision;
     setSaving(true);
     setError("");
     try {
@@ -1518,7 +1518,7 @@ export function AutomationWorkflowEditorOverlay({ workspaceId, projectId, workfl
       if (!response.ok) throw new Error(body.error || "Could not save the workflow");
       setDetail({ ...body, capabilities: detail!.capabilities });
       setValidation(nextValidation);
-      setDirty(false);
+      setSavedRevision((current) => Math.max(current, revisionToSave));
       onWorkflowChanged?.(body.workflow.id);
       return body;
     } catch (saveError) {
@@ -1527,7 +1527,13 @@ export function AutomationWorkflowEditorOverlay({ workspaceId, projectId, workfl
     } finally {
       setSaving(false);
     }
-  }
+  }, [detail, editRevision, graph, name, onWorkflowChanged, readOnly]);
+
+  useEffect(() => {
+    if (!dirty || saving || readOnly || !detail || !graph) return;
+    const timer = window.setTimeout(() => void saveDraft(), 850);
+    return () => window.clearTimeout(timer);
+  }, [detail, dirty, graph, name, readOnly, saveDraft, saving]);
 
   async function saveSystemModel(nodeId: string, modelId: string | null) {
     if (!detail || !systemReadOnly || !capabilities.edit) return;
@@ -1542,7 +1548,7 @@ export function AutomationWorkflowEditorOverlay({ workspaceId, projectId, workfl
       const body = await response.json() as AutomationWorkflowDetail & { error?: string };
       if (!response.ok) throw new Error(body.error || "Could not save the model");
       const nextVersion = body.published;
-      if (!nextVersion) throw new Error("The system workflow has no published version");
+      if (!nextVersion) throw new Error("The system workflow has no live version");
       setDetail({ ...body, capabilities: detail.capabilities, systemModelDefaults: detail.systemModelDefaults });
       setGraph(structuredClone(nextVersion.graph));
       setValidation(nextVersion.validation);
@@ -1554,7 +1560,7 @@ export function AutomationWorkflowEditorOverlay({ workspaceId, projectId, workfl
     }
   }
 
-  async function publish() {
+  async function takeLive() {
     const saved = dirty ? await saveDraft() : detail;
     if (!saved) return;
     const currentGraph = graph!;
@@ -1570,14 +1576,13 @@ export function AutomationWorkflowEditorOverlay({ workspaceId, projectId, workfl
     try {
       const response = await fetch(`/api/automation-workflows/${encodeURIComponent(saved.workflow.id)}/publish`, { method: "POST" });
       const body = await response.json() as AutomationWorkflowDetail & { error?: string; validation?: AutomationValidationResult };
-      if (!response.ok) throw new Error(body.error || "Could not publish the workflow");
+      if (!response.ok) throw new Error(body.error || "Could not take the workflow live");
       setDetail({ ...body, capabilities: detail!.capabilities });
       setGraph(structuredClone((body.draft || body.published)!.graph));
       setValidation((body.draft || body.published)!.validation);
-      setDirty(false);
       onWorkflowChanged?.(body.workflow.id);
-    } catch (publishError) {
-      setError(publishError instanceof Error ? publishError.message : "Could not publish the workflow");
+    } catch (liveError) {
+      setError(liveError instanceof Error ? liveError.message : "Could not take the workflow live");
     } finally {
       setSaving(false);
     }
@@ -1602,30 +1607,30 @@ export function AutomationWorkflowEditorOverlay({ workspaceId, projectId, workfl
     }
   }
 
-  function requestWorkflowSwitch(nextWorkflowId: string) {
+  async function requestWorkflowSwitch(nextWorkflowId: string) {
     if (nextWorkflowId === workflowId || !onWorkflowChanged) return;
-    if (dirty) {
-      setPendingWorkflowId(nextWorkflowId);
-      return;
-    }
+    if (saving) return;
+    if (dirty && !await saveDraft()) return;
     onWorkflowChanged(nextWorkflowId);
   }
 
-  async function saveAndSwitchWorkflow() {
-    const nextWorkflowId = pendingWorkflowId;
-    if (!nextWorkflowId) return;
-    const saved = await saveDraft();
-    if (!saved) return;
-    setPendingWorkflowId(null);
-    onWorkflowChanged?.(nextWorkflowId);
-  }
+  const closeEditor = useCallback(async () => {
+    if (saving) return;
+    if (dirty && !await saveDraft()) return;
+    onClose();
+  }, [dirty, onClose, saveDraft, saving]);
 
-  function discardAndSwitchWorkflow() {
-    const nextWorkflowId = pendingWorkflowId;
-    if (!nextWorkflowId) return;
-    setPendingWorkflowId(null);
-    onWorkflowChanged?.(nextWorkflowId);
-  }
+  useEffect(() => {
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.key !== "Escape") return;
+      if (operationsView) return;
+      if (manageOpen) { setManageOpen(false); return; }
+      if (mobileInspectorOpen) { setMobileInspectorOpen(false); return; }
+      void closeEditor();
+    };
+    window.addEventListener("keydown", onKeyDown);
+    return () => window.removeEventListener("keydown", onKeyDown);
+  }, [closeEditor, manageOpen, mobileInspectorOpen, operationsView]);
 
   async function exportWorkflow() {
     const current = dirty ? await saveDraft() : detail;
@@ -1656,6 +1661,8 @@ export function AutomationWorkflowEditorOverlay({ workspaceId, projectId, workfl
       : selectedNode?.type === "integration.http-request"
         ? "Headers, waiting time, retries and failures"
         : "Extra inputs and failure behavior";
+  const selectedValidatorHasContract = Boolean(selectedNode?.type === "logic.validate-slide-plans"
+    && graph?.edges.some((edge) => edge.target === selectedNode.id && edge.targetPort === "contract"));
   const renderSelectedField = (field: AutomationNodeFieldDefinition) => {
     if (selectedNode?.type === "logic.merge" && field.id === "inputs") {
       return <MergeInputsEditor key={`${selectedNode.id}:${field.id}`} node={selectedNode} graph={graph!} disabled={Boolean(readOnly)} onChange={(value) => updateSelectedFieldConfig(field, value)} />;
@@ -1677,14 +1684,12 @@ export function AutomationWorkflowEditorOverlay({ workspaceId, projectId, workfl
     if (systemModelEditable) {
       const defaultModelId = detail?.systemModelDefaults?.[`${selectedNode!.id}.modelId`] || "";
       const currentModelId = String(fieldValue || "");
-      return <label key={`${selectedNode!.id}:${field.id}`} className="automation-inspector-field is-model is-system-model">
+      return <div key={`${selectedNode!.id}:${field.id}`} className="automation-inspector-field is-model is-system-model">
         <span><b>{field.label}</b><button type="button" disabled={saving || !defaultModelId || currentModelId === defaultModelId} title="Restore the model selected by this system template" onClick={() => void saveSystemModel(selectedNode!.id, null)}><RotateCcw size={11} /> Reset to default</button></span>
         {field.description && <small>{field.description}</small>}
-        <select disabled={saving} value={currentModelId} onChange={(event) => void saveSystemModel(selectedNode!.id, event.target.value)}>
-          {selectedFieldOptions(field).map((option) => <option key={option.value} value={option.value}>{option.label}</option>)}
-        </select>
-        <small className="automation-system-model-help">Saved for this workspace. The template structure and every other setting stay locked.</small>
-      </label>;
+        <InspectorSelect label={field.label} disabled={saving} value={currentModelId} options={selectedFieldOptions(field)} onChange={(value) => void saveSystemModel(selectedNode!.id, value)} />
+        <small className="automation-system-model-help">Saved for this workspace. Only models compatible with this step&apos;s locked image shape and quality are available.</small>
+      </div>;
     }
     const selectedReferenceIds = Array.isArray(fieldValue) ? fieldValue.filter((item): item is string => typeof item === "string") : [];
     return <FieldEditor
@@ -1710,13 +1715,16 @@ export function AutomationWorkflowEditorOverlay({ workspaceId, projectId, workfl
     />;
   };
 
+  const currentVersionIsPublished = Boolean(detail && detail.workflow.status === "published" && !detail.workflow.draftVersionId && !dirty);
+  const publishLabel = currentVersionIsPublished ? "Live" : detail?.workflow.publishedVersionId ? "Update live" : "Go live";
+
   return <div className="automation-editor-overlay" role="dialog" aria-modal="false" aria-label="Automation workflow editor" onPointerDown={(event) => event.stopPropagation()}>
     <div className="automation-editor-shell">
       <header className="automation-editor-topbar">
         <div className="automation-editor-title">
-          <button type="button" className="automation-editor-collapse" onClick={() => dirty ? setConfirmClose(true) : onClose()} aria-label="Collapse workflow editor" title="Collapse workflow editor"><PanelRightClose size={18} /></button>
-          <span><small>AUTOMATION CANVAS</small><input aria-label="Workflow name" value={name} disabled={Boolean(readOnly)} onChange={(event) => { setName(event.target.value); setDirty(true); }} /></span>
-          <i className={detail?.workflow.status === "published" || detail?.workflow.status === "system" ? "is-published" : ""}>{detail?.workflow.status === "system" ? "System template" : detail?.workflow.status === "published" ? "Published" : "Draft"}</i>
+          <button type="button" className="automation-editor-collapse" disabled={saving} onClick={() => void closeEditor()} aria-label="Collapse workflow editor" title="Collapse workflow editor"><ChevronLeft size={19} /></button>
+          <span><small>AUTOMATION CANVAS</small><input aria-label="Workflow name" value={name} disabled={Boolean(readOnly)} onChange={(event) => { setName(event.target.value); markDirty(); }} /></span>
+          <i className={detail?.workflow.status === "published" || detail?.workflow.status === "system" ? "is-published" : ""}>{detail?.workflow.status === "system" ? "System template" : saving ? "Saving…" : dirty ? "Auto-save pending" : detail?.workflow.status === "published" ? "Live" : "Draft auto-saved"}</i>
         </div>
         <div className="automation-editor-actions">
           <div className="automation-workflow-switcher">
@@ -1725,7 +1733,7 @@ export function AutomationWorkflowEditorOverlay({ workspaceId, projectId, workfl
               value={workflowId}
               options={workflowSwitchOptions}
               disabled={saving || !onWorkflowChanged || workflowSwitchOptions.length < 2}
-              onChange={requestWorkflowSwitch}
+              onChange={(nextWorkflowId) => void requestWorkflowSwitch(nextWorkflowId)}
             />
           </div>
           {validation && <button type="button" className={`automation-validation-pill ${validation.valid ? "is-valid" : ""}`} onClick={() => {
@@ -1736,26 +1744,30 @@ export function AutomationWorkflowEditorOverlay({ workspaceId, projectId, workfl
               const firstNodeId = nextValidation.issues.find((entry) => entry.nodeId)?.nodeId;
               if (firstNodeId) setSelectedId(firstNodeId);
             }
-          }}>{validation.valid ? <Check size={13} /> : <CircleAlert size={13} />}{validation.valid ? "Valid" : `${validation.issues.length} issues`}</button>}
+          }}>{validation.valid ? "Valid" : `${validation.issues.length} issues`}</button>}
           <div className="automation-manage-menu" ref={manageMenuRef}>
-            <button type="button" className={manageOpen ? "is-open" : ""} aria-haspopup="menu" aria-expanded={manageOpen} onClick={() => setManageOpen((open) => !open)}><MoreHorizontal size={15} /> Manage</button>
+            <button type="button" className={manageOpen ? "is-open" : ""} aria-haspopup="menu" aria-expanded={manageOpen} onClick={() => setManageOpen((open) => !open)}>Manage</button>
             {manageOpen && <div role="menu">
               <button type="button" role="menuitem" onClick={() => { setManageOpen(false); setOperationsView("runs"); }}><Workflow size={14} /><span><b>Run history</b><small>Inspect runs and retries</small></span></button>
               {(capabilities.edit || capabilities.publish) && <button type="button" role="menuitem" onClick={() => { setManageOpen(false); setOperationsView("versions"); }}><History size={14} /><span><b>Versions</b><small>Restore an earlier draft</small></span></button>}
-              {capabilities.manageTriggers && <button type="button" role="menuitem" onClick={() => { setManageOpen(false); setOperationsView("triggers"); }}><Settings2 size={14} /><span><b>Triggers</b><small>Schedules, events and delivery</small></span></button>}
-              {(capabilities.run || capabilities.edit) && <button type="button" role="menuitem" onClick={() => { setManageOpen(false); setOperationsView("fixtures"); }}><FlaskConical size={14} /><span><b>Step preview</b><small>Test with saved examples</small></span></button>}
+              {capabilities.manageTriggers && <button type="button" role="menuitem" onClick={() => { setManageOpen(false); setOperationsView("triggers"); }}><Settings2 size={14} /><span><b>Automatic starts</b><small>Schedules, webhooks and Canvas events</small></span></button>}
+              {(capabilities.run || capabilities.edit) && <button type="button" role="menuitem" onClick={() => { setManageOpen(false); setOperationsView("fixtures"); }}><FlaskConical size={14} /><span><b>Test a step</b><small>Run one step with a saved input example</small></span></button>}
               <button type="button" role="menuitem" onClick={() => { setManageOpen(false); setSelectedId(null); setMobileInspectorOpen(true); }}><Settings2 size={14} /><span><b>Workflow settings</b><small>Run behavior and limits</small></span></button>
               <button type="button" role="menuitem" disabled={saving} onClick={() => { setManageOpen(false); void exportWorkflow(); }}><Download size={14} /><span><b>Export JSON</b><small>Portable, without credentials</small></span></button>
             </div>}
           </div>
           {systemReadOnly ? capabilities.edit && <button type="button" className="is-primary" disabled={saving} onClick={() => void duplicateSystem()}><Copy size={14} /> Duplicate to customize</button> : <>
-            {capabilities.edit && <button type="button" disabled={saving || !dirty} onClick={() => void saveDraft()}><Save size={14} /> {saving ? "Saving" : "Save draft"}</button>}
-            {capabilities.publish && <button type="button" className="is-primary" disabled={saving || (dirty && !capabilities.edit)} onClick={() => void publish()}><Check size={14} /> Publish</button>}
+            {capabilities.publish && <button type="button" className={`is-primary ${currentVersionIsPublished ? "is-published" : ""}`} disabled={saving || currentVersionIsPublished || (dirty && !capabilities.edit)} onClick={() => void takeLive()}>{publishLabel}</button>}
           </>}
         </div>
       </header>
 
       {error && <div className="automation-editor-error" role="alert"><CircleAlert size={14} /><span>{error}</span><button type="button" aria-label="Dismiss error" onClick={() => setError("")}><X size={13} /></button></div>}
+      {detail?.systemModelIssues.map((issue) => <div className="automation-editor-model-warning" role="alert" key={`${issue.nodeId}:${issue.modelId}`}>
+        <CircleAlert size={14} />
+        <span><b>Saved model override needs attention</b><small>{issue.message}</small></span>
+        {capabilities.edit && <button type="button" disabled={saving} onClick={() => void saveSystemModel(issue.nodeId, null)}><RotateCcw size={12} /> Clear override</button>}
+      </div>)}
 
       {loading ? <div className="automation-editor-loading" aria-live="polite"><i /><i /><i /><span>Opening workflow…</span></div> : graph && <div className="automation-editor-body">
         <aside className="automation-node-library">
@@ -1863,9 +1875,11 @@ export function AutomationWorkflowEditorOverlay({ workspaceId, projectId, workfl
               <div className="automation-inspector-scroll">
                 {inspectorView === "guide" ? <>
                   <AutomationNodeGuide definition={selectedDefinition} node={selectedNode} />
+                  {selectedNode.type === "logic.validate-slide-plans" && <section className={`automation-template-notice is-contract-${selectedValidatorHasContract ? "full" : "structural"}`}><CircleAlert size={14} /><span><b>{selectedValidatorHasContract ? "Full contract validation is connected" : "Structural validation only"}</b><small>{selectedValidatorHasContract ? "This step enforces the original run choices, copy decisions and exact prompt requirements." : "Connect Original generation contract to enforce run choices, copy decisions and exact prompt requirements too."}</small></span></section>}
                   <AutomationNodeConnections graph={graph} node={selectedNode} onSelect={(nodeId) => { setSelectedId(nodeId); setPreviewDefinitionKey(null); setInspectorView("settings"); setMobileInspectorOpen(true); }} />
                 </> : inspectorView === "settings" ? <>
                   {systemReadOnly && <section className="automation-template-notice"><Copy size={14} /><span><b>Protected system template</b><small>AI and image models can be changed here. Duplicate the workflow to change prompts, connections or any other setting.</small></span></section>}
+                  {selectedNode.type === "logic.validate-slide-plans" && <section className={`automation-template-notice is-contract-${selectedValidatorHasContract ? "full" : "structural"}`}><CircleAlert size={14} /><span><b>{selectedValidatorHasContract ? "Full contract validation" : "Structural validation only"}</b><small>{selectedValidatorHasContract ? "Original generation contract is connected, so exact run choices and prompt requirements are enforced." : "Original generation contract is not connected. This step checks structure, indexes, reference availability and limits, but cannot verify the original choices or prompt requirements."}</small></span></section>}
                   <div className="automation-inspector-section-label"><b>{selectedHasEditableSystemModel ? "Model setting" : readOnly ? "Current settings" : "Configure this step"}</b><span>{selectedHasEditableSystemModel ? "The model is saved immediately; all other values stay protected" : readOnly ? "Values this workflow will use" : "Saved to your draft"}</span></div>
                   {readOnly && <section className="automation-node-readonly-identity"><span><b>Step name</b><small>{selectedNode.name}</small></span><span><b>Description</b><small>{selectedNode.description || selectedDefinition.description}</small></span></section>}
                   {!readOnly && <label className="automation-inspector-field"><span><b>Step name</b><small>Give this particular step a clear name. Its node type stays {selectedDefinition.title} everywhere.</small></span><input value={selectedNode.name} onChange={(event) => mutateGraph((current) => ({ ...current, nodes: current.nodes.map((node) => node.id === selectedNode.id ? { ...node, name: event.target.value } : node) }))} /></label>}
@@ -1875,14 +1889,14 @@ export function AutomationWorkflowEditorOverlay({ workspaceId, projectId, workfl
                   {selectedSlotType && <section className="automation-deployment-binding"><small>DEPLOYMENT BINDING</small><h3>{selectedSlotType === "credential" ? "Connect credential" : "Connect child workflow"}</h3><p>The portable workflow stores only <b>{selectedSlotKey || "a slot name"}</b>. This local connection is never exported.</p>{!selectedSlotKey ? <i>Set the slot name above first.</i> : selectedSlotType === "credential" ? capabilities.manageCredentials ? <>
                   <label><span>Saved credential</span><select disabled={Boolean(readOnly || saving)} value={selectedDeploymentBinding?.credentialId || ""} onChange={(event) => void saveDeploymentBinding("credential", selectedSlotKey, event.target.value)}><option value="">Choose saved credential…</option>{bindingOptions.credentials.map((credential) => <option key={credential.id} value={credential.id}>{credential.name} · {credential.kind} · {credential.fingerprint}</option>)}</select></label>
                   {!readOnly && <details><summary>Create a new credential</summary><div><label><span>Name</span><input value={newCredentialName} onChange={(event) => setNewCredentialName(event.target.value)} placeholder="Production API key…" /></label>{selectedCredentialKind === "basic" && <label><span>Username</span><input value={newCredentialUsername} onChange={(event) => setNewCredentialUsername(event.target.value)} placeholder="Username…" autoComplete="username" /></label>}{selectedCredentialKind === "header" && <label><span>Header name</span><input value={newCredentialHeaderName} onChange={(event) => setNewCredentialHeaderName(event.target.value)} placeholder="X-API-Key…" /></label>}<label><span>{selectedCredentialKind === "basic" ? "Password" : "Secret value"}</span><input type="password" value={newCredentialValue} onChange={(event) => setNewCredentialValue(event.target.value)} placeholder={selectedCredentialKind === "basic" ? "Password…" : "Secret value…"} autoComplete="new-password" /></label><button type="button" disabled={saving || !credentialFormReady} onClick={() => void createAndBindCredential(selectedSlotKey, selectedCredentialKind)}>Save & connect</button></div></details>}
-                  </> : <i>Your workspace role cannot manage credentials.</i> : <select disabled={Boolean(readOnly || saving)} value={selectedDeploymentBinding?.targetWorkflowId || ""} onChange={(event) => void saveDeploymentBinding("subworkflow", selectedSlotKey, event.target.value)}><option value="">Choose published workflow</option>{bindingOptions.workflows.filter((workflow) => workflow.id !== detail?.workflow.id && workflow.publishedVersionId).map((workflow) => <option key={workflow.id} value={workflow.id}>{workflow.name}</option>)}</select>}</section>}
+                  </> : <i>Your workspace role cannot manage credentials.</i> : <select disabled={Boolean(readOnly || saving)} value={selectedDeploymentBinding?.targetWorkflowId || ""} onChange={(event) => void saveDeploymentBinding("subworkflow", selectedSlotKey, event.target.value)}><option value="">Choose live workflow</option>{bindingOptions.workflows.filter((workflow) => workflow.id !== detail?.workflow.id && workflow.publishedVersionId).map((workflow) => <option key={workflow.id} value={workflow.id}>{workflow.name}</option>)}</select>}</section>}
                   {!readOnly && <div className="automation-inspector-danger"><button type="button" onClick={removeSelectedNode}><Trash2 size={13} /> Remove step</button></div>}
                 </> : <section className="automation-node-execution">
                   <div className="automation-inspector-section-label"><b>Step execution</b><span>{execution?.runId ? `Run ${execution.runId.slice(0, 8)}` : "Run the workflow to capture exact data"}</span></div>
                   {!execution?.runId ? <div className="automation-execution-empty"><Activity size={18} /><b>No execution selected</b><p>After a run starts, this panel shows every attempt, the exact captured input, output and any error returned by this step.</p></div>
                     : executionResult.key !== executionDetailKey ? <div className="automation-execution-empty"><Activity size={18} /><b>Loading execution…</b></div>
                       : executionResult.attempts.length ? executionResult.attempts.map((attempt) => <article key={attempt.id} className={`automation-execution-attempt is-${attempt.status}`}>
-                        <header><span><b>Attempt {attempt.attempt}</b><small>{attempt.status.replaceAll("_", " ")}</small></span>{attempt.chargedCredits > 0 && <em>{attempt.chargedCredits} credits</em>}</header>
+                        <header><span><b>Attempt {attempt.attempt}</b><small>{attempt.reusedFromNodeRunId ? `reused exact output from ${attempt.reusedFromNodeRunId.slice(0, 8)}` : attempt.status.replaceAll("_", " ")}</small></span>{attempt.chargedCredits > 0 && <em>{attempt.chargedCredits} credits</em>}</header>
                         {attempt.error && <div className="automation-execution-error"><small>{attempt.errorCode || "STEP_ERROR"}</small><b>{attempt.error}</b></div>}
                         <details open={Boolean(attempt.error)}><summary>Captured input <Plus size={12} /></summary><pre>{JSON.stringify(attempt.input ?? {}, null, 2)}</pre></details>
                         <details open={Boolean(attempt.error && attempt.output)}><summary>Produced output <Plus size={12} /></summary><pre>{JSON.stringify(attempt.output ?? null, null, 2)}</pre></details>
@@ -1907,8 +1921,6 @@ export function AutomationWorkflowEditorOverlay({ workspaceId, projectId, workfl
       </div>}
     </div>
 
-    {confirmClose && <div className="automation-unsaved-dialog"><div><small>UNSAVED CHANGES</small><h3>Close without saving?</h3><p>Your current draft changes exist only in this window.</p><span><button type="button" onClick={() => setConfirmClose(false)}>Keep editing</button><button type="button" className="is-danger" onClick={onClose}>Discard changes</button></span></div></div>}
-    {pendingWorkflowId && <div className="automation-unsaved-dialog"><div><small>UNSAVED CHANGES</small><h3>Switch to {pendingWorkflow?.name || "another workflow"}?</h3><p>Save this draft before switching, or discard only the changes made since your last save.</p><span><button type="button" onClick={() => setPendingWorkflowId(null)}>Keep editing</button><button type="button" className="is-danger" onClick={discardAndSwitchWorkflow}>Discard &amp; switch</button><button type="button" className="is-primary" disabled={saving} onClick={() => void saveAndSwitchWorkflow()}>{saving ? "Saving…" : "Save & switch"}</button></span></div></div>}
     {operationsView && detail && <AutomationWorkflowOperations
       projectId={projectId}
       workflowId={detail.workflow.id}
@@ -1923,7 +1935,8 @@ export function AutomationWorkflowEditorOverlay({ workspaceId, projectId, workfl
         setDetail({ ...restored, capabilities: detail.capabilities });
         if (version) { setGraph(structuredClone(version.graph)); setValidation(version.validation); }
         setName(restored.workflow.name);
-        setDirty(false);
+        setEditRevision(0);
+        setSavedRevision(0);
         onWorkflowChanged?.(restored.workflow.id);
       }}
     />}

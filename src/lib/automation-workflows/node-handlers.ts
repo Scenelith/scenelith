@@ -20,10 +20,25 @@ import { AUTOMATION_IDENTITY_REFERENCE_INSTRUCTION, AUTOMATION_NO_TEXT_AVOID_INS
 import { generationProvider, intelligenceProvider } from "@/platform/providers/registry";
 import type { FrameEdge, FrameNode, ProjectGraph } from "@/lib/types";
 import { validateAutomationStructuredValue } from "./json-schema";
-import { evaluateAutomationCondition } from "./condition";
+import { evaluateAutomationCondition, evaluateAutomationConditionV2, evaluateAutomationConditionV3 } from "./condition";
 import { resolveAutomationCredential } from "./credentials";
 import { parseAutomationSlidePlanCollection, parseAutomationSlidePlanSet, type AutomationSlidePlan } from "./slide-plan-contract";
-import { AUTOMATION_CREATIVE_DIRECTION_SYSTEM_PROMPT, AUTOMATION_CREATIVE_DIRECTION_USER_PROMPT, automationCreativeControlIssues, automationCreativeControls, splitAutomationCreativeDirection, type AutomationCreativeControl } from "./creative-direction-contract";
+import { parseAutomationImageGenerationRequestBatch } from "./image-generation-request";
+import { parseAutomationGeneratedAssets, parseCurrentAutomationGeneratedAssets } from "./port-contracts";
+import { automationMergeInputs } from "./registry";
+import { parseAutomationTriggerEnvelope } from "./trigger-envelope";
+import { automationValueAtPath, automationValuePathIssues } from "./value-path";
+import { printAutomationValue, renderAutomationTemplate } from "./template-contract";
+import {
+  AUTOMATION_CREATIVE_DIRECTION_SYSTEM_PROMPT,
+  AUTOMATION_CREATIVE_DIRECTION_USER_PROMPT,
+  automationCreativeControlIssues,
+  automationCreativeControls,
+  automationCreativeRequirementOptionIssues,
+  automationCreativeRequirementOptions,
+  splitAutomationCreativeDirection,
+  type AutomationCreativeControl,
+} from "./creative-direction-contract";
 import type { AutomationNodeExecution, AutomationNodeHandlers } from "./runtime";
 
 type MultimodalContent = { type: "text"; text: string } | { type: "image_url"; image_url: { url: string } };
@@ -44,27 +59,67 @@ async function abortableNodeDelay(milliseconds: number, signal?: AbortSignal) {
   });
 }
 
-function pathValue(source: unknown, path: string) {
-  const segments = path.replace(/\[(\d+)\]/g, ".$1").split(".").filter(Boolean);
-  let value = source;
-  for (const segment of segments) {
-    if (value === null || value === undefined || typeof value !== "object") return undefined;
-    if (!Object.prototype.hasOwnProperty.call(value, segment)) return undefined;
-    value = (value as Record<string, unknown>)[segment];
+function nodeConfigurationError(execution: AutomationNodeExecution, fieldId: string, expected: string) {
+  return Object.assign(new Error(`${execution.node.name} has an invalid ${fieldId} setting; expected ${expected}`), {
+    code: "NODE_CONFIGURATION_INVARIANT",
+    automationRetryable: false,
+  });
+}
+
+function workflowPolicy(execution: AutomationNodeExecution) {
+  if (!execution.context.policy) {
+    throw Object.assign(new Error(`${execution.node.name} cannot run without the workflow execution policy`), {
+      code: "WORKFLOW_POLICY_INVARIANT",
+      automationRetryable: false,
+    });
   }
+  return execution.context.policy;
+}
+
+function stringSetting(execution: AutomationNodeExecution, fieldId: string, optional = false) {
+  const value = execution.config[fieldId];
+  if (value === undefined && optional) return "";
+  if (typeof value !== "string") throw nodeConfigurationError(execution, fieldId, "text");
   return value;
 }
 
-function printable(value: unknown) {
-  if (typeof value === "string") return value;
-  return JSON.stringify(value ?? null, null, 2);
+function numberSetting(execution: AutomationNodeExecution, fieldId: string) {
+  const value = execution.config[fieldId];
+  if (typeof value !== "number" || !Number.isFinite(value)) throw nodeConfigurationError(execution, fieldId, "a finite number");
+  return value;
 }
 
-export function renderAutomationTemplate(template: string, scope: Record<string, unknown>) {
-  const whole = template.trim().match(/^\{\{\s*([^{}]+?)\s*\}\}$/);
-  if (whole) return pathValue(scope, whole[1].trim());
-  return template.replace(/\{\{\s*([^{}]+?)\s*\}\}/g, (_, path: string) => printable(pathValue(scope, path.trim())));
+function integerSetting(execution: AutomationNodeExecution, fieldId: string) {
+  const value = numberSetting(execution, fieldId);
+  if (!Number.isSafeInteger(value)) throw nodeConfigurationError(execution, fieldId, "a whole number");
+  return value;
 }
+
+function booleanSetting(execution: AutomationNodeExecution, fieldId: string) {
+  const value = execution.config[fieldId];
+  if (typeof value !== "boolean") throw nodeConfigurationError(execution, fieldId, "true or false");
+  return value;
+}
+
+function objectSetting(execution: AutomationNodeExecution, fieldId: string) {
+  const value = execution.config[fieldId];
+  if (!value || typeof value !== "object" || Array.isArray(value)) throw nodeConfigurationError(execution, fieldId, "one JSON object");
+  return value as Record<string, unknown>;
+}
+
+function jsonSetting(execution: AutomationNodeExecution, fieldId: string) {
+  const value = execution.config[fieldId];
+  if (value === undefined) throw nodeConfigurationError(execution, fieldId, "a JSON value");
+  return value;
+}
+
+function enumSetting<const T extends readonly string[]>(execution: AutomationNodeExecution, fieldId: string, allowed: T): T[number] {
+  const value = stringSetting(execution, fieldId);
+  if (!allowed.includes(value)) throw nodeConfigurationError(execution, fieldId, allowed.join(" or "));
+  return value;
+}
+
+export { renderAutomationTemplate } from "./template-contract";
 
 function transformTemplate(value: unknown, scope: Record<string, unknown>): unknown {
   if (typeof value === "string") return renderAutomationTemplate(value, scope);
@@ -73,17 +128,42 @@ function transformTemplate(value: unknown, scope: Record<string, unknown>): unkn
   return value;
 }
 
-function collectMedia(value: unknown, found: Array<{ path: string; mimeType: string }> = [], seen = new Set<unknown>()) {
+function collectMediaAssetIds(value: unknown, found: string[] = [], seen = new Set<unknown>()) {
   if (!value || typeof value !== "object" || seen.has(value)) return found;
   seen.add(value);
   if (!Array.isArray(value)) {
     const record = value as Record<string, unknown>;
-    const path = typeof record.analysisPath === "string" ? record.analysisPath : typeof record.path === "string" ? record.path : "";
     const mimeType = typeof record.analysisMimeType === "string" ? record.analysisMimeType : typeof record.mimeType === "string" ? record.mimeType : "";
-    if (path && mimeType.startsWith("image/") && !found.some((entry) => entry.path === path)) found.push({ path, mimeType });
+    const assetId = typeof record.assetId === "string" ? record.assetId : typeof record.id === "string" ? record.id : "";
+    if (assetId && mimeType.startsWith("image/") && !found.includes(assetId)) found.push(assetId);
   }
-  for (const item of Array.isArray(value) ? value : Object.values(value)) collectMedia(item, found, seen);
+  for (const item of Array.isArray(value) ? value : Object.values(value)) collectMediaAssetIds(item, found, seen);
   return found;
+}
+
+async function authorizedAutomationMedia(value: unknown, execution: AutomationNodeExecution) {
+  const assetIds = collectMediaAssetIds(value);
+  return await Promise.all(assetIds.map(async (assetId) => {
+    if (!await userCanAccessAsset(execution.context.userId, assetId)) {
+      throw Object.assign(new Error(`Connected image ${assetId} is not available to this workflow`), { code: "AI_MEDIA_UNAVAILABLE", automationRetryable: false });
+    }
+    const asset = await db.prepare(`SELECT storage_path, mime_type, thumbnail_storage_path, thumbnail_mime_type
+      FROM assets WHERE id = ? AND workspace_id = ?`).get(assetId, execution.context.workspaceId) as {
+        storage_path: string; mime_type: string; thumbnail_storage_path: string | null; thumbnail_mime_type: string | null;
+      } | undefined;
+    if (!asset || !asset.mime_type.startsWith("image/")) {
+      throw Object.assign(new Error(`Connected image ${assetId} is not an image in this workspace`), { code: "AI_MEDIA_UNAVAILABLE", automationRetryable: false });
+    }
+    return { path: asset.thumbnail_storage_path || asset.storage_path, mimeType: asset.thumbnail_mime_type || asset.mime_type };
+  }));
+}
+
+async function connectedAutomationMedia(execution: AutomationNodeExecution) {
+  const mediaPortTypes = new Set(["tiktok-source", "identity", "visual-references"]);
+  const values = Object.values(execution.inputConnections || {}).flat()
+    .filter((connection) => connection.sourceType && mediaPortTypes.has(connection.sourceType))
+    .map((connection) => connection.value);
+  return await authorizedAutomationMedia(values, execution);
 }
 
 async function mediaContent(entry: { path: string; mimeType: string }): Promise<MultimodalContent> {
@@ -97,8 +177,8 @@ async function manualTrigger(execution: AutomationNodeExecution) {
   return { run: { runId: execution.context.runId, projectId: execution.context.projectId, startedBy: execution.context.userId, trigger: execution.context.triggerPayload ?? null } };
 }
 
-async function tiktokSource(execution: AutomationNodeExecution) {
-  const sourceNodeId = String(execution.config.source || "");
+async function resolvedTikTokSource(execution: AutomationNodeExecution) {
+  const sourceNodeId = stringSetting(execution, "source");
   const graph = (await readProjectGraphSnapshot(execution.context.projectId)).graph as ProjectGraph;
   const source = findTikTokSlideshowSources(graph.nodes || [], graph.edges || []).find((item) => item.id === sourceNodeId);
   if (!source) throw new Error("Choose an imported TikTok slideshow from this canvas");
@@ -106,8 +186,8 @@ async function tiktokSource(execution: AutomationNodeExecution) {
   const slides = [];
   for (const [index, assetId] of source.assetIds.entries()) {
     if (!await userCanAccessAsset(execution.context.userId, assetId)) throw new Error(`Source slide ${index + 1} is no longer available`);
-    const asset = await db.prepare("SELECT id, filename, storage_path, mime_type, thumbnail_storage_path, thumbnail_mime_type FROM assets WHERE id = ?")
-      .get(assetId) as { id: string; filename: string; storage_path: string; mime_type: string; thumbnail_storage_path: string | null; thumbnail_mime_type: string | null } | undefined;
+    const asset = await db.prepare("SELECT id, filename, storage_path, mime_type, thumbnail_storage_path, thumbnail_mime_type FROM assets WHERE id = ? AND workspace_id = ?")
+      .get(assetId, execution.context.workspaceId) as { id: string; filename: string; storage_path: string; mime_type: string; thumbnail_storage_path: string | null; thumbnail_mime_type: string | null } | undefined;
     if (!asset?.mime_type.startsWith("image/")) throw new Error(`Source slide ${index + 1} is not an image`);
     slides.push({
       index: index + 1,
@@ -120,35 +200,71 @@ async function tiktokSource(execution: AutomationNodeExecution) {
       title: `Screen ${String(index + 1).padStart(2, "0")}`,
     });
   }
-  return { source: { sourceNodeId: source.id, label: source.label, caption: String(execution.config.caption || sourceNode?.data.title || ""), slides } };
+  return { source, sourceNode, slides };
 }
 
-async function identity(execution: AutomationNodeExecution) {
-  const identityId = String(execution.config.identity || "");
-  if (!identityId && execution.config.optional !== false) return { identity: null };
+async function tiktokSource(execution: AutomationNodeExecution) {
+  const resolved = await resolvedTikTokSource(execution);
+  const replacementCaption = stringSetting(execution, "caption", true);
+  return { source: { sourceNodeId: resolved.source.id, label: resolved.source.label, caption: replacementCaption || String(resolved.sourceNode?.data.title || ""), slides: resolved.slides } };
+}
+
+async function tiktokSourceV2(execution: AutomationNodeExecution) {
+  const resolved = await resolvedTikTokSource(execution);
+  const captionMode = enumSetting(execution, "captionMode", ["original", "replacement", "empty"] as const);
+  const replacementCaption = stringSetting(execution, "caption", true);
+  if (captionMode === "replacement" && !replacementCaption) {
+    throw nodeConfigurationError(execution, "caption", "non-empty replacement text when Caption is set to Use replacement caption");
+  }
+  const caption = captionMode === "original" ? String(resolved.sourceNode?.data.title || "")
+    : captionMode === "replacement" ? replacementCaption
+      : "";
+  return { source: { sourceNodeId: resolved.source.id, label: resolved.source.label, caption, slides: resolved.slides } };
+}
+
+async function resolveIdentity(execution: AutomationNodeExecution, requireSelectedGroupReferences: boolean) {
+  const identityId = stringSetting(execution, "identity", true);
+  const optional = booleanSetting(execution, "optional");
+  if (!identityId && optional) return { identity: null };
   const persona = await db.prepare("SELECT id, name, notes FROM personas WHERE id = ? AND workspace_id = ?")
     .get(identityId, execution.context.workspaceId) as { id: string; name: string; notes: string } | undefined;
   if (!persona) throw new Error("Choose an identity available in this workspace");
-  const requestedGroup = String(execution.config.referenceGroup || "auto");
+  const requestedGroup = stringSetting(execution, "referenceGroup");
   const rows = await db.prepare(`SELECT id, filename, role, storage_path, mime_type, thumbnail_storage_path, thumbnail_mime_type
-    FROM assets WHERE persona_id = ? AND role IN ('reference', 'before', 'after')
-    ORDER BY CASE role WHEN 'reference' THEN 0 WHEN 'before' THEN 1 ELSE 2 END, sort_order, created_at, id`).all(persona.id) as Array<{
+    FROM assets WHERE persona_id = ? AND workspace_id = ? AND role IN ('reference', 'before', 'after')
+    ORDER BY CASE role WHEN 'reference' THEN 0 WHEN 'before' THEN 1 ELSE 2 END, sort_order, created_at, id`).all(persona.id, execution.context.workspaceId) as Array<{
       id: string; filename: string; role: "reference" | "before" | "after"; storage_path: string; mime_type: string; thumbnail_storage_path: string | null; thumbnail_mime_type: string | null;
-    }>;
+  }>;
   const filtered = requestedGroup === "auto" ? rows : rows.filter((asset) => asset.role === requestedGroup);
-  if (!filtered.length && execution.config.optional !== true) throw new Error("This identity has no usable references in the selected group");
+  const invalidAsset = filtered.find((asset) => !asset.mime_type.startsWith("image/"));
+  if (invalidAsset) throw new Error(`${invalidAsset.filename || "An identity reference"} is not an image`);
+  if (!filtered.length && (requireSelectedGroupReferences || !optional)) {
+    const groupLabel = requestedGroup === "auto" ? "selected" : requestedGroup === "reference" ? "Reference" : requestedGroup === "before" ? "Before" : "After";
+    throw new Error(`The selected identity has no usable images in the ${groupLabel} group`);
+  }
   return { identity: { ...persona, assets: filtered.map((asset) => ({ id: asset.id, filename: asset.filename, role: asset.role, path: asset.storage_path, mimeType: asset.mime_type, analysisPath: asset.thumbnail_storage_path || asset.storage_path, analysisMimeType: asset.thumbnail_mime_type || asset.mime_type })) } };
 }
 
+async function identityV1(execution: AutomationNodeExecution) {
+  return await resolveIdentity(execution, false);
+}
+
+async function identityV2(execution: AutomationNodeExecution) {
+  return await resolveIdentity(execution, true);
+}
+
 async function visualReferences(execution: AutomationNodeExecution) {
-  const requested = Array.isArray(execution.config.references)
-    ? execution.config.references.map((entry) => typeof entry === "string" ? entry.trim() : "").filter(Boolean)
-    : [];
-  const assetIds = [...new Set(requested)];
-  const maximum = Math.min(32, Math.max(1, Number(execution.config.maxItems || 8)));
+  if (!Array.isArray(execution.config.references)) throw nodeConfigurationError(execution, "references", "a list of asset ids");
+  const requested = execution.config.references.map((entry) => {
+    if (typeof entry !== "string" || !entry.trim()) throw nodeConfigurationError(execution, "references", "a list of non-empty asset ids");
+    return entry.trim();
+  });
+  if (new Set(requested).size !== requested.length) throw nodeConfigurationError(execution, "references", "a list without duplicate asset ids");
+  const assetIds = requested;
+  const maximum = numberSetting(execution, "maxItems");
   if (assetIds.length > maximum) throw new Error(`Choose no more than ${maximum} visual references`);
   if (!assetIds.length) {
-    if (execution.config.optional !== false) return { references: { assetIds: [], assets: [] } };
+    if (booleanSetting(execution, "optional")) return { references: { assetIds: [], assets: [] } };
     throw new Error("Choose at least one visual reference");
   }
   const assets = [];
@@ -175,12 +291,12 @@ async function visualReferences(execution: AutomationNodeExecution) {
 
 async function creativeSettings(execution: AutomationNodeExecution) {
   return { settings: {
-    mode: String(execution.config.mode || "concept"),
-    newOutfit: execution.config.newOutfit !== false,
-    newLocation: execution.config.newLocation !== false,
-    textStrategy: String(execution.config.textStrategy || "rewrite"),
-    creativeBrief: String(execution.config.creativeBrief || ""),
-    creativeDirectionPolicy: String(execution.config.creativeDirectionPolicy || "propose"),
+    mode: stringSetting(execution, "mode"),
+    newOutfit: booleanSetting(execution, "newOutfit"),
+    newLocation: booleanSetting(execution, "newLocation"),
+    textStrategy: stringSetting(execution, "textStrategy"),
+    creativeBrief: stringSetting(execution, "creativeBrief"),
+    creativeDirectionPolicy: stringSetting(execution, "creativeDirectionPolicy"),
   } };
 }
 
@@ -198,7 +314,7 @@ function creativeDirectionConflict(settings: Record<string, unknown>, direction:
 }
 
 function normalizedCreativeDirectionPolicy(value: unknown) {
-  return String(value || "propose");
+  return String(value ?? "").trim();
 }
 
 function setSafePath(target: Record<string, unknown>, path: string, value: unknown) {
@@ -216,7 +332,22 @@ function contentHash(value: string) {
   return createHash("sha256").update(value, "utf8").digest("hex");
 }
 
-async function prepareCreativeDirection(execution: AutomationNodeExecution) {
+function splitCreativeDirectionV1(raw: string) {
+  const clauses: Array<{ id: string; text: string; start: number; end: number }> = [];
+  const matcher = /[^\n.!?;]+(?:[.!?;]+|$)/gu;
+  for (const match of raw.matchAll(matcher)) {
+    const complete = match[0];
+    const leading = complete.match(/^\s*/u)?.[0].length || 0;
+    const trailing = complete.match(/\s*$/u)?.[0].length || 0;
+    const text = complete.slice(leading, complete.length - trailing);
+    if (!text) continue;
+    const start = (match.index || 0) + leading;
+    clauses.push({ id: `clause-${clauses.length + 1}`, text, start, end: start + text.length });
+  }
+  return clauses;
+}
+
+async function prepareCreativeDirectionV1(execution: AutomationNodeExecution) {
   const settings = recordValue(execution.inputs.settings);
   const source = recordValue(execution.inputs.source);
   const rawControls = execution.config.controls;
@@ -224,23 +355,23 @@ async function prepareCreativeDirection(execution: AutomationNodeExecution) {
   if (controlIssues.length) throw new Error(`Creative direction choice rules are invalid: ${controlIssues.join("; ")}`);
   const controls = automationCreativeControls(rawControls);
   for (const control of controls) {
-    const selected = pathValue(settings, control.path);
+    const selected = automationValueAtPath(settings, control.path);
     const matches = control.options.filter((option) => isDeepStrictEqual(option.value, selected));
     if (matches.length !== 1) throw new Error(`${control.label} has no single selected option in the connected settings`);
   }
   const briefPath = String(execution.config.briefPath || "creativeBrief").trim();
   const policyPath = String(execution.config.policyPath || "creativeDirectionPolicy").trim();
-  const rawBrief = String(pathValue(settings, briefPath) || "").trim();
+  const rawBrief = String(automationValueAtPath(settings, briefPath) || "").trim();
   const maximumBriefCharacters = Math.min(20_000, Math.max(100, Number(execution.config.maxBriefCharacters || 5_000)));
   if (rawBrief.length > maximumBriefCharacters) throw new Error(`Creative direction is ${rawBrief.length.toLocaleString()} characters; this step allows ${maximumBriefCharacters.toLocaleString()}`);
-  const policy = normalizedCreativeDirectionPolicy(pathValue(settings, policyPath));
+  const policy = String(automationValueAtPath(settings, policyPath) || "propose");
   if (!new Set(["strict", "propose", "auto-explicit"]).has(policy)) throw new Error("Choose a supported creative direction policy");
   const sourceSlides = Array.isArray(source.slides) ? source.slides : [];
   const sourceSlideIndexes = sourceSlides.map((item, position) => Number(recordValue(item).index || position + 1));
   if (!sourceSlideIndexes.length || sourceSlideIndexes.some((index) => !Number.isSafeInteger(index) || index < 1) || new Set(sourceSlideIndexes).size !== sourceSlideIndexes.length) {
     throw new Error("The connected source must contain unique positive slide indexes");
   }
-  const clauses = splitAutomationCreativeDirection(rawBrief);
+  const clauses = splitCreativeDirectionV1(rawBrief);
   const maximumClauses = Math.min(40, Math.max(1, Number(execution.config.maxClauses || 16)));
   if (clauses.length > maximumClauses) throw new Error(`Creative direction contains ${clauses.length} clauses; this step allows ${maximumClauses}`);
   const maximumClauseCharacters = Math.min(2_000, Math.max(100, Number(execution.config.maxClauseCharacters || 1_000)));
@@ -261,7 +392,7 @@ async function prepareCreativeDirection(execution: AutomationNodeExecution) {
   } };
 }
 
-function creativeDirectionAnalysisSchema(request: Record<string, unknown>) {
+function creativeDirectionAnalysisSchemaV1(request: Record<string, unknown>) {
   const clauses = Array.isArray(request.clauses) ? request.clauses : [];
   const controls = automationCreativeControls(request.controls);
   const controlIds = controls.map((control) => control.id);
@@ -297,7 +428,7 @@ function creativeDirectionAnalysisSchema(request: Record<string, unknown>) {
   };
 }
 
-async function interpretCreativeDirection(execution: AutomationNodeExecution) {
+async function interpretCreativeDirectionV1(execution: AutomationNodeExecution) {
   const request = recordValue(execution.inputs.request);
   if (request.contractVersion !== 2) throw new Error("Creative direction request uses an unsupported contract version");
   if (Array.isArray(request.clauses) && request.clauses.length === 0) {
@@ -311,7 +442,7 @@ async function interpretCreativeDirection(execution: AutomationNodeExecution) {
       systemPrompt: AUTOMATION_CREATIVE_DIRECTION_SYSTEM_PROMPT,
       userPrompt: AUTOMATION_CREATIVE_DIRECTION_USER_PROMPT,
       outputMode: "structured",
-      responseSchema: creativeDirectionAnalysisSchema(request),
+      responseSchema: creativeDirectionAnalysisSchemaV1(request),
       creativity: "consistent",
       runWhen: "always",
     },
@@ -319,12 +450,221 @@ async function interpretCreativeDirection(execution: AutomationNodeExecution) {
   return { analysis: response.result, __usage: response.__usage };
 }
 
-function selectedControlOption(settings: Record<string, unknown>, control: AutomationCreativeControl) {
-  return control.options.find((option) => isDeepStrictEqual(option.value, pathValue(settings, control.path)));
+function creativeDirectionPathsOverlap(first: string, second: string) {
+  return first === second || first.startsWith(`${second}.`) || second.startsWith(`${first}.`);
 }
 
-async function resolveCreativeDirection(execution: AutomationNodeExecution) {
+async function prepareCreativeDirectionCurrent(execution: AutomationNodeExecution, contractVersion: 3 | 4) {
+  const settings = recordValue(execution.inputs.settings);
+  const source = recordValue(execution.inputs.source);
+  const rawControls = jsonSetting(execution, "controls");
+  const controlIssues = automationCreativeControlIssues(rawControls);
+  if (controlIssues.length) throw new Error(`Creative direction choice rules are invalid: ${controlIssues.join("; ")}`);
+  const controls = automationCreativeControls(rawControls);
+  for (const control of controls) {
+    const selected = automationValueAtPath(settings, control.path);
+    const matches = control.options.filter((option) => isDeepStrictEqual(option.value, selected));
+    if (matches.length !== 1) throw new Error(`${control.label} has no single selected option in the connected settings`);
+  }
+  const briefPath = stringSetting(execution, "briefPath").trim();
+  const policyPath = stringSetting(execution, "policyPath").trim();
+  if (!briefPath || !policyPath) throw nodeConfigurationError(execution, !briefPath ? "briefPath" : "policyPath", "a non-empty field path");
+  const resultPath = contractVersion === 4 ? stringSetting(execution, "resultPath").trim() : "direction";
+  for (const [fieldId, path] of [["briefPath", briefPath], ["policyPath", policyPath], ["resultPath", resultPath]] as const) {
+    const issues = automationValuePathIssues(path);
+    if (issues.length) throw nodeConfigurationError(execution, fieldId, `a safe field path (${issues.join("; ")})`);
+  }
+  if (contractVersion === 4) {
+    const protectedPaths = [briefPath, policyPath, ...controls.map((control) => control.path)];
+    const overlap = protectedPaths.find((path) => creativeDirectionPathsOverlap(resultPath, path));
+    if (overlap) throw new Error(`Creative direction result path “${resultPath}” overlaps protected setting path “${overlap}”`);
+    if (automationValueAtPath(settings, resultPath) !== undefined) throw new Error(`Creative direction result path “${resultPath}” already contains a value; choose an empty destination`);
+  }
+  const rawBriefValue = automationValueAtPath(settings, briefPath);
+  const rawPolicyValue = automationValueAtPath(settings, policyPath);
+  if (typeof rawBriefValue !== "string") throw new Error(`Creative direction field “${briefPath}” must contain text`);
+  if (typeof rawPolicyValue !== "string") throw new Error(`Creative direction policy field “${policyPath}” must contain text`);
+  const rawBrief = rawBriefValue.trim();
+  const maximumBriefCharacters = integerSetting(execution, "maxBriefCharacters");
+  if (!Number.isSafeInteger(maximumBriefCharacters) || maximumBriefCharacters < 100 || maximumBriefCharacters > 20_000) throw new Error("Prepare creative direction requires a visible comment-length limit between 100 and 20,000");
+  if (rawBrief.length > maximumBriefCharacters) throw new Error(`Creative direction is ${rawBrief.length.toLocaleString()} characters; this step allows ${maximumBriefCharacters.toLocaleString()}`);
+  const policy = normalizedCreativeDirectionPolicy(rawPolicyValue);
+  const settingsNodeId = execution.inputConnections?.settings?.[0]?.sourceNodeId || "";
+  if (!new Set(["strict", "propose", "auto-explicit"]).has(policy)) throw new Error("Choose a supported creative direction policy");
+  const sourceSlides = Array.isArray(source.slides) ? source.slides : [];
+  const sourceSlideIndexes = sourceSlides.map((item) => Number(recordValue(item).index));
+  if (!sourceSlideIndexes.length || sourceSlideIndexes.some((index) => !Number.isSafeInteger(index) || index < 1) || new Set(sourceSlideIndexes).size !== sourceSlideIndexes.length) {
+    throw new Error("The connected source must contain unique positive slide indexes");
+  }
+  const clauses = splitAutomationCreativeDirection(rawBrief);
+  const rawCategories = jsonSetting(execution, "requirementCategories");
+  const rawPlacements = jsonSetting(execution, "requirementPlacements");
+  const taxonomyIssues = [
+    ...automationCreativeRequirementOptionIssues(rawCategories, "Requirement categories"),
+    ...automationCreativeRequirementOptionIssues(rawPlacements, "Requirement placements"),
+  ];
+  if (taxonomyIssues.length) throw new Error(`Creative direction taxonomy is invalid: ${taxonomyIssues.join("; ")}`);
+  const minConfidence = numberSetting(execution, "minConfidence");
+  if (!Number.isFinite(minConfidence) || minConfidence < 0.5 || minConfidence > 1) throw new Error("Prepare creative direction requires a visible confidence threshold between 0.5 and 1");
+  const maxRequirements = integerSetting(execution, "maxRequirements");
+  if (!Number.isSafeInteger(maxRequirements) || maxRequirements < 1 || maxRequirements > 80) throw new Error("Prepare creative direction requires a visible requirement limit between 1 and 80");
+  return { request: {
+    contractVersion,
+    briefHash: contentHash(rawBrief),
+    rawBrief,
+    clauses,
+    settings: structuredClone(settings),
+    settingsNodeId,
+    ...(contractVersion === 4 ? { briefPath, policyPath, resultPath } : {}),
+    controls,
+    requirementCategories: automationCreativeRequirementOptions(rawCategories),
+    requirementPlacements: automationCreativeRequirementOptions(rawPlacements),
+    policy,
+    sourceSlideIndexes,
+    minConfidence,
+    maxRequirements,
+    allowIgnoredClauses: booleanSetting(execution, "allowIgnoredClauses"),
+  } };
+}
+
+async function prepareCreativeDirectionV2(execution: AutomationNodeExecution) {
+  return await prepareCreativeDirectionCurrent(execution, 3);
+}
+
+async function prepareCreativeDirectionV3(execution: AutomationNodeExecution) {
+  return await prepareCreativeDirectionCurrent(execution, 4);
+}
+
+function creativeDirectionRequestIssues(request: Record<string, unknown>, expectedVersion: 3 | 4 = 3) {
+  const issues: string[] = [];
+  const rawBrief = typeof request.rawBrief === "string" ? request.rawBrief : null;
+  const clauses = Array.isArray(request.clauses) ? request.clauses.map(recordValue) : [];
+  const policy = normalizedCreativeDirectionPolicy(request.policy);
+  const minConfidence = request.minConfidence;
+  const maxRequirements = request.maxRequirements;
+  const sourceIndexes = Array.isArray(request.sourceSlideIndexes) ? request.sourceSlideIndexes : [];
+  if (request.contractVersion !== expectedVersion) issues.push(`contractVersion must equal ${expectedVersion}`);
+  if (rawBrief === null) issues.push("rawBrief must be text");
+  else if (contentHash(rawBrief) !== request.briefHash) issues.push("briefHash must match rawBrief");
+  if (rawBrief === "" && clauses.length !== 0) issues.push("an empty comment must have no evidence span");
+  if (rawBrief && (clauses.length !== 1
+    || clauses[0].id !== "creative-direction"
+    || clauses[0].text !== rawBrief
+    || clauses[0].start !== 0
+    || clauses[0].end !== rawBrief.length)) issues.push("the complete comment must be preserved as one exact evidence span");
+  if (!request.settings || typeof request.settings !== "object" || Array.isArray(request.settings)) issues.push("settings must be an object");
+  if (typeof request.settingsNodeId !== "string" || request.settingsNodeId.length > 240) issues.push("settingsNodeId must be text no longer than 240 characters");
+  const controlIssues = automationCreativeControlIssues(request.controls);
+  if (controlIssues.length) issues.push(`controls are invalid: ${controlIssues.join("; ")}`);
+  const taxonomyIssues = [
+    ...automationCreativeRequirementOptionIssues(request.requirementCategories, "Requirement categories"),
+    ...automationCreativeRequirementOptionIssues(request.requirementPlacements, "Requirement placements"),
+  ];
+  if (taxonomyIssues.length) issues.push(`taxonomy is invalid: ${taxonomyIssues.join("; ")}`);
+  if (!new Set(["strict", "propose", "auto-explicit"]).has(policy)) issues.push("policy is unsupported");
+  if (typeof minConfidence !== "number" || !Number.isFinite(minConfidence) || minConfidence < 0.5 || minConfidence > 1) issues.push("minConfidence must be between 0.5 and 1");
+  if (typeof maxRequirements !== "number" || !Number.isSafeInteger(maxRequirements) || maxRequirements < 1 || maxRequirements > 80) issues.push("maxRequirements must be between 1 and 80");
+  if (typeof request.allowIgnoredClauses !== "boolean") issues.push("allowIgnoredClauses must be boolean");
+  if (!sourceIndexes.length || sourceIndexes.some((index) => typeof index !== "number" || !Number.isSafeInteger(index) || index < 1) || new Set(sourceIndexes).size !== sourceIndexes.length) issues.push("sourceSlideIndexes must contain unique positive integers");
+  if (expectedVersion === 4) {
+    const pathEntries = [["briefPath", request.briefPath], ["policyPath", request.policyPath], ["resultPath", request.resultPath]] as const;
+    for (const [field, value] of pathEntries) {
+      if (typeof value !== "string") issues.push(`${field} must be a safe field path`);
+      else {
+        const pathIssues = automationValuePathIssues(value);
+        if (pathIssues.length) issues.push(`${field} is invalid: ${pathIssues.join("; ")}`);
+      }
+    }
+    if (typeof request.resultPath === "string") {
+      const protectedPaths = [request.briefPath, request.policyPath, ...automationCreativeControls(request.controls).map((control) => control.path)].filter((value): value is string => typeof value === "string");
+      const overlap = protectedPaths.find((path) => creativeDirectionPathsOverlap(request.resultPath as string, path));
+      if (overlap) issues.push(`resultPath overlaps protected setting path ${overlap}`);
+      if (request.settings && typeof request.settings === "object" && !Array.isArray(request.settings) && automationValueAtPath(request.settings, request.resultPath) !== undefined) issues.push("resultPath must point to an empty destination");
+    }
+  }
+  return issues;
+}
+
+function creativeDirectionAnalysisSchemaV2(request: Record<string, unknown>) {
+  const clauses = Array.isArray(request.clauses) ? request.clauses : [];
+  const controls = automationCreativeControls(request.controls);
+  const requirementCategories = automationCreativeRequirementOptions(request.requirementCategories);
+  const requirementPlacements = automationCreativeRequirementOptions(request.requirementPlacements);
+  const controlIds = controls.map((control) => control.id);
+  const optionIds = [...new Set(controls.flatMap((control) => control.options.map((option) => option.id)))];
+  const maximumEvidenceCharacters = Math.min(20_000, Math.max(100, String(request.rawBrief || "").length));
+  return {
+    type: "object", additionalProperties: false, required: ["briefHash", "clauseResults"], properties: {
+      briefHash: { type: "string", enum: [String(request.briefHash || "")] },
+      clauseResults: { type: "array", minItems: clauses.length, maxItems: clauses.length, items: {
+        type: "object", additionalProperties: false, required: ["clauseId", "items"], properties: {
+          clauseId: { type: "string", enum: clauses.map((item) => String(recordValue(item).id || "")) },
+          items: { type: "array", minItems: 1, maxItems: 16, items: {
+            type: "object", additionalProperties: false,
+            required: ["kind", "evidence", "evidenceStart", "evidenceEnd", "controlId", "optionId", "instruction", "category", "placement", "slideIndexes", "confidence", "reason"],
+            properties: {
+              kind: { type: "string", enum: ["choice", "requirement", "ambiguity", "ignore"] },
+              evidence: { type: "string", minLength: 1, maxLength: maximumEvidenceCharacters },
+              evidenceStart: { type: "integer", minimum: 0, maximum: maximumEvidenceCharacters },
+              evidenceEnd: { type: "integer", minimum: 1, maximum: maximumEvidenceCharacters },
+              controlId: { type: "string", enum: ["", ...controlIds] },
+              optionId: { type: "string", enum: ["", ...optionIds] },
+              instruction: { type: "string", maxLength: 2_000 },
+              category: { type: "string", enum: ["", ...requirementCategories.map((entry) => entry.id)] },
+              placement: { type: "string", enum: ["", ...requirementPlacements.map((entry) => entry.id)] },
+              slideIndexes: { type: "array", maxItems: 40, items: { type: "integer", minimum: 1 } },
+              confidence: { type: "number", minimum: 0, maximum: 1 },
+              reason: { type: "string", maxLength: 2_000 },
+            },
+          } },
+        },
+      } },
+    },
+  };
+}
+
+async function interpretCreativeDirectionCurrent(execution: AutomationNodeExecution, expectedVersion: 3 | 4) {
   const request = recordValue(execution.inputs.request);
+  const requestIssues = creativeDirectionRequestIssues(request, expectedVersion);
+  if (requestIssues.length) throw new Error(`Creative direction request is invalid: ${requestIssues.join("; ")}`);
+  if (Array.isArray(request.clauses) && request.clauses.length === 0) {
+    return { analysis: { briefHash: request.briefHash, clauseResults: [] }, __usage: { chargedCredits: 0, costUsd: 0 }, __skipped: "No written creative direction" };
+  }
+  const systemInstructions = stringSetting(execution, "systemInstructions").trim();
+  const taskInstructions = stringSetting(execution, "taskInstructions").trim();
+  if (!systemInstructions || !taskInstructions) throw new Error("Interpret creative direction requires visible system and task instructions");
+  const creativity = enumSetting(execution, "creativity", ["consistent", "balanced", "exploratory"] as const);
+  const response = await aiTask({
+    ...execution,
+    inputs: { primary: request },
+    config: {
+      ...execution.config,
+      systemPrompt: systemInstructions,
+      userPrompt: taskInstructions,
+      outputMode: "structured",
+      responseSchema: creativeDirectionAnalysisSchemaV2(request),
+      creativity,
+      runWhen: "always",
+    },
+  });
+  return { analysis: response.result, __usage: response.__usage };
+}
+
+async function interpretCreativeDirectionV2(execution: AutomationNodeExecution) {
+  return await interpretCreativeDirectionCurrent(execution, 3);
+}
+
+async function interpretCreativeDirectionV3(execution: AutomationNodeExecution) {
+  return await interpretCreativeDirectionCurrent(execution, 4);
+}
+
+function selectedControlOption(settings: Record<string, unknown>, control: AutomationCreativeControl) {
+  return control.options.find((option) => isDeepStrictEqual(option.value, automationValueAtPath(settings, control.path)));
+}
+
+async function resolveCreativeDirection(execution: AutomationNodeExecution, expectedVersion: 2 | 3 | 4) {
+  const request = recordValue(execution.inputs.request);
+  const legacyContract = expectedVersion === 2;
   const direction = recordValue(execution.inputs.analysis);
   const settings = recordValue(request.settings);
   const rawBrief = String(request.rawBrief || "");
@@ -335,19 +675,34 @@ async function resolveCreativeDirection(execution: AutomationNodeExecution) {
   const controls = automationCreativeControls(request.controls);
   const controlsById = new Map(controls.map((control) => [control.id, control]));
   const sourceIndexes = new Set(Array.isArray(request.sourceSlideIndexes) ? request.sourceSlideIndexes.map(Number) : []);
-  const minConfidence = Number(request.minConfidence || 0.9);
-  if (request.contractVersion !== 2 || direction.briefHash !== request.briefHash || contentHash(rawBrief) !== request.briefHash) {
-    conflicts.push({ field: "creativeBrief", kind: "contract-mismatch", message: "The interpretation does not belong to the current creative direction" });
-  }
+  const minConfidence = Number(request.minConfidence);
+  const maxRequirements = Number(request.maxRequirements);
+  const briefField = expectedVersion === 4 && typeof request.briefPath === "string" ? request.briefPath : "creativeBrief";
+  const requestIssues = request.contractVersion !== expectedVersion
+    ? [`contractVersion must equal ${expectedVersion}`]
+    : legacyContract
+      ? contentHash(rawBrief) === request.briefHash ? [] : ["briefHash must match rawBrief"]
+      : creativeDirectionRequestIssues(request, expectedVersion);
+  if (requestIssues.length || direction.briefHash !== request.briefHash) conflicts.push({
+    field: briefField,
+    kind: "contract-mismatch",
+    message: requestIssues.length
+      ? `The prepared creative-direction request is invalid: ${requestIssues.join("; ")}`
+      : "The interpretation does not belong to the current creative direction",
+  });
   const results = Array.isArray(direction.clauseResults) ? direction.clauseResults.map(recordValue) : [];
   const resultIds = results.map((result) => String(result.clauseId || ""));
   if (resultIds.length !== clauses.length || new Set(resultIds).size !== resultIds.length || resultIds.some((id) => !clausesById.has(id)) || clauses.some((clause) => !resultIds.includes(String(clause.id)))) {
-    conflicts.push({ field: "creativeBrief", kind: "coverage", message: "The model did not classify every creative-direction clause exactly once" });
+    conflicts.push({ field: briefField, kind: "coverage", message: "The model did not classify every creative-direction clause exactly once" });
   }
   const groupedRequests = new Map<string, Map<string, string[]>>();
   const normalizedRequests: Array<{ controlId: string; optionId: string; evidence: string; clauseId: string; confidence: number }> = [];
-  const allowedCategories = new Set(["audience", "offer", "tone", "visual", "copy", "subject", "product", "pacing", "other"]);
-  const allowedPlacements = new Set(["preserve", "change", "avoid"]);
+  const allowedCategories = new Set(legacyContract
+    ? ["audience", "offer", "tone", "visual", "copy", "subject", "product", "pacing", "other"]
+    : automationCreativeRequirementOptions(request.requirementCategories).map((entry) => entry.id));
+  const allowedPlacements = new Set(legacyContract
+    ? ["preserve", "change", "avoid"]
+    : automationCreativeRequirementOptions(request.requirementPlacements).map((entry) => entry.id));
   const requirements: Array<{ id: string; instruction: string; evidence: string; category: string; placement: string; slideIndexes: number[] }> = [];
   const ignored: Array<{ clauseId: string; evidence: string; reason: string }> = [];
   const seenItems = new Set<string>();
@@ -357,7 +712,7 @@ async function resolveCreativeDirection(execution: AutomationNodeExecution) {
     const clauseText = String(clause?.text || "");
     const items = Array.isArray(result.items) ? result.items.map(recordValue) : [];
     const evidenceRanges: Array<[number, number]> = [];
-    if (!items.length) conflicts.push({ field: "creativeBrief", kind: "coverage", message: `${clauseId || "A clause"} has no classification` });
+    if (!items.length) conflicts.push({ field: briefField, kind: "coverage", message: `${clauseId || "A clause"} has no classification` });
     for (const item of items) {
       const kind = String(item.kind || "");
       const evidence = String(item.evidence || "");
@@ -365,24 +720,24 @@ async function resolveCreativeDirection(execution: AutomationNodeExecution) {
       const evidenceEnd = Number(item.evidenceEnd);
       const confidence = Number(item.confidence);
       const itemKey = `${clauseId}\u0000${kind}\u0000${evidence}\u0000${String(item.controlId || "")}\u0000${String(item.optionId || "")}\u0000${String(item.instruction || "")}`;
-      if (seenItems.has(itemKey)) conflicts.push({ field: "creativeBrief", kind: "duplicate", message: `${clauseId} contains a duplicated interpretation`, evidence });
+      if (seenItems.has(itemKey)) conflicts.push({ field: briefField, kind: "duplicate", message: `${clauseId} contains a duplicated interpretation`, evidence });
       seenItems.add(itemKey);
       if (!clauseText || !evidence || !Number.isSafeInteger(evidenceStart) || !Number.isSafeInteger(evidenceEnd) || evidenceStart < 0 || evidenceEnd <= evidenceStart || clauseText.slice(evidenceStart, evidenceEnd) !== evidence) {
-        conflicts.push({ field: "creativeBrief", kind: "unsupported-evidence", message: `${clauseId} contains evidence that is not an exact phrase from the comment`, evidence });
+        conflicts.push({ field: briefField, kind: "unsupported-evidence", message: `${clauseId} contains evidence that is not an exact phrase from the comment`, evidence });
         continue;
       }
       evidenceRanges.push([evidenceStart, evidenceEnd]);
-      if (!Number.isFinite(confidence) || confidence < minConfidence) {
-        conflicts.push({ field: "creativeBrief", kind: "low-confidence", message: `${clauseId} could not be interpreted with enough confidence`, evidence, confidence });
+      if (!Number.isFinite(confidence) || !Number.isFinite(minConfidence) || confidence < minConfidence) {
+        conflicts.push({ field: briefField, kind: "low-confidence", message: `${clauseId} could not be interpreted with enough confidence`, evidence, confidence });
         continue;
       }
       if (kind === "ambiguity") {
-        conflicts.push({ field: "creativeBrief", kind: "ambiguous", message: String(item.reason || "The comment needs clarification"), clauseId, evidence });
+        conflicts.push({ field: briefField, kind: "ambiguous", message: String(item.reason || "The comment needs clarification"), clauseId, evidence });
         continue;
       }
       if (kind === "ignore") {
         const reason = String(item.reason || "").trim();
-        if (!request.allowIgnoredClauses || !reason) conflicts.push({ field: "creativeBrief", kind: "ignored-clause", message: `${clauseId} was not converted into an actionable instruction`, evidence });
+        if (!request.allowIgnoredClauses || !reason) conflicts.push({ field: briefField, kind: "ignored-clause", message: `${clauseId} was not converted into an actionable instruction`, evidence });
         else ignored.push({ clauseId, evidence, reason });
         continue;
       }
@@ -392,7 +747,7 @@ async function resolveCreativeDirection(execution: AutomationNodeExecution) {
         const control = controlsById.get(controlId);
         const option = control?.options.find((candidate) => candidate.id === optionId);
         if (!control || !option || String(item.instruction || "") || String(item.category || "") || String(item.placement || "") || (Array.isArray(item.slideIndexes) && item.slideIndexes.length)) {
-          conflicts.push({ field: "creativeBrief", kind: "invalid-choice", message: `${clauseId} requests a choice that is not configured in this node`, evidence, controlId, optionId });
+          conflicts.push({ field: briefField, kind: "invalid-choice", message: `${clauseId} requests a choice that is not configured in this node`, evidence, controlId, optionId });
           continue;
         }
         normalizedRequests.push({ controlId, optionId, evidence, clauseId, confidence });
@@ -402,7 +757,7 @@ async function resolveCreativeDirection(execution: AutomationNodeExecution) {
         continue;
       }
       if (kind !== "requirement") {
-        conflicts.push({ field: "creativeBrief", kind: "invalid-kind", message: `${clauseId} uses an unsupported interpretation kind`, evidence });
+        conflicts.push({ field: briefField, kind: "invalid-kind", message: `${clauseId} uses an unsupported interpretation kind`, evidence });
         continue;
       }
       const instruction = String(item.instruction || "").trim();
@@ -411,25 +766,39 @@ async function resolveCreativeDirection(execution: AutomationNodeExecution) {
       const slideIndexes = Array.isArray(item.slideIndexes) ? [...new Set(item.slideIndexes.map(Number))] : [];
       const invalidIndexes = slideIndexes.filter((slideIndex) => !Number.isSafeInteger(slideIndex) || !sourceIndexes.has(slideIndex));
       if (instruction !== evidence || String(item.controlId || "") || String(item.optionId || "") || !allowedCategories.has(category) || !allowedPlacements.has(placement)) {
-        conflicts.push({ field: "creativeBrief", kind: "invalid-requirement", message: `${clauseId} contains an incomplete creative requirement`, evidence });
+        conflicts.push({ field: briefField, kind: "invalid-requirement", message: `${clauseId} contains an incomplete creative requirement`, evidence });
         continue;
       }
       if (invalidIndexes.length) {
-        conflicts.push({ field: "creativeBrief", kind: "invalid-slide", message: `${clauseId} refers to unavailable slide ${invalidIndexes.join(", ")}`, evidence });
+        conflicts.push({ field: briefField, kind: "invalid-slide", message: `${clauseId} refers to unavailable slide ${invalidIndexes.join(", ")}`, evidence });
         continue;
       }
       const id = `creative-direction-${contentHash(`${clauseId}\u0000${evidence}\u0000${instruction}\u0000${placement}\u0000${slideIndexes.join(",")}`).slice(0, 16)}`;
       requirements.push({ id, instruction: evidence, evidence, category, placement, slideIndexes });
     }
-    const connectorWords = new Set(["and", "but", "then", "also", "or", "и", "а", "но", "потом", "также", "или"]);
-    const uncoveredWords = [...clauseText.matchAll(/[\p{L}\p{N}]+/gu)].filter((match) => {
-      const start = match.index || 0;
-      const end = start + match[0].length;
-      return !connectorWords.has(match[0].toLocaleLowerCase()) && !evidenceRanges.some(([rangeStart, rangeEnd]) => start >= rangeStart && end <= rangeEnd);
-    }).map((match) => match[0]);
-    if (uncoveredWords.length) conflicts.push({ field: "creativeBrief", kind: "incomplete-coverage", message: `${clauseId} left meaningful words unclassified: ${uncoveredWords.join(", ")}` });
+    if (legacyContract) {
+      const ignoredJoinersV1 = new Set(["and", "but", "then", "also", "or", "и", "а", "но", "потом", "также", "или"]);
+      const uncoveredWords = [...clauseText.matchAll(/[\p{L}\p{N}]+/gu)].filter((match) => {
+        const start = match.index || 0;
+        const end = start + match[0].length;
+        return !ignoredJoinersV1.has(match[0].toLocaleLowerCase()) && !evidenceRanges.some(([rangeStart, rangeEnd]) => start >= rangeStart && end <= rangeEnd);
+      }).map((match) => match[0]);
+      if (uncoveredWords.length) conflicts.push({ field: briefField, kind: "incomplete-coverage", message: `${clauseId} left meaningful words unclassified: ${uncoveredWords.join(", ")}` });
+    } else {
+      const uncoveredCharacters = [...clauseText.matchAll(/\S/gu)].filter((match) => {
+        const start = match.index || 0;
+        const end = start + match[0].length;
+        return !evidenceRanges.some(([rangeStart, rangeEnd]) => start >= rangeStart && end <= rangeEnd);
+      });
+      if (uncoveredCharacters.length) conflicts.push({
+        field: briefField,
+        kind: "incomplete-coverage",
+        message: `${clauseId} left ${uncoveredCharacters.length} non-whitespace character${uncoveredCharacters.length === 1 ? "" : "s"} outside its exact evidence ranges`,
+        firstUncoveredOffset: uncoveredCharacters[0]?.index ?? 0,
+      });
+    }
   }
-  if (requirements.length > Number(request.maxRequirements || 24)) conflicts.push({ field: "creativeBrief", kind: "too-many-requirements", message: `Creative direction produced ${requirements.length} requirements, above the configured limit` });
+  if (Number.isSafeInteger(maxRequirements) && requirements.length > maxRequirements) conflicts.push({ field: briefField, kind: "too-many-requirements", message: `Creative direction produced ${requirements.length} requirements, above the configured limit` });
   const resolved = structuredClone(settings);
   const appliedOverrides: Array<{ controlId: string; previousOptionId: string; nextOptionId: string; evidence: string[] }> = [];
   for (const [controlId, values] of groupedRequests) {
@@ -448,13 +817,19 @@ async function resolveCreativeDirection(execution: AutomationNodeExecution) {
     if (selected.id === next.id) continue;
     if (policy !== "auto-explicit") {
       conflicts.push({
+        controlId: control.id,
+        label: control.label,
         field: control.path,
         kind: policy === "propose" ? "proposed-change" : "choice-conflict",
         message: policy === "propose"
           ? `${control.label} would change from ${selected.label} to ${next.label}; confirm it in the visible choices and run again`
           : `${control.label} is ${selected.label}, while the comment requests ${next.label}`,
         selected: selected.id,
+        selectedLabel: selected.label,
         requested: next.id,
+        requestedLabel: next.label,
+        requestedValue: structuredClone(next.value),
+        runtimeInputKey: request.settingsNodeId ? `${String(request.settingsNodeId)}.${control.path}` : "",
         evidence,
       });
       continue;
@@ -463,30 +838,41 @@ async function resolveCreativeDirection(execution: AutomationNodeExecution) {
     appliedOverrides.push({ controlId, previousOptionId: selected.id, nextOptionId: next.id, evidence });
   }
   if (conflicts.length) return creativeDirectionConflict(settings, direction, conflicts);
-  return {
-    resolved: {
-      ...resolved,
-      creativeBrief: rawBrief,
-      direction: {
-        raw: rawBrief,
-        contractVersion: 2,
-        briefHash: request.briefHash,
-        clauses,
-        requirements,
-        choiceRequests: normalizedRequests,
-        appliedOverrides,
-        ignored,
-      },
-    },
+  const resolution = {
+    raw: rawBrief,
+    contractVersion: expectedVersion,
+    briefHash: request.briefHash,
+    clauses,
+    requirements,
+    choiceRequests: normalizedRequests,
+    appliedOverrides,
+    ignored,
   };
+  if (expectedVersion === 4) {
+    setSafePath(resolved, String(request.resultPath), resolution);
+    return { resolved };
+  }
+  return { resolved: { ...resolved, creativeBrief: rawBrief, direction: resolution } };
+}
+
+async function resolveCreativeDirectionV2(execution: AutomationNodeExecution) {
+  return await resolveCreativeDirection(execution, 2);
+}
+
+async function resolveCreativeDirectionV3(execution: AutomationNodeExecution) {
+  return await resolveCreativeDirection(execution, 3);
+}
+
+async function resolveCreativeDirectionV4(execution: AutomationNodeExecution) {
+  return await resolveCreativeDirection(execution, 4);
 }
 
 async function workflowData(execution: AutomationNodeExecution) {
   const incoming = execution.context.triggerPayload !== undefined
-    ? execution.context.triggerPayload
-    : execution.config.value;
-  const payloadPath = String(execution.config.payloadPath || "").trim();
-  const value = payloadPath ? pathValue(incoming, payloadPath) : incoming;
+    ? parseAutomationTriggerEnvelope(execution.context.triggerPayload).payload
+    : jsonSetting(execution, "value");
+  const payloadPath = stringSetting(execution, "payloadPath").trim();
+  const value = payloadPath ? automationValueAtPath(incoming, payloadPath) : incoming;
   if (payloadPath && value === undefined) {
     throw new Error(`Workflow input could not find “${payloadPath}” in the incoming information`);
   }
@@ -521,19 +907,20 @@ const AUTOMATION_AI_PLATFORM_INSTRUCTIONS = [
   "Complete only the task in the user message. Do not claim that you ran other steps, changed the canvas or performed actions outside this step.",
 ].join("\n");
 
-function automationCreativity(value: unknown) {
+function automationCreativity(execution: AutomationNodeExecution) {
+  const value = enumSetting(execution, "creativity", ["consistent", "balanced", "exploratory"] as const);
+  if (value === "consistent") return 0.2;
   if (value === "balanced") return 0.65;
-  if (value === "exploratory") return 1;
-  return 0.2;
+  return 1;
 }
 
 async function aiTask(execution: AutomationNodeExecution) {
-  const runWhen = String(execution.config.runWhen || "always");
+  const runWhen = enumSetting(execution, "runWhen", ["always", "primary != null"] as const);
   if (runWhen === "primary != null" && execution.inputs.primary == null) {
     return { result: null, __usage: { chargedCredits: 0, costUsd: 0 }, __skipped: "Primary input is empty" };
   }
-  const scope = { ...execution.inputs, connected: connectedInputContext(execution), run: execution.context.runtimeInputs, trigger: execution.context.triggerPayload, config: execution.config };
-  const taskTemplate = String(execution.config.userPrompt || "").trim();
+  const scope = { ...execution.inputs, connected: connectedInputContext(execution), run: execution.context.runtimeInputs, trigger: execution.context.triggerPayload };
+  const taskTemplate = stringSetting(execution, "userPrompt").trim();
   if (!taskTemplate) throw new Error("Describe what this AI step should do before running the workflow");
   const renderedTask = String(renderAutomationTemplate(taskTemplate, scope) || "");
   const automaticPorts = Object.entries(execution.inputs)
@@ -545,25 +932,27 @@ async function aiTask(execution: AutomationNodeExecution) {
   if (userPrompt.length > 200_000) {
     throw Object.assign(new Error(`This AI task is ${userPrompt.length.toLocaleString()} characters, above its 200,000 character limit. Split the work into smaller explicit batches so no input is silently discarded.`), { code: "AI_CONTEXT_LIMIT" });
   }
-  const permanentInstructions = String(execution.config.systemPrompt || "").trim();
+  const permanentInstructions = stringSetting(execution, "systemPrompt").trim();
   const systemPrompt = permanentInstructions
     ? `${AUTOMATION_AI_PLATFORM_INSTRUCTIONS}\n\nWORKFLOW AUTHOR'S PERMANENT INSTRUCTIONS\n${permanentInstructions}`
     : AUTOMATION_AI_PLATFORM_INSTRUCTIONS;
-  const media = collectMedia(execution.inputs);
-  if (media.length > 24) {
-    throw Object.assign(new Error(`This AI step received ${media.length} images, above its 24-image limit. Split the work into smaller explicit batches so no image is silently discarded.`), { code: "AI_MEDIA_LIMIT" });
+  const mediaConnections = Object.values(execution.inputConnections || {}).flat()
+    .filter((connection) => connection.sourceType && ["tiktok-source", "identity", "visual-references"].includes(connection.sourceType));
+  const mediaAssetIds = collectMediaAssetIds(mediaConnections.map((connection) => connection.value));
+  if (mediaAssetIds.length > 24) {
+    throw Object.assign(new Error(`This AI step received ${mediaAssetIds.length} images, above its 24-image limit. Split the work into smaller explicit batches so no image is silently discarded.`), { code: "AI_MEDIA_LIMIT" });
   }
+  const media = await connectedAutomationMedia(execution);
   const content: string | MultimodalContent[] = media.length
     ? [{ type: "text", text: userPrompt }, ...await Promise.all(media.map(mediaContent))]
     : userPrompt;
-  const primaryModelId = String(execution.config.modelId || "");
-  const fallbackModelId = String(execution.config.fallbackModelId || "").trim();
+  const primaryModelId = stringSetting(execution, "modelId").trim();
+  if (!primaryModelId) throw nodeConfigurationError(execution, "modelId", "a connected AI model");
+  const fallbackModelId = stringSetting(execution, "fallbackModelId", true).trim();
   const modelId = execution.attempt > 1 && fallbackModelId ? fallbackModelId : primaryModelId;
-  const outputMode = execution.config.outputMode === "structured" ? "structured" : "text";
-  const temperature = automationCreativity(execution.config.creativity);
-  const responseSchema = execution.config.responseSchema && typeof execution.config.responseSchema === "object"
-    ? execution.config.responseSchema as Record<string, unknown>
-    : { type: "object", additionalProperties: false, properties: {}, required: [] };
+  const outputMode = enumSetting(execution, "outputMode", ["text", "structured"] as const);
+  const temperature = automationCreativity(execution);
+  const responseSchema = objectSetting(execution, "responseSchema");
   const metered = await runAssistantUsage({
     modelId,
     workspaceId: execution.context.workspaceId,
@@ -604,12 +993,23 @@ async function aiTask(execution: AutomationNodeExecution) {
 async function transform(execution: AutomationNodeExecution) {
   const inputList = Array.isArray(execution.inputs.data) ? execution.inputs.data : [execution.inputs.data];
   const connections = execution.inputConnections?.data || [];
-  const byNode = Object.fromEntries(connections.map((connection) => [connection.sourceNodeId, connection.value]));
+  const groupedByNode = new Map<string, unknown[]>();
+  const byNodePort: Record<string, Record<string, unknown>> = {};
+  for (const connection of connections) {
+    groupedByNode.set(connection.sourceNodeId, [...(groupedByNode.get(connection.sourceNodeId) || []), connection.value]);
+    byNodePort[connection.sourceNodeId] ||= {};
+    if (Object.prototype.hasOwnProperty.call(byNodePort[connection.sourceNodeId], connection.sourcePort)) {
+      throw new Error(`Prepare information received the same output ${connection.sourceNodeName}.${connection.sourcePort} more than once`);
+    }
+    byNodePort[connection.sourceNodeId][connection.sourcePort] = connection.value;
+  }
+  const byNode = Object.fromEntries([...groupedByNode].map(([nodeId, values]) => [nodeId, values.length === 1 ? values[0] : values]));
   const sources = connections.map((connection) => ({ id: connection.sourceNodeId, name: connection.sourceNodeName, output: connection.sourcePort, value: connection.value }));
-  return { result: transformTemplate(execution.config.template ?? {}, {
+  return { result: transformTemplate(jsonSetting(execution, "template"), {
     ...execution.inputs,
     inputs: inputList,
     byNode,
+    byNodePort,
     sources,
     run: execution.context.runtimeInputs,
     trigger: execution.context.triggerPayload,
@@ -617,22 +1017,26 @@ async function transform(execution: AutomationNodeExecution) {
 }
 
 async function selectOne(execution: AutomationNodeExecution) {
-  const values = Array.isArray(execution.inputs.data) ? execution.inputs.data : [execution.inputs.data].filter((value) => value !== undefined);
+  const connections = execution.inputConnections?.data;
+  const values = connections
+    ? connections.map((connection) => connection.value)
+    : Array.isArray(execution.inputs.data) ? execution.inputs.data : [execution.inputs.data].filter((value) => value !== undefined);
   if (values.length !== 1) throw new Error(`Continue one path expected exactly one completed input, but received ${values.length}`);
   return { result: values[0] };
 }
 
 async function selectPath(execution: AutomationNodeExecution) {
-  const path = String(execution.config.path || "").trim();
+  const path = stringSetting(execution, "path").trim();
   if (!path) throw new Error("Select information needs the exact field path to continue");
-  const result = pathValue(execution.inputs.data, path);
+  const result = automationValueAtPath(execution.inputs.data, path);
   if (result === undefined) throw new Error(`Select information could not find “${path}” in the incoming value`);
   return { result };
 }
 
 async function retryGate(execution: AutomationNodeExecution) {
-  const iteration = Math.max(0, Number(execution.retryIteration || 0));
-  const maximum = Math.min(8, Math.max(1, Number(execution.config.maxRetries || 2)));
+  const iteration = execution.retryIteration ?? 0;
+  const maximum = integerSetting(execution, "maxRetries");
+  if (maximum < 1 || maximum > 8) throw nodeConfigurationError(execution, "maxRetries", "a whole number from 1 through 8");
   const feedback = execution.inputs.feedback;
   if (iteration > maximum) {
     return {
@@ -646,8 +1050,8 @@ async function retryGate(execution: AutomationNodeExecution) {
     };
   }
   let current = iteration === 0 ? execution.inputs.initial : feedback;
-  const feedbackPath = String(execution.config.feedbackPath || "").trim();
-  if (iteration > 0 && feedbackPath) current = pathValue(feedback, feedbackPath);
+  const feedbackPath = stringSetting(execution, "feedbackPath").trim();
+  if (iteration > 0 && feedbackPath) current = automationValueAtPath(feedback, feedbackPath);
   if (current === undefined) {
     throw Object.assign(new Error(feedbackPath
       ? `Retry feedback does not contain “${feedbackPath}”`
@@ -661,17 +1065,21 @@ async function condition(execution: AutomationNodeExecution) {
   return match ? { yes: execution.inputs.data } : { no: execution.inputs.data };
 }
 
+async function conditionV2(execution: AutomationNodeExecution) {
+  const match = evaluateAutomationConditionV2(execution.inputs.data, execution.config);
+  return match ? { yes: execution.inputs.data } : { no: execution.inputs.data };
+}
+
+async function conditionV3(execution: AutomationNodeExecution) {
+  const match = evaluateAutomationConditionV3(execution.inputs.data, execution.config);
+  return match ? { yes: execution.inputs.data } : { no: execution.inputs.data };
+}
+
 async function merge(execution: AutomationNodeExecution) {
-  const configuredInputs = Array.isArray(execution.config.inputs)
-    ? execution.config.inputs.flatMap((entry) => {
-      if (!entry || typeof entry !== "object" || Array.isArray(entry)) return [];
-      const id = String((entry as Record<string, unknown>).id || "").trim();
-      const name = String((entry as Record<string, unknown>).name || "").trim();
-      return id && name ? [{ id, name }] : [];
-    })
-    : [];
+  const configuredInputs = automationMergeInputs({ ...execution.node, config: execution.config });
   const branches = configuredInputs.map((input) => execution.inputs[input.id]).filter((value) => value !== undefined);
-  if (execution.config.mode === "named-object") {
+  const mode = enumSetting(execution, "mode", ["named-object", "append-list"] as const);
+  if (mode === "named-object") {
     const result: Record<string, unknown> = {};
     for (const input of configuredInputs) {
       const value = execution.inputs[input.id];
@@ -687,19 +1095,25 @@ async function merge(execution: AutomationNodeExecution) {
 async function limitBatch(execution: AutomationNodeExecution) {
   if (!Array.isArray(execution.inputs.items)) throw new Error("Limit the amount needs a list. Connect a step that returns a list of items.");
   const items = execution.inputs.items;
-  const maximum = Math.min(500, Math.max(1, Number(execution.config.maxItems || 40)));
+  const maximum = integerSetting(execution, "maxItems");
+  if (maximum < 1 || maximum > 500) throw nodeConfigurationError(execution, "maxItems", "a whole number from 1 through 500");
   if (items.length > maximum) throw new Error(`Limit batch received ${items.length} items; its configured maximum is ${maximum}`);
   return { items, summary: { count: items.length, maximum } };
 }
 
 function childRuntimeInputs(execution: AutomationNodeExecution) {
-  return execution.config.childInputs && typeof execution.config.childInputs === "object" && !Array.isArray(execution.config.childInputs)
-    ? structuredClone(execution.config.childInputs as Record<string, unknown>) : {};
+  const value = jsonSetting(execution, "childInputs");
+  if (typeof value !== "object" || Array.isArray(value)) {
+    throw Object.assign(new Error("Extra fixed information must be one JSON object"), { code: "SUBWORKFLOW_INPUTS_INVALID", automationRetryable: false });
+  }
+  return structuredClone(value as Record<string, unknown>);
 }
 
 async function runSubworkflow(execution: AutomationNodeExecution) {
   if (!execution.context.subworkflow) throw Object.assign(new Error("Subworkflow runtime is unavailable"), { code: "SUBWORKFLOW_UNAVAILABLE" });
-  const child = await execution.context.subworkflow.run({ parentNodeId: execution.node.id, parentAttempt: execution.durableAttempt || execution.attempt, slotKey: String(execution.config.subworkflowSlot || ""), payload: execution.inputs.data, runtimeInputs: childRuntimeInputs(execution) });
+  const slotKey = stringSetting(execution, "subworkflowSlot").trim();
+  if (!slotKey) throw nodeConfigurationError(execution, "subworkflowSlot", "a non-empty connection name");
+  const child = await execution.context.subworkflow.run({ parentNodeId: execution.node.id, parentAttempt: execution.durableAttempt ?? execution.attempt, slotKey, payload: execution.inputs.data, runtimeInputs: childRuntimeInputs(execution) });
   return { result: { runId: child.runId, output: child.output, warningCount: child.warningCount }, __warnings: child.warningCount ? [`Child workflow completed with ${child.warningCount} warning${child.warningCount === 1 ? "" : "s"}`] : [] };
 }
 
@@ -707,15 +1121,21 @@ async function mapSubworkflow(execution: AutomationNodeExecution) {
   if (!execution.context.subworkflow) throw Object.assign(new Error("Subworkflow runtime is unavailable"), { code: "SUBWORKFLOW_UNAVAILABLE" });
   if (!Array.isArray(execution.inputs.items)) throw new Error("For each item needs a list. Connect a step that returns the items to repeat over.");
   const items = execution.inputs.items;
-  const maximum = Math.min(500, Math.max(1, Number(execution.config.maxItems || 40)));
+  const maximum = integerSetting(execution, "maxItems");
+  if (maximum < 1 || maximum > 500) throw nodeConfigurationError(execution, "maxItems", "a whole number from 1 through 500");
   if (items.length > maximum) throw Object.assign(new Error(`For each item received ${items.length} items; its configured maximum is ${maximum}`), { code: "MAP_ITEM_LIMIT" });
-  const concurrency = Math.min(execution.context.policy?.maxParallelism || 8, 16, Math.max(1, Number(execution.config.concurrency || 3)));
+  const configuredConcurrency = integerSetting(execution, "concurrency");
+  if (configuredConcurrency < 1 || configuredConcurrency > 16) throw nodeConfigurationError(execution, "concurrency", "a whole number from 1 through 16");
+  const concurrency = Math.min(workflowPolicy(execution).maxParallelism, configuredConcurrency);
+  const slotKey = stringSetting(execution, "subworkflowSlot").trim();
+  if (!slotKey) throw nodeConfigurationError(execution, "subworkflowSlot", "a non-empty connection name");
+  const itemFailure = enumSetting(execution, "itemFailure", ["keep-successful", "stop"] as const);
   const settled = await settleWithConcurrency(items, concurrency, async (item, itemIndex) => execution.context.subworkflow!.run({
-    parentNodeId: execution.node.id, parentAttempt: execution.durableAttempt || execution.attempt, slotKey: String(execution.config.subworkflowSlot || ""), payload: item, runtimeInputs: childRuntimeInputs(execution), itemIndex,
+    parentNodeId: execution.node.id, parentAttempt: execution.durableAttempt ?? execution.attempt, slotKey, payload: item, runtimeInputs: childRuntimeInputs(execution), itemIndex,
   }));
   const results = settled.flatMap((entry, itemIndex) => entry.status === "fulfilled" ? [{ itemIndex, runId: entry.value.runId, output: entry.value.output, warningCount: entry.value.warningCount }] : []);
   const failures = settled.flatMap((entry, itemIndex) => entry.status === "rejected" ? [{ itemIndex, error: entry.reason instanceof Error ? entry.reason.message : String(entry.reason) }] : []);
-  if (!results.length || (failures.length && execution.config.itemFailure === "stop")) throw Object.assign(new Error(failures.map((failure) => `Item ${failure.itemIndex + 1}: ${failure.error}`).join("; ") || "For each item produced no results"), { code: "MAP_FAILED" });
+  if (!results.length || (failures.length && itemFailure === "stop")) throw Object.assign(new Error(failures.map((failure) => `Item ${failure.itemIndex + 1}: ${failure.error}`).join("; ") || "For each item produced no results"), { code: "MAP_FAILED" });
   return { results, failures, __warnings: [
     ...results.filter((result) => result.warningCount > 0).map((result) => `Item ${result.itemIndex + 1} completed with ${result.warningCount} warning${result.warningCount === 1 ? "" : "s"}`),
     ...failures.map((failure) => `Item ${failure.itemIndex + 1}: ${failure.error}`),
@@ -753,31 +1173,67 @@ async function safeExternalUrl(value: string) {
 
 async function httpRequest(execution: AutomationNodeExecution) {
   const scope = { data: execution.inputs.data, run: execution.context.runtimeInputs, trigger: execution.context.triggerPayload };
-  const renderedUrl = String(renderAutomationTemplate(String(execution.config.url || ""), scope) || "");
+  const renderedUrlValue = renderAutomationTemplate(stringSetting(execution, "url"), scope);
+  if (typeof renderedUrlValue !== "string" || !renderedUrlValue.trim()) throw nodeConfigurationError(execution, "url", "a complete public HTTP or HTTPS URL");
+  const renderedUrl = renderedUrlValue.trim();
   const { url, addresses } = await safeExternalUrl(renderedUrl);
-  const method = String(execution.config.method || "GET").toUpperCase();
-  if (!new Set(["GET", "POST", "PUT", "PATCH", "DELETE", "HEAD"]).has(method)) throw Object.assign(new Error("HTTP method is not allowed"), { code: "HTTP_METHOD_INVALID", automationRetryable: false });
-  const headersValue = transformTemplate(execution.config.headers || {}, scope);
-  const headers: Record<string, string> = Object.fromEntries(Object.entries(headersValue && typeof headersValue === "object" && !Array.isArray(headersValue) ? headersValue as Record<string, unknown> : {}).map(([key, value]) => [key, String(value)]));
+  const method = enumSetting(execution, "method", ["GET", "HEAD", "POST", "PUT", "PATCH", "DELETE"] as const);
+  const headersValue = transformTemplate(objectSetting(execution, "headers"), scope);
+  if (!headersValue || typeof headersValue !== "object" || Array.isArray(headersValue)) {
+    throw Object.assign(new Error("Extra request headers must be one JSON object"), { code: "HTTP_HEADERS_INVALID", automationRetryable: false });
+  }
+  const headers: Record<string, string> = {};
+  for (const [rawKey, value] of Object.entries(headersValue as Record<string, unknown>)) {
+    const key = rawKey.trim();
+    if (!key || !/^[!#$%&'*+.^_`|~0-9A-Za-z-]+$/.test(key)) {
+      throw Object.assign(new Error(`HTTP header name ${JSON.stringify(rawKey)} is invalid`), { code: "HTTP_HEADER_INVALID", automationRetryable: false });
+    }
+    if (!(typeof value === "string" || typeof value === "number" || typeof value === "boolean")) {
+      throw Object.assign(new Error(`HTTP header ${key} must be text, a number or true/false`), { code: "HTTP_HEADER_INVALID", automationRetryable: false });
+    }
+    const rendered = String(value);
+    if (/\r|\n/.test(rendered)) throw Object.assign(new Error(`HTTP header ${key} contains a line break`), { code: "HTTP_HEADER_INVALID", automationRetryable: false });
+    headers[key] = rendered;
+  }
   const unsafeRequestHeaders = new Set(["host", "connection", "transfer-encoding", "content-length", "proxy-authorization", "upgrade"]);
   for (const key of Object.keys(headers)) if (unsafeRequestHeaders.has(key.toLowerCase())) throw Object.assign(new Error(`HTTP header ${key} is managed by Scenelith`), { code: "HTTP_HEADER_INVALID", automationRetryable: false });
-  const credentialSlot = String(execution.config.credentialSlot || "").trim();
+  const credentialSlot = stringSetting(execution, "credentialSlot", true).trim();
   const secretValues: string[] = [];
   if (credentialSlot) {
     if (!execution.context.workflowId) throw new Error("Credential binding requires a persisted workflow");
     const credential = await resolveAutomationCredential({ workflowId: execution.context.workflowId, workspaceId: execution.context.workspaceId, slotKey: credentialSlot, credentialId: execution.context.credentialIds?.[credentialSlot] });
     const payload = credential.payload;
     secretValues.push(...Object.values(payload).filter((value) => value.length >= 4));
-    if (credential.kind === "bearer") headers.authorization = `Bearer ${payload.token || payload.value || ""}`;
-    else if (credential.kind === "basic") headers.authorization = `Basic ${Buffer.from(`${payload.username || ""}:${payload.password || ""}`).toString("base64")}`;
-    else headers[payload.headerName || (credential.kind === "api-key" ? "x-api-key" : "authorization")] = payload.value || payload.apiKey || payload.token || "";
+    const credentialHeader = credential.kind === "bearer" || credential.kind === "basic"
+      ? "authorization"
+      : credential.kind === "header" ? payload.headerName : "x-api-key";
+    const conflictingHeader = Object.keys(headers).find((key) => key.toLowerCase() === credentialHeader.toLowerCase());
+    if (conflictingHeader) {
+      throw Object.assign(new Error(`Extra request header ${conflictingHeader} conflicts with the connected credential`), { code: "HTTP_HEADER_INVALID", automationRetryable: false });
+    }
+    if (credential.kind === "bearer") headers.authorization = `Bearer ${payload.token}`;
+    else if (credential.kind === "basic") headers.authorization = `Basic ${Buffer.from(`${payload.username}:${payload.password}`).toString("base64")}`;
+    else if (credential.kind === "header") headers[payload.headerName] = payload.value;
+    else headers["x-api-key"] = payload.apiKey;
   }
   const hasBody = !["GET", "HEAD"].includes(method);
-  const bodyValue = hasBody ? transformTemplate(execution.config.body || {}, scope) : undefined;
-  const body = hasBody ? Buffer.from(JSON.stringify(bodyValue)) : undefined;
+  const bodyValue = hasBody ? transformTemplate(jsonSetting(execution, "body"), scope) : undefined;
+  const serializedBody = hasBody ? JSON.stringify(bodyValue) : undefined;
+  if (hasBody && serializedBody === undefined) throw Object.assign(new Error("HTTP request body resolved to an unsupported value"), { code: "HTTP_BODY_INVALID", automationRetryable: false });
+  const body = serializedBody === undefined ? undefined : Buffer.from(serializedBody);
   if (body && body.length > 1_000_000) throw Object.assign(new Error("HTTP request body exceeded 1 MB"), { code: "HTTP_REQUEST_LIMIT", automationRetryable: false });
   if (body) { headers["content-type"] ||= "application/json"; headers["content-length"] = String(body.length); }
-  const timeoutMs = Math.min(120, Math.max(1, Number(execution.config.timeoutSeconds || 30))) * 1_000;
+  const timeoutSeconds = integerSetting(execution, "timeoutSeconds");
+  if (timeoutSeconds < 1 || timeoutSeconds > 120) throw nodeConfigurationError(execution, "timeoutSeconds", "a whole number from 1 through 120");
+  const attempts = integerSetting(execution, "maxAttempts");
+  const idempotencyKey = Object.entries(headers).find(([key]) => key.toLowerCase() === "idempotency-key")?.[1]?.trim();
+  if (!["GET", "HEAD"].includes(method) && attempts > 1 && !idempotencyKey) {
+    throw Object.assign(new Error(`${method} retries require a non-empty Idempotency-Key header so the external action cannot be duplicated`), {
+      code: "HTTP_RETRY_NOT_IDEMPOTENT",
+      automationRetryable: false,
+    });
+  }
+  const timeoutMs = timeoutSeconds * 1_000;
   const address = addresses[0];
   const transport = url.protocol === "https:" ? https : http;
   const response = await new Promise<{ status: number; headers: Record<string, string | string[]>; body: string }>((resolve, reject) => {
@@ -789,7 +1245,10 @@ async function httpRequest(execution: AutomationNodeExecution) {
       const chunks: Buffer[] = []; let size = 0;
       incoming.on("data", (chunk: Buffer) => { size += chunk.length; if (size > 5_000_000) incoming.destroy(Object.assign(new Error("HTTP response exceeded 5 MB"), { code: "HTTP_RESPONSE_LIMIT" })); else chunks.push(chunk); });
       incoming.on("error", reject);
-      incoming.on("end", () => resolve({ status: incoming.statusCode || 0, headers: Object.fromEntries(Object.entries(incoming.headers).flatMap(([key, value]) => value === undefined ? [] : [[key, value as string | string[]]])), body: Buffer.concat(chunks).toString("utf8") }));
+      incoming.on("end", () => {
+        if (typeof incoming.statusCode !== "number") return reject(Object.assign(new Error("HTTP service returned no status code"), { code: "HTTP_PROTOCOL", automationRetryable: true }));
+        resolve({ status: incoming.statusCode, headers: Object.fromEntries(Object.entries(incoming.headers).flatMap(([key, value]) => value === undefined ? [] : [[key, value as string | string[]]])), body: Buffer.concat(chunks).toString("utf8") });
+      });
     });
     request.on("timeout", () => request.destroy(Object.assign(new Error("HTTP request timed out"), { code: "HTTP_TIMEOUT" })));
     request.on("error", reject);
@@ -803,8 +1262,8 @@ async function httpRequest(execution: AutomationNodeExecution) {
   const contentType = String(response.headers["content-type"] || "");
   let parsedBody: unknown = response.body;
   if (contentType.includes("json")) {
-    try { parsedBody = JSON.parse(response.body || "null"); }
-    catch { parsedBody = response.body; }
+    try { parsedBody = JSON.parse(response.body); }
+    catch { throw Object.assign(new Error("HTTP service declared a JSON response but returned invalid JSON"), { code: "HTTP_RESPONSE_JSON_INVALID", automationRetryable: false }); }
   }
   const sensitiveResponseKey = /^(?:authorization|proxy-authorization|set-cookie|cookie|www-authenticate|authentication-info|access[_-]?token|refresh[_-]?token|api[_-]?key|secret|password)$/i;
   const redact = (value: unknown): unknown => {
@@ -857,13 +1316,14 @@ async function validateSlidePlans(execution: AutomationNodeExecution) {
     if (position > 0 && slides[position - 1].index >= slide.index) throw new Error("Slide plans must stay in ascending source order");
     indexes.add(slide.index);
   }
-  const maximum = Math.min(40, Math.max(1, Number(execution.config.maxSlides || 40)));
+  const maximum = integerSetting(execution, "maxSlides");
+  if (maximum < 1 || maximum > 40) throw nodeConfigurationError(execution, "maxSlides", "a whole number from 1 through 40");
   if (!slides.length) throw new Error("The plan contains no slides");
   if (slides.length > maximum) throw new Error(`The plan contains ${slides.length} slides; this step allows ${maximum}`);
   const source = execution.inputs.source && typeof execution.inputs.source === "object" ? execution.inputs.source as Record<string, unknown> : null;
   const sourceSlides = source && Array.isArray(source.slides) ? source.slides as Array<Record<string, unknown>> : [];
   if (sourceSlides.length) {
-    const expectedIndexes = sourceSlides.map((slide, position) => Number(slide.index || position + 1)).sort((a, b) => a - b);
+    const expectedIndexes = sourceSlides.map((slide) => Number(slide.index)).sort((a, b) => a - b);
     const actualIndexes = slides.map((slide) => slide.index);
     if (!isDeepStrictEqual(actualIndexes, expectedIndexes)) {
       throw new Error(`Slide indexes must match the source exactly (${expectedIndexes.join(", ")})`);
@@ -873,8 +1333,8 @@ async function validateSlidePlans(execution: AutomationNodeExecution) {
   const references = execution.inputs.references && typeof execution.inputs.references === "object" ? execution.inputs.references as Record<string, unknown> : null;
   const identityAssets = identity && Array.isArray(identity.assets) ? identity.assets as Array<Record<string, unknown>> : [];
   const visualAssets = references && Array.isArray(references.assets) ? references.assets as Array<Record<string, unknown>> : [];
-  const identityIds = new Set(identityAssets.map((asset) => String(asset.id || "")).filter(Boolean));
-  const visualIds = new Set(visualAssets.map((asset) => String(asset.id || "")).filter(Boolean));
+  const identityIds = new Set(identityAssets.map((asset) => String(asset.id)));
+  const visualIds = new Set(visualAssets.map((asset) => String(asset.id)));
   const availableReferences = new Set([...identityIds, ...visualIds]);
   for (const slide of slides) {
     const duplicate = slide.referenceAssetIds.find((id, index) => slide.referenceAssetIds.indexOf(id) !== index);
@@ -913,7 +1373,7 @@ async function validateSlidePlans(execution: AutomationNodeExecution) {
     }
     if (requirementIds.has(id)) throw new Error(`Creative direction requirement id ${id} is duplicated`);
     requirementIds.add(id);
-    const unknownIndex = slideIndexes.find((index) => !sourceSlides.some((slide, sourcePosition) => Number(slide.index || sourcePosition + 1) === index));
+    const unknownIndex = slideIndexes.find((index) => !sourceSlides.some((slide) => Number(slide.index) === index));
     if (unknownIndex !== undefined) throw new Error(`Creative direction requirement ${id} refers to unavailable slide ${unknownIndex}`);
     return { id, instruction, placement, slideIndexes };
   });
@@ -1010,6 +1470,11 @@ async function validateSlidePlans(execution: AutomationNodeExecution) {
   return { plans: { schemaVersion: 2, contract, decisions, slides } };
 }
 
+async function validateSlidePlansV2(execution: AutomationNodeExecution) {
+  enumSetting(execution, "profile", ["recreate-tiktok-v1"] as const);
+  return await validateSlidePlans(execution);
+}
+
 async function assertAutomationRunActive(runId: string, expectedWorkerId?: string, deadlineAt?: string) {
   if (deadlineAt && Date.now() >= new Date(deadlineAt).getTime()) throw Object.assign(new Error("Workflow exceeded its configured timeout"), { code: "WORKFLOW_TIMEOUT" });
   const row = await db.prepare("SELECT status, worker_id FROM automation_runs WHERE id = ?").get(runId) as { status: string; worker_id: string | null } | undefined;
@@ -1034,96 +1499,150 @@ async function waitForGeneration(runId: string, generationId: string, expectedWo
   throw new Error("Image generation timed out");
 }
 
-async function imageGeneration(execution: AutomationNodeExecution) {
+async function prepareSlideshowImageRequests(execution: AutomationNodeExecution) {
   const planSet = parseAutomationSlidePlanSet(execution.inputs.plans);
   const plans = planSet.slides;
   if (!plans.length) throw new Error("The workflow produced no slide plans");
-  const assetLimit = Math.min(5_000, execution.context.policy?.maxGeneratedAssets ?? 200);
-  if (plans.length > assetLimit) throw Object.assign(new Error(`This workflow allows at most ${assetLimit} generated assets per run`), { code: "GENERATED_ASSET_LIMIT" });
   const source = execution.inputs.source && typeof execution.inputs.source === "object" ? execution.inputs.source as Record<string, unknown> : {};
   const sourceSlides = Array.isArray(source.slides) ? source.slides as Array<Record<string, unknown>> : [];
   if (sourceSlides.length !== plans.length) throw new Error(`The final plan has ${plans.length} slides but the source has ${sourceSlides.length}`);
-  const sourceByIndex = new Map(sourceSlides.map((slide, position) => [Number(slide.index || position + 1), slide]));
+  const sourceByIndex = new Map(sourceSlides.map((slide) => [Number(slide.index), slide]));
   const identity = execution.inputs.identity && typeof execution.inputs.identity === "object" ? execution.inputs.identity as Record<string, unknown> : null;
   const identityAssets = identity && Array.isArray(identity.assets) ? identity.assets as Array<Record<string, unknown>> : [];
   const identityById = new Map(identityAssets.map((asset) => [String(asset.id), asset]));
   const references = execution.inputs.references && typeof execution.inputs.references === "object" ? execution.inputs.references as Record<string, unknown> : null;
   const visualAssets = references && Array.isArray(references.assets) ? references.assets as Array<Record<string, unknown>> : [];
   const visualById = new Map(visualAssets.map((asset) => [String(asset.id), asset]));
+  const requests = plans.map((plan) => {
+    const sourceSlide = sourceByIndex.get(plan.index);
+    if (!sourceSlide) throw new Error(`Source slide ${plan.index} is missing`);
+    const sourceAssetId = String(sourceSlide.assetId);
+    if (!sourceAssetId) throw new Error(`Source slide ${plan.index} has no asset id`);
+    const unknownReferenceIds = plan.referenceAssetIds.filter((id) => id !== sourceAssetId && !identityById.has(id) && !visualById.has(id));
+    if (unknownReferenceIds.length) throw new Error(`Slide ${plan.index} requested unavailable visual reference ${unknownReferenceIds[0]}`);
+    const referenceAssetIds = [...new Set([sourceAssetId, ...plan.referenceAssetIds.filter((id) => id !== sourceAssetId)])];
+    if (referenceAssetIds.length !== plan.prompt.reference_plan.length) {
+      throw new Error(`Slide ${plan.index} reference plan does not match its exact attached asset list`);
+    }
+    return {
+      key: String(plan.index),
+      prompt: serializeImageGenerationPrompt(plan.prompt),
+      referenceAssetIds,
+      referenceRoles: referenceAssetIds.map(() => "reference-image"),
+      referenceLabels: plan.prompt.reference_plan.map((binding) => binding.token),
+      presentation: {
+        index: plan.index,
+        role: plan.role,
+        overlayText: plan.text.overlayText,
+        sourceAssetId,
+      },
+      metadata: {
+        ...plan,
+        promptContract: plan.prompt,
+      },
+    };
+  });
+  return { requests: { schemaVersion: 1, requests } };
+}
+
+async function imageGenerationV2(execution: AutomationNodeExecution) {
+  const batch = parseAutomationImageGenerationRequestBatch(execution.inputs.requests);
+  const requests = batch.requests;
+  const policy = workflowPolicy(execution);
+  const assetLimit = policy.maxGeneratedAssets;
+  if (requests.length > assetLimit) throw Object.assign(new Error(`This workflow allows at most ${assetLimit} generated assets per run`), { code: "GENERATED_ASSET_LIMIT" });
   const provider = generationProvider();
-  const model = provider.getModel(String(execution.config.modelId || "nano-banana-2"));
+  const modelId = stringSetting(execution, "modelId").trim();
+  if (!modelId) throw new Error("Choose an image model before running this step");
+  const model = provider.getModel(modelId);
+  if (model.id !== modelId) {
+    throw Object.assign(new Error(`${modelId} is a retired image model id; choose ${model.label} explicitly before running this step`), {
+      code: "MODEL_SELECTION_RETIRED",
+      automationRetryable: false,
+    });
+  }
   if (model.mediaType !== "image") throw new Error(`${model.label} is not an image model`);
-  if (model.maxReferences < 1) throw new Error(`${model.label} cannot use the required source composition reference`);
   const allowedResolutions = provider.allowedResolutions(model, false);
-  const requestedResolution = String(execution.config.resolution || "").trim();
-  if (requestedResolution && !allowedResolutions.includes(requestedResolution)) throw new Error(`${requestedResolution} is not available for ${model.label}`);
-  const resolution = requestedResolution || model.defaultResolution || allowedResolutions[0];
-  if (!resolution) throw new Error(`${model.label} has no usable image resolution`);
-  const allowedRatios = provider.allowedRatios(model, resolution, true);
-  const requestedRatio = String(execution.config.ratio || "").trim();
-  if (requestedRatio && !allowedRatios.includes(requestedRatio)) throw new Error(`${requestedRatio} is not available for ${model.label} at ${resolution}`);
-  const aspectRatio = requestedRatio || (model.defaultRatio && allowedRatios.includes(model.defaultRatio) ? model.defaultRatio : allowedRatios[0]);
-  if (!aspectRatio) throw new Error(`${model.label} has no usable aspect ratio`);
-  const concurrency = Math.min(execution.context.policy?.maxParallelism ?? 8, 8, Math.max(1, Number(execution.config.concurrency || 3)));
-  const attempts = Math.min(5, Math.max(1, Number(execution.config.maxAttempts || 3)));
-  const results: Array<Record<string, unknown>> = new Array(plans.length);
+  const requestedResolution = stringSetting(execution, "resolution").trim();
+  if (!requestedResolution) throw new Error("Choose image quality before running this step");
+  if (!allowedResolutions.includes(requestedResolution)) throw new Error(`${requestedResolution} is not available for ${model.label}`);
+  const resolution = requestedResolution;
+  const requestedRatio = stringSetting(execution, "ratio").trim();
+  if (!requestedRatio) throw new Error("Choose image shape before running this step");
+  const aspectRatio = requestedRatio;
+  const configuredConcurrency = integerSetting(execution, "concurrency");
+  if (configuredConcurrency < 1 || configuredConcurrency > 8) throw nodeConfigurationError(execution, "concurrency", "a whole number from 1 through 8");
+  const concurrency = Math.min(policy.maxParallelism, configuredConcurrency);
+  const attempts = integerSetting(execution, "maxAttempts");
+  if (attempts < 1 || attempts > 5) throw nodeConfigurationError(execution, "maxAttempts", "a whole number from 1 through 5");
+  const partialFailure = enumSetting(execution, "partialFailure", ["keep-successful", "stop"] as const);
+  const results: Array<Record<string, unknown>> = new Array(requests.length);
   const configuredAdmissionWait = Number(process.env.AUTOMATION_ADMISSION_WAIT_MS || 10 * 60_000);
   const admissionWaitMs = Number.isFinite(configuredAdmissionWait) ? Math.max(60_000, configuredAdmissionWait) : 10 * 60_000;
 
-  const settled = await settleWithConcurrency(plans, concurrency, async (plan, position) => {
+  const settled = await settleWithConcurrency(requests, concurrency, async (request, position) => {
     const admissionDeadline = Date.now() + admissionWaitMs;
-    const artifactId = `${execution.context.runId}:${execution.node.id}:${plan.index}`;
+    const artifactId = `${execution.context.runId}:${execution.node.id}:${contentHash(request.key).slice(0, 24)}`;
     const existing = await db.prepare("SELECT value_json FROM automation_artifacts WHERE id = ? AND run_id = ?").get(artifactId, execution.context.runId) as { value_json: unknown } | undefined;
     if (existing?.value_json) {
       results[position] = typeof existing.value_json === "string" ? JSON.parse(existing.value_json) as Record<string, unknown> : existing.value_json as Record<string, unknown>;
       return;
     }
-    if (execution.context.replayOfRunId) {
-      const replayed = await db.prepare(`SELECT id, value_json FROM automation_artifacts
-        WHERE run_id = ? AND node_id = ? AND item_key = ? AND kind = 'generated-image' LIMIT 1`)
-        .get(execution.context.replayOfRunId, execution.node.id, String(plan.index)) as { id: string; value_json: unknown } | undefined;
-      if (replayed?.value_json) {
-        const value = typeof replayed.value_json === "string" ? JSON.parse(replayed.value_json) as Record<string, unknown> : replayed.value_json as Record<string, unknown>;
-        await db.prepare(`INSERT INTO automation_artifacts
-          (id, run_id, node_id, item_key, workspace_id, project_id, kind, asset_id, value_json, source_artifact_id, created_at)
-          VALUES (?, ?, ?, ?, ?, ?, 'generated-image', ?, ?, ?, ?) ON CONFLICT(id) DO NOTHING`)
-          .run(artifactId, execution.context.runId, execution.node.id, String(plan.index), execution.context.workspaceId, execution.context.projectId, value.assetId || null, JSON.stringify(value), replayed.id, new Date().toISOString());
-        results[position] = value;
-        return;
+    const promptLengthLimit = provider.promptLengthLimit(model);
+    if (request.prompt.length > promptLengthLimit) {
+      throw new Error(`Image request ${request.key} is longer than ${model.label}'s ${promptLengthLimit.toLocaleString()} character limit`);
+    }
+    const allowedRatios = provider.allowedRatios(model, resolution, request.referenceAssetIds.length > 0);
+    if (!allowedRatios.includes(aspectRatio)) {
+      const requestMode = request.referenceAssetIds.length ? "with its references" : "without references";
+      throw new Error(`${aspectRatio} is not available for ${model.label} at ${resolution} ${requestMode} in image request ${request.key}`);
+    }
+    if (request.referenceAssetIds.length > model.maxReferences) throw new Error(`Image request ${request.key} needs ${request.referenceAssetIds.length} references, but ${model.label} supports ${model.maxReferences}`);
+    const allowedRoles = new Set((model.inputPorts || []).map((port) => port.id));
+    if (allowedRoles.size) {
+      const unsupportedRole = request.referenceRoles.find((role) => !allowedRoles.has(role));
+      if (unsupportedRole) throw new Error(`${model.label} does not accept the configured reference role ${unsupportedRole}`);
+      const missingRequired = (model.inputPorts || []).filter((port) => port.required && !request.referenceRoles.includes(port.id));
+      if (missingRequired.length) throw new Error(`Image request ${request.key} must connect ${missingRequired.map((port) => port.label).join(" and ")}`);
+      for (const port of model.inputPorts || []) {
+        if (port.max && request.referenceRoles.filter((role) => role === port.id).length > port.max) throw new Error(`Image request ${request.key} exceeds ${port.label}'s ${port.max} input limit`);
       }
     }
-    const sourceSlide = sourceByIndex.get(plan.index);
-    if (!sourceSlide) throw new Error(`Source slide ${plan.index} is missing`);
-    const sourceAssetId = String(sourceSlide.assetId || "");
-    const unknownReferenceIds = plan.referenceAssetIds.filter((id) => id !== sourceAssetId && !identityById.has(id) && !visualById.has(id));
-    if (unknownReferenceIds.length) throw new Error(`Slide ${plan.index} requested unavailable visual reference ${unknownReferenceIds[0]}`);
-    const referenceAssetIds = [...new Set([sourceAssetId, ...plan.referenceAssetIds.filter((id) => id !== sourceAssetId)])].filter(Boolean);
-    if (referenceAssetIds.length > model.maxReferences) {
-      throw new Error(`Slide ${plan.index} needs ${referenceAssetIds.length} references, but ${model.label} supports ${model.maxReferences}`);
-    }
-    const rawReferences: GenerationReference[] = referenceAssetIds.map((assetId, referenceIndex) => {
-      const asset = referenceIndex === 0 ? sourceSlide : identityById.get(assetId) || visualById.get(assetId);
-      if (!asset) throw new Error(`Reference ${assetId} is no longer available`);
-      return {
-        assetId,
-        path: String(asset.path || ""),
-        mimeType: String(asset.mimeType || "image/png"),
-        role: "reference-image",
-        label: plan.prompt.reference_plan[referenceIndex]?.token || `@reference_${referenceIndex + 1}`,
-      };
-    });
-    const generationInput = buildAutomationGenerationPrompt(plan, rawReferences);
-    const references = generationInput.references;
-    if (!references[0]?.path) throw new Error(`Source slide ${plan.index} has no stored image`);
-    const requestedCredits = generationCreditCost(model.id, resolution, "5", references.length, { generateAudio: false, hasVideoInput: false, inputVideoDurationSeconds: 0 });
-    const nodeId = `automation-${execution.context.runId}-${plan.index}`;
-    await execution.context.usage?.reserveGeneratedAssets(1, `${execution.node.id}:${plan.index}`);
+    const resolvedReferences = await Promise.all(request.referenceAssetIds.map(async (assetId, referenceIndex) => {
+      if (!await userCanAccessAsset(execution.context.userId, assetId)) throw new Error(`Reference ${assetId} is not available to this workflow`);
+      const asset = await db.prepare("SELECT storage_path, mime_type FROM assets WHERE id = ? AND workspace_id = ?").get(assetId, execution.context.workspaceId) as { storage_path: string; mime_type: string } | undefined;
+      if (!asset?.mime_type.startsWith("image/")) throw new Error(`Reference ${assetId} is not an image`);
+      return { path: asset.storage_path, mimeType: asset.mime_type, role: request.referenceRoles[referenceIndex], label: request.referenceLabels[referenceIndex] };
+    }));
+    const generationInput = { prompt: request.prompt, references: resolvedReferences };
+    const requestedCredits = generationCreditCost(model.id, resolution, "5", resolvedReferences.length, { generateAudio: false, hasVideoInput: false, inputVideoDurationSeconds: 0 });
+    const nodeId = `automation-${execution.context.runId}-${contentHash(request.key).slice(0, 16)}`;
+    await execution.context.usage?.reserveGeneratedAssets(1, `${execution.node.id}:${request.key}`);
     let latestError: Error | null = null;
     const persistGenerated = async (generated: Awaited<ReturnType<typeof generationClientState>>, generationId: string) => {
-      const value = { ...generated, ...plan, promptContract: plan.prompt, prompt: generationInput.prompt, overlayText: plan.text.overlayText, sourceAssetId, nodeId, generationId, modelId: model.id, aspectRatio, resolution };
+      if (typeof generated.outputUrl !== "string" || !generated.outputUrl) throw new Error(`Image request ${request.key} completed without a stored image URL`);
+      if (typeof generated.assetId !== "string" || !generated.assetId) throw new Error(`Image request ${request.key} completed without a stored image asset`);
+      if (typeof generated.creditCost !== "number" || !Number.isFinite(generated.creditCost) || generated.creditCost < 0) throw new Error(`Image request ${request.key} returned an invalid usage cost`);
+      const value = {
+        requestKey: request.key,
+        prompt: generationInput.prompt,
+        referenceAssetIds: request.referenceAssetIds,
+        referenceRoles: request.referenceRoles,
+        referenceLabels: request.referenceLabels,
+        presentation: structuredClone(request.presentation),
+        metadata: structuredClone(request.metadata),
+        nodeId,
+        generationId,
+        modelId: model.id,
+        aspectRatio,
+        resolution,
+        outputUrl: generated.outputUrl,
+        assetId: generated.assetId,
+        creditCost: generated.creditCost,
+      };
       await db.prepare(`INSERT INTO automation_artifacts (id, run_id, node_id, item_key, workspace_id, project_id, kind, asset_id, value_json, created_at)
         VALUES (?, ?, ?, ?, ?, ?, 'generated-image', ?, ?, ?) ON CONFLICT(id) DO NOTHING`)
-        .run(artifactId, execution.context.runId, execution.node.id, String(plan.index), execution.context.workspaceId, execution.context.projectId, generated.assetId || null, JSON.stringify(value), new Date().toISOString());
+        .run(artifactId, execution.context.runId, execution.node.id, request.key, execution.context.workspaceId, execution.context.projectId, generated.assetId, JSON.stringify(value), new Date().toISOString());
       results[position] = value;
     };
     const reusable = await db.prepare(`SELECT id, status FROM generations
@@ -1152,7 +1671,7 @@ async function imageGeneration(execution: AutomationNodeExecution) {
         nodeId,
         prompt: generationInput.prompt,
         model,
-        references,
+        references: resolvedReferences,
         operation: "generation",
         aspectRatio,
         resolution,
@@ -1184,27 +1703,80 @@ async function imageGeneration(execution: AutomationNodeExecution) {
         }
       }
     }
-    throw latestError || new Error(`Slide ${plan.index} could not be generated`);
+    throw latestError || new Error(`Image request ${request.key} could not be generated`);
   });
 
-  const failures = settled.flatMap((entry, index) => entry.status === "rejected" ? [{ index: plans[index].index, error: entry.reason instanceof Error ? entry.reason.message : String(entry.reason) }] : []);
+  const failures = settled.flatMap((entry, index) => entry.status === "rejected" ? [{ key: requests[index].key, error: entry.reason instanceof Error ? entry.reason.message : String(entry.reason) }] : []);
   const successful = results.filter(Boolean);
-  if (!successful.length || (failures.length && String(execution.config.partialFailure || "keep-successful") === "stop")) {
-    throw new Error(failures.map((item) => `Slide ${item.index}: ${item.error}`).join("; ") || "No images were generated");
+  if (!successful.length || (failures.length && partialFailure === "stop")) {
+    throw new Error(failures.map((item) => `${item.key}: ${item.error}`).join("; ") || "No images were generated");
   }
   return {
-    assets: { items: successful, failures, model: { id: model.id, label: model.label, defaultRatio: aspectRatio, defaultResolution: resolution } },
-    __usage: { chargedCredits: successful.reduce((total, item) => total + Number(item.creditCost || 0), 0) },
+    assets: { items: successful, failures, model: { id: model.id, label: model.label }, effectiveSettings: { aspectRatio, resolution, concurrency, attempts } },
+    __usage: { chargedCredits: successful.reduce((total, item) => total + Number(item.creditCost), 0) },
   };
 }
 
-async function addToCanvas(execution: AutomationNodeExecution) {
-  const assets = execution.inputs.assets && typeof execution.inputs.assets === "object" ? execution.inputs.assets as Record<string, unknown> : {};
-  const items = Array.isArray(assets.items) ? assets.items as Array<Record<string, unknown>> : [];
-  const failures = Array.isArray(assets.failures) ? assets.failures as Array<Record<string, unknown>> : [];
-  if (!items.length) throw new Error("There are no generated images to add to the canvas");
-  const source = execution.inputs.source && typeof execution.inputs.source === "object" ? execution.inputs.source as Record<string, unknown> : {};
-  const sourceNodeId = String(source.sourceNodeId || "");
+async function imageGenerationV1(execution: AutomationNodeExecution) {
+  const prepared = await prepareSlideshowImageRequests(execution);
+  const provider = generationProvider();
+  const modelId = String(execution.config.modelId || "nano-banana-2");
+  const model = provider.getModel(modelId);
+  const allowedResolutions = provider.allowedResolutions(model, false);
+  const requestedResolution = String(execution.config.resolution || "").trim();
+  const resolution = requestedResolution || model.defaultResolution || allowedResolutions[0] || "";
+  const allowedRatios = provider.allowedRatios(model, resolution, true);
+  const requestedRatio = String(execution.config.ratio || "").trim();
+  const ratio = requestedRatio || (model.defaultRatio && allowedRatios.includes(model.defaultRatio) ? model.defaultRatio : allowedRatios[0]) || "";
+  return await imageGenerationV2({
+    ...execution,
+    inputs: { requests: prepared.requests },
+    config: { ...execution.config, modelId, resolution, ratio },
+  });
+}
+
+type AutomationCanvasPlanItem = {
+  prompt: string;
+  referenceAssetIds: string[];
+  presentation: { index?: number | null; role: string; overlayText: string };
+};
+
+export function buildAutomationCanvasPlanNotes(items: AutomationCanvasPlanItem[]) {
+  const planText = items.map((item, position) => {
+    const index = item.presentation.index ?? position + 1;
+    const overlay = item.presentation.overlayText.trim();
+    return [
+      `SLIDE ${String(index).padStart(2, "0")} · ${item.presentation.role.toUpperCase()}`,
+      item.prompt,
+      overlay ? `On-screen text: ${overlay}` : "On-screen text: none",
+      `Attached references: ${item.referenceAssetIds.length}`,
+    ].join("\n");
+  }).join("\n\n");
+  const chunks: string[] = [];
+  for (let offset = 0; offset < planText.length;) {
+    let end = Math.min(planText.length, offset + 29_000);
+    if (end < planText.length && /[\uD800-\uDBFF]/.test(planText[end - 1] || "")) end -= 1;
+    chunks.push(planText.slice(offset, end));
+    offset = end;
+  }
+  if (!chunks.length) chunks.push("");
+  return chunks.map((chunk, index) => {
+    const part = chunks.length > 1 ? ` Part ${index + 1} of ${chunks.length}.` : "";
+    return `This note records what the workflow asked the image model to create.${part}\n\n${chunk}`;
+  });
+}
+
+async function addToCanvas(execution: AutomationNodeExecution, planNoteMode: "truncate" | "preserve" = "truncate") {
+  const assets = parseAutomationGeneratedAssets(execution.inputs.assets);
+  const items = assets.items;
+  const failures = assets.failures;
+  const layout = enumSetting(execution, "layout", ["beside-source", "new-row"] as const);
+  const includePlanNote = booleanSetting(execution, "includePlanNote");
+  const source = execution.inputs.source;
+  if (source !== undefined && (!source || typeof source !== "object" || Array.isArray(source) || typeof (source as Record<string, unknown>).sourceNodeId !== "string")) {
+    throw Object.assign(new Error("Original source does not match the TikTok source contract"), { code: "NODE_INPUT_CONTRACT", automationRetryable: false });
+  }
+  const sourceNodeId = source ? (source as { sourceNodeId: string }).sourceNodeId : "";
   const resultArtifactId = `${execution.context.runId}:${execution.node.id}:canvas`;
   const prior = await db.prepare("SELECT value_json FROM automation_artifacts WHERE id = ? AND run_id = ?").get(resultArtifactId, execution.context.runId) as { value_json: unknown } | undefined;
   if (prior?.value_json) return { result: typeof prior.value_json === "string" ? JSON.parse(prior.value_json) : prior.value_json };
@@ -1214,36 +1786,39 @@ async function addToCanvas(execution: AutomationNodeExecution) {
   }
 
   const noteId = `automation-note-${execution.context.runId}`;
-  const nodeIds = items.map((item) => String(item.nodeId || `automation-${execution.context.runId}-${Number(item.index || 0)}`));
+  const fullPlanNotes = includePlanNote && planNoteMode === "preserve" ? buildAutomationCanvasPlanNotes(items) : [];
+  const noteIds = includePlanNote
+    ? (planNoteMode === "preserve" ? fullPlanNotes.map((_, index) => index === 0 ? noteId : `${noteId}-${index + 1}`) : [noteId])
+    : [];
+  const nodeIds = items.map((item) => item.nodeId);
   const mutate = process.env.COLLABORATION_INTERNAL_SECRET
     ? (mutator: (graph: ProjectGraph) => ProjectGraph) => mutateCollaborativeGraph(execution.context.projectId, mutator)
     : (mutator: (graph: ProjectGraph) => ProjectGraph) => mutateProjectGraphSnapshot(execution.context.projectId, mutator);
   await assertAutomationRunActive(execution.context.runId, execution.context.workerId, execution.context.deadlineAt);
   await mutate((graph) => {
     const existingIds = new Set((graph.nodes || []).map((node) => node.id));
-    if (nodeIds.every((id) => existingIds.has(id))) return graph;
+    if ([...nodeIds, ...noteIds].every((id) => existingIds.has(id))) return graph;
     const nodes = [...(graph.nodes || [])];
     const edges = [...(graph.edges || [])];
     const minX = nodes.length ? Math.min(...nodes.map((node) => node.position.x)) : 0;
     const bottom = nodes.length ? Math.max(...nodes.map((node) => node.position.y + Number(node.measured?.height || node.height || node.data.nodeHeight || 520))) : 0;
     const sourceNode = nodes.find((node) => node.id === sourceNodeId);
-    const layout = String(execution.config.layout || "beside-source");
     const blockLeft = layout === "new-row"
       ? minX
       : sourceNode
         ? sourceNode.position.x + Number(sourceNode.measured?.width || sourceNode.width || sourceNode.data.nodeWidth || 580) + 180
         : minX;
     const blockTop = layout === "new-row" ? bottom + 180 : sourceNode?.position.y || bottom + 180;
-    if (execution.config.includePlanNote !== false && !existingIds.has(noteId)) {
+    if (includePlanNote && planNoteMode === "truncate" && !existingIds.has(noteId)) {
       const planText = items.map((item, position) => {
-        const index = Number(item.index || position + 1);
-        const overlay = String(item.overlayText || "").trim();
-        const references = Array.isArray(item.referenceAssetIds) ? item.referenceAssetIds.length : 0;
+        const index = item.presentation.index ?? position + 1;
+        const overlay = item.presentation.overlayText.trim();
+        const references = item.referenceAssetIds.length;
         return [
-          `SLIDE ${String(index).padStart(2, "0")} · ${String(item.role || "scene").toUpperCase()}`,
-          String(item.prompt || "No generation instructions were saved."),
+          `SLIDE ${String(index).padStart(2, "0")} · ${item.presentation.role.toUpperCase()}`,
+          item.prompt,
           overlay ? `On-screen text: ${overlay}` : "On-screen text: none",
-          `Identity references: ${references}`,
+          `Attached references: ${references}`,
         ].join("\n");
       }).join("\n\n").slice(0, 29_500);
       const note: FrameNode = {
@@ -1266,41 +1841,66 @@ async function addToCanvas(execution: AutomationNodeExecution) {
       nodes.push(note);
       existingIds.add(noteId);
     }
+    if (includePlanNote && planNoteMode === "preserve") {
+      for (const [noteIndex, noteText] of fullPlanNotes.entries()) {
+        const currentNoteId = noteIds[noteIndex];
+        if (existingIds.has(currentNoteId)) continue;
+        const note: FrameNode = {
+          id: currentNoteId,
+          type: "frameNode",
+          position: { x: blockLeft, y: blockTop + noteIndex * 1_040 },
+          data: {
+            kind: "note",
+            title: fullPlanNotes.length > 1 ? `Slideshow generation plan · ${noteIndex + 1}/${fullPlanNotes.length}` : "Slideshow generation plan",
+            subtitle: `${items.length} generated slide${items.length === 1 ? "" : "s"}`,
+            noteColor: "gray",
+            noteText,
+            nodeWidth: 420,
+            nodeHeight: Math.min(980, Math.max(420, 250 + items.length * 150)),
+            automationKind: "tiktok-slideshow",
+            automationSourceNodeId: sourceNodeId,
+            automationRunId: execution.context.runId,
+          },
+        };
+        nodes.push(note);
+        existingIds.add(currentNoteId);
+      }
+    }
     for (const [position, item] of items.entries()) {
-      const index = Number(item.index || position + 1);
+      const index = item.presentation.index ?? position + 1;
       const nodeId = nodeIds[position];
       if (existingIds.has(nodeId)) continue;
-      const sourceAssetId = String(item.sourceAssetId || "");
+      const sourceAssetId = item.presentation.sourceAssetId;
       const sourceScene = nodes.find((node) => String(node.data.assetId || "") === sourceAssetId);
       const column = position % 2;
       const row = Math.floor(position / 2);
-      const outputUrl = String(item.outputUrl || (item.assetId ? `/api/assets/${String(item.assetId)}` : ""));
+      const outputUrl = item.outputUrl;
       const output: FrameNode = {
         id: nodeId,
         type: "frameNode",
-        position: { x: blockLeft + (execution.config.includePlanNote === false ? 0 : 490) + column * 520, y: blockTop + row * 890 },
+        position: { x: blockLeft + (includePlanNote ? 490 : 0) + column * 520, y: blockTop + row * 890 },
         data: {
           kind: "prompt",
-          title: `Slide ${String(index).padStart(2, "0")} · ${String(item.role || "scene")}`,
+          title: `Slide ${String(index).padStart(2, "0")} · ${item.presentation.role}`,
           subtitle: "Generated by automation",
-          prompt: String(item.prompt || ""),
+          prompt: item.prompt,
           status: "ready",
-          modelId: String(item.modelId || ""),
+          modelId: item.modelId,
           mediaType: "image",
           aspectRatio: item.aspectRatio as FrameNode["data"]["aspectRatio"],
           resolution: item.resolution as FrameNode["data"]["resolution"],
           generationCount: 1,
           nodeWidth: 430,
           outputUrl,
-          assetId: item.assetId ? String(item.assetId) : undefined,
+          assetId: item.assetId,
           generatedAt: new Date().toISOString(),
-          generatedOutputs: outputUrl ? [{ url: outputUrl, assetId: item.assetId ? String(item.assetId) : undefined, mediaType: "image", modelId: String(item.modelId || "") }] : [],
+          generatedOutputs: [{ url: outputUrl, assetId: item.assetId, mediaType: "image", modelId: item.modelId }],
           activeGeneratedOutputIndex: 0,
           automationKind: "tiktok-slideshow",
           automationSourceNodeId: sourceNodeId,
           automationSlideIndex: index,
-          automationRole: String(item.role || "scene"),
-          automationOverlayText: String(item.overlayText || ""),
+          automationRole: item.presentation.role,
+          automationOverlayText: item.presentation.overlayText,
           automationRunId: execution.context.runId,
         },
       };
@@ -1331,16 +1931,28 @@ async function addToCanvas(execution: AutomationNodeExecution) {
     }
     return { ...graph, nodes, edges };
   });
-  const result = { nodeIds, noteId: execution.config.includePlanNote === false ? null : noteId, sourceNodeId, added: nodeIds.length, failures };
+  const result = { nodeIds, noteId: includePlanNote ? noteId : null, sourceNodeId, added: nodeIds.length, failures };
   await db.prepare(`INSERT INTO automation_artifacts (id, run_id, node_id, item_key, workspace_id, project_id, kind, value_json, created_at)
     VALUES (?, ?, ?, 'canvas', ?, ?, 'canvas-result', ?, ?) ON CONFLICT(id) DO NOTHING`)
     .run(resultArtifactId, execution.context.runId, execution.node.id, execution.context.workspaceId, execution.context.projectId, JSON.stringify(result), new Date().toISOString());
   return { result };
 }
 
+async function addToCanvasV2(execution: AutomationNodeExecution) {
+  parseCurrentAutomationGeneratedAssets(execution.inputs.assets);
+  return await addToCanvas(execution);
+}
+
+async function addToCanvasV3(execution: AutomationNodeExecution) {
+  parseCurrentAutomationGeneratedAssets(execution.inputs.assets);
+  return await addToCanvas(execution, "preserve");
+}
+
 async function finishWorkflow(execution: AutomationNodeExecution) {
-  const message = String(renderAutomationTemplate(String(execution.config.message || "Workflow finished"), { data: execution.inputs.data, run: execution.context.runtimeInputs, trigger: execution.context.triggerPayload }) || "Workflow finished");
-  if (execution.config.outcome === "failed") throw Object.assign(new Error(message), { code: "WORKFLOW_STOPPED" });
+  const renderedMessage = renderAutomationTemplate(stringSetting(execution, "message"), { data: execution.inputs.data, run: execution.context.runtimeInputs, trigger: execution.context.triggerPayload });
+  const message = printAutomationValue(renderedMessage);
+  const outcome = enumSetting(execution, "outcome", ["completed", "failed"] as const);
+  if (outcome === "failed") throw Object.assign(new Error(message), { code: "WORKFLOW_STOPPED" });
   return { result: { outcome: "completed", message, data: execution.inputs.data } };
 }
 
@@ -1348,27 +1960,42 @@ export function coreAutomationNodeHandlers(): AutomationNodeHandlers {
   return {
     "core.manual-trigger@1": manualTrigger,
     "input.tiktok-source@1": tiktokSource,
-    "input.identity@1": identity,
+    "input.tiktok-source@2": tiktokSourceV2,
+    "input.identity@1": identityV1,
+    "input.identity@2": identityV2,
     "input.visual-references@1": visualReferences,
     "input.creative-settings@1": creativeSettings,
     "input.workflow-data@1": workflowData,
     "ai.structured-task@2": aiTask,
-    "ai.interpret-creative-direction@1": interpretCreativeDirection,
+    "ai.interpret-creative-direction@1": interpretCreativeDirectionV1,
+    "ai.interpret-creative-direction@2": interpretCreativeDirectionV2,
+    "ai.interpret-creative-direction@3": interpretCreativeDirectionV3,
     "logic.transform@1": transform,
     "logic.select-one@1": selectOne,
     "logic.retry-gate@1": retryGate,
     "logic.select-path@1": selectPath,
     "logic.condition@1": condition,
-    "logic.prepare-creative-direction@1": prepareCreativeDirection,
-    "logic.resolve-creative-direction@2": resolveCreativeDirection,
+    "logic.condition@2": conditionV2,
+    "logic.condition@3": conditionV3,
+    "logic.prepare-creative-direction@1": prepareCreativeDirectionV1,
+    "logic.prepare-creative-direction@2": prepareCreativeDirectionV2,
+    "logic.prepare-creative-direction@3": prepareCreativeDirectionV3,
+    "logic.resolve-creative-direction@2": resolveCreativeDirectionV2,
+    "logic.resolve-creative-direction@3": resolveCreativeDirectionV3,
+    "logic.resolve-creative-direction@4": resolveCreativeDirectionV4,
     "logic.merge@1": merge,
     "logic.limit-batch@1": limitBatch,
     "logic.run-subworkflow@1": runSubworkflow,
     "logic.map-subworkflow@1": mapSubworkflow,
     "integration.http-request@1": httpRequest,
     "logic.validate-slide-plans@1": validateSlidePlans,
-    "generation.image@1": imageGeneration,
+    "logic.validate-slide-plans@2": validateSlidePlansV2,
+    "logic.prepare-slideshow-image-requests@1": prepareSlideshowImageRequests,
+    "generation.image@1": imageGenerationV1,
+    "generation.image@2": imageGenerationV2,
     "output.add-to-canvas@1": addToCanvas,
+    "output.add-to-canvas@2": addToCanvasV2,
+    "output.add-to-canvas@3": addToCanvasV3,
     "output.finish@1": finishWorkflow,
   };
 }

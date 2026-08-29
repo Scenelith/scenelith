@@ -11,6 +11,11 @@ import {
 
 test("automation packages are integrity checked and remove instance-bound resources", () => {
   const graph = createDefaultTikTokWorkflowGraph();
+  graph.nodes.push({
+    id: "visual-references", type: "input.visual-references", version: 1, name: "Visual references", description: "Custom visual context", position: { x: 0, y: 0 }, groupId: null,
+    config: { references: [], maxItems: 8, optional: true }, bindings: { references: { mode: "ask-on-run", label: "Reference images", required: false } }, disabled: false,
+  });
+  graph.edges.push({ id: "edge-custom-references", source: "manual-run", sourcePort: "run", target: "visual-references", targetPort: "run", role: "flow" });
   const source = graph.nodes.find((node) => node.id === "tiktok-source")!;
   const identity = graph.nodes.find((node) => node.id === "identity")!;
   const references = graph.nodes.find((node) => node.id === "visual-references")!;

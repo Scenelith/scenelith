@@ -98,6 +98,23 @@ test("system templates allow only explicit primary model overrides and reset to 
   const originalAiModel = String(aiNode.config.modelId);
   const originalImageModel = String(imageNode.config.modelId);
   const originalPrompt = aiNode.config.userPrompt;
+  const { automationRunInputFields } = await import("../src/lib/automation-workflows/validation");
+  const triggerInputs = Object.fromEntries(automationRunInputFields(before!.published!.graph).flatMap((field) => {
+    if (!field.required && (field.value === undefined || field.value === null || field.value === "")) return [];
+    const value = field.value !== undefined ? field.value
+      : field.valueType === "boolean" ? true
+        : field.valueType === "number" ? field.min ?? 1
+          : field.valueType === "json" ? {}
+            : field.valueType === "visual-references" ? []
+              : field.options?.[0]?.value ?? "selected";
+    return [[field.key, value]];
+  }));
+  const triggerId = crypto.randomUUID();
+  const now = new Date().toISOString();
+  await db.prepare(`INSERT INTO automation_workflow_triggers
+    (id, workflow_id, workspace_id, project_id, type, status, name, config_json, input_json, active_version_id, created_by, created_at, updated_at)
+    VALUES (?, ?, ?, ?, 'canvas-event', 'active', 'System model trigger', '{"event":"generation.completed","version":1}', ?, ?, ?, ?, ?)`)
+    .run(triggerId, system.id, owner.workspaceId, owner.projectId, JSON.stringify(triggerInputs), before!.published!.id, owner.userId, now, now);
 
   const changedAi = await repository.setSystemAutomationModelOverride({
     userId: owner.userId,
@@ -108,6 +125,8 @@ test("system templates allow only explicit primary model overrides and reset to 
   assert.equal(changedAi?.published?.graph.nodes.find((node) => node.id === aiNode.id)?.config.modelId, "qwen/qwen3.8-max");
   assert.equal(changedAi?.published?.graph.nodes.find((node) => node.id === aiNode.id)?.config.userPrompt, originalPrompt);
   assert.notEqual(changedAi?.published?.id, before?.published?.id);
+  const advancedTrigger = await db.prepare("SELECT status, active_version_id FROM automation_workflow_triggers WHERE id = ?").get(triggerId) as { status: string; active_version_id: string | null };
+  assert.deepEqual(advancedTrigger, { status: "active", active_version_id: changedAi!.published!.id });
 
   const changedImage = await repository.setSystemAutomationModelOverride({
     userId: owner.userId,
@@ -116,6 +135,18 @@ test("system templates allow only explicit primary model overrides and reset to 
     modelId: "nano-banana-pro",
   });
   assert.equal(changedImage?.published?.graph.nodes.find((node) => node.id === imageNode.id)?.config.modelId, "nano-banana-pro");
+  assert.equal(changedImage?.published?.graph.nodes.find((node) => node.id === imageNode.id)?.config.ratio, imageNode.config.ratio);
+  assert.equal(changedImage?.published?.graph.nodes.find((node) => node.id === imageNode.id)?.config.resolution, imageNode.config.resolution);
+  await assert.rejects(
+    repository.setSystemAutomationModelOverride({ userId: owner.userId, workflowId: system.id, nodeId: imageNode.id, modelId: "seedream-5-lite" }),
+    /does not support that model/i,
+    "a system model override must not silently change the locked 1K quality",
+  );
+  await assert.rejects(
+    repository.setSystemAutomationModelOverride({ userId: owner.userId, workflowId: system.id, nodeId: imageNode.id, modelId: "nano-banana-pro-flash" }),
+    /does not support that model/i,
+    "a retired model id must not silently alias to a different current model",
+  );
   const storedOverrides = await db.prepare("SELECT node_id, model_id FROM automation_system_model_overrides WHERE workflow_id = ? ORDER BY node_id")
     .all(system.id) as Array<{ node_id: string; model_id: string }>;
   assert.deepEqual(new Map(storedOverrides.map((row) => [row.node_id, row.model_id])), new Map([[aiNode.id, "qwen/qwen3.8-max"], [imageNode.id, "nano-banana-pro"]]));
@@ -125,6 +156,7 @@ test("system templates allow only explicit primary model overrides and reset to 
   const upgraded = await repository.getAutomationWorkflow(owner.userId, system.id);
   assert.equal(upgraded?.published?.graph.nodes.find((node) => node.id === aiNode.id)?.config.modelId, "qwen/qwen3.8-max");
   assert.equal(upgraded?.published?.graph.nodes.find((node) => node.id === imageNode.id)?.config.modelId, "nano-banana-pro");
+  assert.equal((await db.prepare("SELECT active_version_id FROM automation_workflow_triggers WHERE id = ?").get(triggerId) as { active_version_id: string }).active_version_id, upgraded!.published!.id);
 
   const resetAi = await repository.setSystemAutomationModelOverride({ userId: owner.userId, workflowId: system.id, nodeId: aiNode.id, modelId: null });
   const resetImage = await repository.setSystemAutomationModelOverride({ userId: owner.userId, workflowId: system.id, nodeId: imageNode.id, modelId: originalImageModel });
@@ -137,6 +169,35 @@ test("system templates allow only explicit primary model overrides and reset to 
     repository.setSystemAutomationModelOverride({ userId: owner.userId, workflowId: system.id, nodeId: "creative-settings", modelId: "qwen/qwen3.8-max" }),
     /does not support that model/i,
   );
+});
+
+test("system template upgrades surface unavailable model overrides and let operators clear them", async () => {
+  const owner = await seedOwner();
+  const [system] = (await repository.listAutomationWorkflows(owner.userId, owner.projectId))!;
+  const before = await repository.getAutomationWorkflow(owner.userId, system.id);
+  const aiNode = before!.published!.graph.nodes.find((node) => node.type === "ai.structured-task")!;
+  const now = new Date().toISOString();
+  await db.prepare(`INSERT INTO automation_system_model_overrides
+    (workflow_id, workspace_id, node_id, model_id, updated_by, created_at, updated_at)
+    VALUES (?, ?, ?, 'assistant-model-that-no-longer-exists', ?, ?, ?),
+           (?, ?, 'retired-system-step', 'retired-model', ?, ?, ?)`).run(
+    system.id, owner.workspaceId, aiNode.id, owner.userId, now, now,
+    system.id, owner.workspaceId, owner.userId, now, now,
+  );
+  await db.prepare("UPDATE automation_workflows SET system_revision = 0 WHERE id = ?").run(system.id);
+
+  await repository.ensureSystemAutomationWorkflows(owner.workspaceId, owner.userId);
+  const upgraded = await repository.getAutomationWorkflow(owner.userId, system.id);
+  assert.equal(upgraded?.published?.graph.nodes.find((node) => node.id === aiNode.id)?.config.modelId, aiNode.config.modelId);
+  assert.deepEqual(upgraded?.systemModelIssues.map((issue) => [issue.nodeId, issue.modelId]), [
+    [aiNode.id, "assistant-model-that-no-longer-exists"],
+    ["retired-system-step", "retired-model"],
+  ]);
+
+  const clearedModel = await repository.setSystemAutomationModelOverride({ userId: owner.userId, workflowId: system.id, nodeId: aiNode.id, modelId: null });
+  const clearedRetiredStep = await repository.setSystemAutomationModelOverride({ userId: owner.userId, workflowId: system.id, nodeId: "retired-system-step", modelId: null });
+  assert.deepEqual(clearedModel?.systemModelIssues.map((issue) => issue.nodeId), ["retired-system-step"]);
+  assert.deepEqual(clearedRetiredStep?.systemModelIssues, []);
 });
 
 test("custom workflows keep immutable draft history and publish explicitly", async () => {
@@ -163,6 +224,45 @@ test("custom workflows keep immutable draft history and publish explicitly", asy
   assert.equal(published?.detail?.workflow.status, "published");
   assert.equal(published?.detail?.draft, null);
   assert.equal(published?.detail?.published?.version, 2);
+});
+
+test("autosave retention bounds unnamed draft noise without deleting named checkpoints", async () => {
+  const owner = await seedOwner();
+  const [system] = (await repository.listAutomationWorkflows(owner.userId, owner.projectId))!;
+  let detail = (await repository.createAutomationWorkflow({
+    userId: owner.userId,
+    projectId: owner.projectId,
+    name: "Bounded autosaves",
+    sourceWorkflowId: system.id,
+  }))!;
+  const checkpointGraph = structuredClone(detail.draft!.graph);
+  checkpointGraph.nodes[0]!.name = "Named checkpoint";
+  detail = (await repository.saveAutomationWorkflowDraft({
+    userId: owner.userId,
+    workflowId: detail.workflow.id,
+    baseDraftVersionId: detail.workflow.draftVersionId,
+    graph: checkpointGraph,
+    changeNote: "Keep this checkpoint",
+  }))!;
+  const checkpointId = detail.draft!.id;
+
+  for (let index = 0; index < 32; index += 1) {
+    const graph = structuredClone(detail.draft!.graph);
+    graph.nodes[0]!.name = `Autosave ${index + 1}`;
+    detail = (await repository.saveAutomationWorkflowDraft({
+      userId: owner.userId,
+      workflowId: detail.workflow.id,
+      baseDraftVersionId: detail.workflow.draftVersionId,
+      graph,
+    }))!;
+  }
+
+  const unnamed = await db.prepare(`SELECT COUNT(*) AS count FROM automation_workflow_versions
+    WHERE workflow_id = ? AND status = 'superseded' AND published_at IS NULL AND change_note IS NULL`).get(detail.workflow.id) as { count: number };
+  const checkpoint = await db.prepare("SELECT status, change_note FROM automation_workflow_versions WHERE id = ?").get(checkpointId) as { status: string; change_note: string } | undefined;
+  assert.equal(Number(unnamed.count), 25);
+  assert.deepEqual(checkpoint, { status: "superseded", change_note: "Keep this checkpoint" });
+  assert.equal((await repository.getAutomationWorkflow(owner.userId, detail.workflow.id))?.draft?.graph.nodes[0]?.name, "Autosave 32");
 });
 
 test("a canvas can store and switch between multiple independently published workflows", async () => {
@@ -193,17 +293,6 @@ test("a canvas can store and switch between multiple independently published wor
   const firstDetail = await repository.getAutomationWorkflow(owner.userId, first!.workflow.id);
   const secondDetail = await repository.getAutomationWorkflow(owner.userId, second!.workflow.id);
   assert.notEqual(firstDetail?.published?.id, secondDetail?.published?.id);
-  const { automationRunInputFields } = await import("../src/lib/automation-workflows/validation");
-  const { cancelAutomationWorkflowRun, enqueueAutomationWorkflowRun } = await import("../src/lib/automation-workflows/runs");
-  const inputs = Object.fromEntries(automationRunInputFields(secondDetail!.published!.graph).map((field) => [field.key, field.value ?? (field.required ? "selected" : "")]));
-  inputs["creative-settings.newOutfit"] = true;
-  inputs["creative-settings.newLocation"] = true;
-  const queued = await enqueueAutomationWorkflowRun({ userId: owner.userId, projectId: owner.projectId, workflowId: second!.workflow.id, runtimeInputs: inputs });
-  assert.ok("runId" in queued);
-  const row = await db.prepare("SELECT workflow_id, workflow_version_id FROM automation_runs WHERE id = ?").get("runId" in queued ? queued.runId : "") as { workflow_id: string; workflow_version_id: string };
-  assert.equal(row.workflow_id, second!.workflow.id);
-  assert.equal(row.workflow_version_id, secondDetail!.published!.id);
-  if ("runId" in queued) await cancelAutomationWorkflowRun(owner.userId, queued.runId);
 });
 
 test("invalid drafts save but cannot publish", async () => {

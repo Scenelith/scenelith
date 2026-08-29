@@ -21,6 +21,30 @@ export type AutomationCreativeDirectionClause = {
   end: number;
 };
 
+export type AutomationCreativeRequirementOption = {
+  id: string;
+  label: string;
+  meaning: string;
+};
+
+export const DEFAULT_AUTOMATION_REQUIREMENT_CATEGORIES: AutomationCreativeRequirementOption[] = [
+  { id: "audience", label: "Audience", meaning: "Who the result is intended for." },
+  { id: "offer", label: "Offer", meaning: "The proposition, benefit, price or call to action." },
+  { id: "tone", label: "Tone", meaning: "The emotional, verbal or visual tone." },
+  { id: "visual", label: "Visual direction", meaning: "A visual detail that does not belong to a more specific configured category." },
+  { id: "copy", label: "Copy", meaning: "Written or on-screen wording and its treatment." },
+  { id: "subject", label: "Subject", meaning: "A person, character, object or other principal subject." },
+  { id: "product", label: "Product", meaning: "A product, its attributes or the way it must appear." },
+  { id: "pacing", label: "Pacing", meaning: "Sequence timing, rhythm or progression." },
+  { id: "other", label: "Other", meaning: "An operational instruction that does not match another configured category." },
+];
+
+export const DEFAULT_AUTOMATION_REQUIREMENT_PLACEMENTS: AutomationCreativeRequirementOption[] = [
+  { id: "preserve", label: "Preserve", meaning: "The instruction says something must remain unchanged or be retained." },
+  { id: "change", label: "Change", meaning: "The instruction says something must be created, replaced or altered." },
+  { id: "avoid", label: "Avoid", meaning: "The instruction says something must not appear or happen." },
+];
+
 export const DEFAULT_AUTOMATION_CREATIVE_CONTROLS: AutomationCreativeControl[] = [
   {
     id: "adaptation-mode",
@@ -72,19 +96,19 @@ SECURITY AND AUTHORITY
 - Copy primary.briefHash exactly. Never reinterpret or recalculate it.
 
 COMPLETE COVERAGE
-- Return every clause from primary.clauses exactly once and preserve its clauseId.
-- Every clause needs at least one item. Split a clause into multiple items when it contains multiple operational instructions.
+- Return every exact input span from primary.clauses exactly once and preserve its clauseId.
+- Every input span needs at least one item. Divide it into as many exact evidence ranges as its meaning requires.
 - Never silently omit filler, uncertainty, negation or a conflicting phrase. Use ambiguity when the intended action is not safe to determine.
 - Evidence must be an exact, case-sensitive, contiguous substring of that clause. Do not paraphrase evidence.
 - evidenceStart and evidenceEnd are zero-based offsets inside that clause and clause.slice(evidenceStart, evidenceEnd) must equal evidence exactly.
-- Evidence ranges must cover every meaningful word in the clause. Connector words and punctuation may sit between adjacent ranges, but no preference, object, action, constraint or negation may be left outside all ranges.
+- Evidence ranges must collectively cover every non-whitespace character in the clause, including punctuation. Classify genuinely non-operational spans as ignore so deterministic code can verify complete coverage without knowing any language or maintaining word lists.
 
 CLASSIFICATION
 - choice: only an explicit or semantically necessary selection of one listed control option. A topic, audience, tone, aesthetic or ordinary creative detail is not a choice unless it actually selects one available option.
 - A choice records only the selected workflow state. It must never consume or replace concrete creative details that downstream steps need.
 - When the same request both selects an option and specifies how the result should look or behave, return a choice plus one or more requirement items. Their exact evidence may overlap when the complete wording is necessary to preserve meaning.
 - When the current setting already permits the requested work and the wording only adds a concrete detail, return the requirement without inventing a setting change.
-- requirement: an operational creative instruction that does not select a control. Keep one atomic instruction per item and preserve its strength, negation and scope.
+- requirement: an operational creative instruction that does not select a control. Keep one atomic instruction per item and preserve its strength, negation and scope. Choose category and placement only from primary.requirementCategories and primary.requirementPlacements by comparing their author-written meanings.
 - ambiguity: uncertainty, mutually exclusive wording, an unsafe mapping, a contradiction within or across clauses, or an instruction whose slide scope cannot be resolved using primary.sourceSlideIndexes.
 - ignore: only genuinely non-operational wording. Explain why. Never ignore a creative preference, constraint, negation or request.
 
@@ -95,7 +119,7 @@ CONFLICTS AND NEGATION
 
 REQUIREMENT FIELDS
 - instruction must equal evidence exactly. Deterministic code forwards the person's original words and never trusts a model-written paraphrase.
-- placement is preserve when something must remain, change when something must be created or altered, and avoid when something must not appear.
+- category and placement must use only ids configured in primary.requirementCategories and primary.requirementPlacements. Never invent an id or substitute your own taxonomy.
 - slideIndexes is empty only for a truly global instruction. Use only indexes in primary.sourceSlideIndexes.
 - confidence describes confidence in the mapping, not writing quality. Use a low value when any interpretation is uncertain.
 
@@ -109,25 +133,33 @@ function record(value: unknown): Record<string, unknown> | null {
 }
 
 function primitive(value: unknown): value is AutomationCreativeControlValue {
-  return value === null || ["string", "number", "boolean"].includes(typeof value);
+  return value === null || typeof value === "string" || typeof value === "boolean" || (typeof value === "number" && Number.isFinite(value));
+}
+
+function hasOnlyKeys(value: Record<string, unknown>, allowed: readonly string[]) {
+  const keys = new Set(allowed);
+  return Object.keys(value).every((key) => keys.has(key));
 }
 
 export function automationCreativeControls(value: unknown): AutomationCreativeControl[] {
   if (!Array.isArray(value)) return [];
   return value.flatMap((entry) => {
     const raw = record(entry);
-    if (!raw) return [];
-    const id = String(raw.id || "").trim();
-    const label = String(raw.label || "").trim();
-    const path = String(raw.path || "").trim();
+    if (!raw || !hasOnlyKeys(raw, ["id", "label", "path", "options"])) return [];
+    if (typeof raw.id !== "string" || typeof raw.label !== "string" || typeof raw.path !== "string") return [];
+    const id = raw.id.trim();
+    const label = raw.label.trim();
+    const path = raw.path.trim();
     const options = Array.isArray(raw.options) ? raw.options.flatMap((option) => {
       const candidate = record(option);
-      if (!candidate || !primitive(candidate.value)) return [];
-      const optionId = String(candidate.id || "").trim();
-      const optionLabel = String(candidate.label || "").trim();
-      const meaning = String(candidate.meaning || "").trim();
+      if (!candidate || !hasOnlyKeys(candidate, ["id", "label", "value", "meaning"]) || !primitive(candidate.value)) return [];
+      if (typeof candidate.id !== "string" || typeof candidate.label !== "string" || typeof candidate.meaning !== "string") return [];
+      const optionId = candidate.id.trim();
+      const optionLabel = candidate.label.trim();
+      const meaning = candidate.meaning.trim();
       return optionId && optionLabel && meaning ? [{ id: optionId, label: optionLabel, value: candidate.value, meaning }] : [];
     }) : [];
+    if (!Array.isArray(raw.options) || options.length !== raw.options.length) return [];
     return id && label && path ? [{ id, label, path, options }] : [];
   });
 }
@@ -142,6 +174,7 @@ export function automationCreativeControlIssues(value: unknown): string[] {
   const paths = new Set<string>();
   for (const [index, control] of controls.entries()) {
     if (!/^[a-z][a-z0-9-]{0,63}$/.test(control.id)) issues.push(`Choice rule ${index + 1} has an invalid id`);
+    if (control.label.length > 120) issues.push(`Choice rule ${control.id} has a label longer than 120 characters`);
     if (!/^[a-zA-Z_][a-zA-Z0-9_.-]{0,127}$/.test(control.path) || control.path.split(".").some((part) => ["__proto__", "prototype", "constructor"].includes(part))) {
       issues.push(`Choice rule ${index + 1} has an unsafe setting path`);
     }
@@ -155,6 +188,7 @@ export function automationCreativeControlIssues(value: unknown): string[] {
     const optionMeanings = new Set<string>();
     for (const option of control.options) {
       if (!/^[a-z][a-z0-9-]{0,63}$/.test(option.id)) issues.push(`${control.label} has an invalid option id`);
+      if (option.label.length > 120) issues.push(`${control.label} option ${option.id} has a label longer than 120 characters`);
       if (optionIds.has(option.id)) issues.push(`${control.label} option ${option.id} is duplicated`);
       if (option.meaning.length > 2_000) issues.push(`${control.label} option ${option.label} has an AI meaning longer than 2,000 characters`);
       const normalizedMeaning = option.meaning.normalize("NFKC").trim().toLocaleLowerCase();
@@ -169,17 +203,37 @@ export function automationCreativeControlIssues(value: unknown): string[] {
   return issues;
 }
 
-export function splitAutomationCreativeDirection(raw: string): AutomationCreativeDirectionClause[] {
-  const clauses: AutomationCreativeDirectionClause[] = [];
-  const matcher = /[^\n.!?;]+(?:[.!?;]+|$)/gu;
-  for (const match of raw.matchAll(matcher)) {
-    const complete = match[0];
-    const leading = complete.match(/^\s*/u)?.[0].length || 0;
-    const trailing = complete.match(/\s*$/u)?.[0].length || 0;
-    const text = complete.slice(leading, complete.length - trailing);
-    if (!text) continue;
-    const start = (match.index || 0) + leading;
-    clauses.push({ id: `clause-${clauses.length + 1}`, text, start, end: start + text.length });
+export function automationCreativeRequirementOptions(value: unknown): AutomationCreativeRequirementOption[] {
+  if (!Array.isArray(value)) return [];
+  return value.flatMap((entry) => {
+    const raw = record(entry);
+    if (!raw || !hasOnlyKeys(raw, ["id", "label", "meaning"])) return [];
+    if (typeof raw.id !== "string" || typeof raw.label !== "string" || typeof raw.meaning !== "string") return [];
+    const id = raw.id.trim();
+    const label = raw.label.trim();
+    const meaning = raw.meaning.trim();
+    return id && label && meaning ? [{ id, label, meaning }] : [];
+  });
+}
+
+export function automationCreativeRequirementOptionIssues(value: unknown, label: string): string[] {
+  if (!Array.isArray(value)) return [`${label} must be a list`];
+  if (value.length < 1 || value.length > 24) return [`${label} must contain between 1 and 24 options`];
+  const options = automationCreativeRequirementOptions(value);
+  if (options.length !== value.length) return [`Every ${label.toLocaleLowerCase()} entry needs an id, label and AI meaning`];
+  const issues: string[] = [];
+  const ids = new Set<string>();
+  for (const option of options) {
+    if (!/^[a-z][a-z0-9-]{0,63}$/.test(option.id)) issues.push(`${label} id ${option.id || "(empty)"} is invalid`);
+    if (option.label.length > 120) issues.push(`${label} ${option.id} has a label longer than 120 characters`);
+    if (ids.has(option.id)) issues.push(`${label} id ${option.id} is duplicated`);
+    if (option.meaning.length > 2_000) issues.push(`${label} ${option.label} has an AI meaning longer than 2,000 characters`);
+    ids.add(option.id);
   }
-  return clauses;
+  return issues;
+}
+
+export function splitAutomationCreativeDirection(raw: string): AutomationCreativeDirectionClause[] {
+  if (!raw) return [];
+  return [{ id: "creative-direction", text: raw, start: 0, end: raw.length }];
 }

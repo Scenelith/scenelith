@@ -17,6 +17,9 @@ export const kieGenerationProvider = {
   getModel: getKieModel,
   allowedRatios: allowedKieRatios,
   allowedResolutions: allowedKieResolutions,
+  promptLengthLimit(model: ReturnType<typeof getKieModel>) {
+    return model.maxPromptLength ?? 5_000;
+  },
   start: startGeneration,
   normalizeWebhook: normalizeKieTask,
   verifyWebhook: verifyKieWebhook,

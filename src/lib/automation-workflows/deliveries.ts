@@ -4,6 +4,9 @@ import { workerIdentity } from "@/lib/worker-identity";
 import { enqueueAutomationWorkflowRun } from "./runs";
 import { canPerformAutomationAction, requireAutomationPermission } from "./permissions";
 import { enqueueAutomationNotification } from "./notifications";
+import { parseAutomationDeploymentSnapshot, validateAutomationDeploymentBindings, type AutomationDeploymentSnapshot } from "./deployment-validation";
+import { automationWorkflowGraphSchema } from "./types";
+import { parseAutomationTriggerEnvelope, type AutomationTriggerEnvelope } from "./trigger-envelope";
 
 export type AutomationTriggerDeliveryStatus = "queued" | "processing" | "retry_wait" | "delivered" | "dead_letter" | "cancelled";
 
@@ -12,11 +15,16 @@ type DeliveryRow = {
   delivery_key: string;
   trigger_id: string | null;
   workflow_id: string;
+  workflow_version_id: string;
+  trigger_key: string;
   workspace_id: string;
   project_id: string;
   actor_user_id: string | null;
   trigger_type: "schedule" | "webhook" | "canvas-event";
   trigger_name: string;
+  overlap_policy: "queue" | "skip" | "cancel-previous";
+  max_concurrent_runs: number;
+  deployment_json: unknown;
   status: AutomationTriggerDeliveryStatus;
   runtime_inputs_json: unknown;
   payload_json: unknown;
@@ -37,10 +45,14 @@ function publicDelivery(row: Record<string, unknown>) {
     deliveryKey: String(row.delivery_key),
     triggerId: row.trigger_id ? String(row.trigger_id) : null,
     workflowId: String(row.workflow_id),
+    workflowVersionId: String(row.workflow_version_id),
+    triggerKey: String(row.trigger_key),
     workspaceId: String(row.workspace_id),
     projectId: String(row.project_id),
     triggerType: String(row.trigger_type),
     triggerName: String(row.trigger_name),
+    overlapPolicy: String(row.overlap_policy),
+    maxConcurrentRuns: Number(row.max_concurrent_runs),
     status: String(row.status),
     runtimeInputs: jsonValue(row.runtime_inputs_json),
     payload: jsonValue(row.payload_json),
@@ -61,20 +73,53 @@ function publicDelivery(row: Record<string, unknown>) {
 export async function enqueueAutomationTriggerDelivery(input: {
   trigger: Record<string, unknown>;
   deliveryKey: string;
-  payload: Record<string, unknown>;
+  payload: AutomationTriggerEnvelope;
   scheduledFor?: string | null;
   replayOfDeliveryId?: string | null;
+  snapshot?: {
+    workflowVersionId: string;
+    triggerKey: string;
+    overlapPolicy: "queue" | "skip" | "cancel-previous";
+    maxConcurrentRuns: number;
+    deployment: AutomationDeploymentSnapshot;
+  };
 }) {
   const id = randomUUID();
   const now = new Date().toISOString();
   const trigger = input.trigger;
+  const payload = parseAutomationTriggerEnvelope(input.payload);
+  const workflowId = String(trigger.workflow_id || "");
+  const workspaceId = String(trigger.workspace_id || "");
+  const workflowVersionId = input.snapshot?.workflowVersionId || String(trigger.active_version_id || "");
+  const triggerKey = input.snapshot?.triggerKey || String(trigger.id || "");
+  if (!workflowId || !workspaceId || !workflowVersionId || !triggerKey) {
+    throw Object.assign(new Error("Active trigger is missing its pinned workflow version"), { code: "TRIGGER_VERSION_INVARIANT" });
+  }
+  const overlapPolicy = input.snapshot?.overlapPolicy || String(trigger.overlap_policy || "") as "queue" | "skip" | "cancel-previous";
+  const maxConcurrentRuns = input.snapshot?.maxConcurrentRuns ?? Number(trigger.max_concurrent_runs);
+  if (!["queue", "skip", "cancel-previous"].includes(overlapPolicy) || !Number.isInteger(maxConcurrentRuns) || maxConcurrentRuns < 1 || maxConcurrentRuns > 32) {
+    throw Object.assign(new Error("Active trigger has invalid admission settings"), { code: "TRIGGER_ADMISSION_INVARIANT" });
+  }
+  let deployment = input.snapshot?.deployment ? parseAutomationDeploymentSnapshot(input.snapshot.deployment) : undefined;
+  if (!deployment) {
+    const version = await db.prepare("SELECT graph_json FROM automation_workflow_versions WHERE workflow_id = ? AND id = ?")
+      .get(workflowId, workflowVersionId) as { graph_json: unknown } | undefined;
+    if (!version) throw Object.assign(new Error("The trigger's pinned workflow version no longer exists"), { code: "TRIGGER_VERSION_MISSING" });
+    const graph = automationWorkflowGraphSchema.parse(jsonValue(version.graph_json));
+    const validation = await validateAutomationDeploymentBindings({ workflowId, workspaceId, graph });
+    if (!validation.valid) {
+      throw Object.assign(new Error(validation.issues.map((entry) => entry.message).join(" ")), { code: "TRIGGER_DEPLOYMENT_INVALID" });
+    }
+    deployment = validation.snapshot;
+  }
   const result = await db.prepare(`INSERT INTO automation_trigger_deliveries
-    (id, delivery_key, trigger_id, workflow_id, workspace_id, project_id, actor_user_id, trigger_type, trigger_name,
-     status, runtime_inputs_json, payload_json, scheduled_for, attempts, max_attempts, available_at, replay_of_delivery_id, created_at, updated_at)
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'queued', ?, ?, ?, 0, 6, ?, ?, ?, ?)
+    (id, delivery_key, trigger_id, workflow_id, workflow_version_id, trigger_key, workspace_id, project_id, actor_user_id, trigger_type, trigger_name,
+     overlap_policy, max_concurrent_runs, deployment_json, status, runtime_inputs_json, payload_json, scheduled_for, attempts, max_attempts, available_at, replay_of_delivery_id, created_at, updated_at)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'queued', ?, ?, ?, 0, 6, ?, ?, ?, ?)
     ON CONFLICT(delivery_key) DO NOTHING`)
-    .run(id, input.deliveryKey, trigger.id, trigger.workflow_id, trigger.workspace_id, trigger.project_id, trigger.created_by,
-      trigger.type, String(trigger.name || "Automation trigger"), typeof trigger.input_json === "string" ? trigger.input_json : JSON.stringify(trigger.input_json || {}), JSON.stringify(input.payload), input.scheduledFor || null,
+    .run(id, input.deliveryKey, trigger.id, workflowId, workflowVersionId, triggerKey, workspaceId, trigger.project_id, trigger.created_by,
+      trigger.type, String(trigger.name || "Automation trigger"), overlapPolicy, maxConcurrentRuns, JSON.stringify(deployment),
+      typeof trigger.input_json === "string" ? trigger.input_json : JSON.stringify(trigger.input_json || {}), JSON.stringify(payload), input.scheduledFor || null,
       now, input.replayOfDeliveryId || null, now, now);
   if (result.changes !== 1) {
     const existing = await db.prepare("SELECT id, status, run_id FROM automation_trigger_deliveries WHERE delivery_key = ?").get(input.deliveryKey) as Record<string, unknown> | undefined;
@@ -145,7 +190,16 @@ async function processDelivery(row: DeliveryRow) {
       workflowId: row.workflow_id,
       runtimeInputs: jsonValue<Record<string, unknown>>(row.runtime_inputs_json),
       mode: "production",
-      trigger: { id: row.trigger_id, deliveryId: row.id, payload: jsonValue<Record<string, unknown>>(row.payload_json) },
+      trigger: {
+        id: row.trigger_id,
+        deliveryId: row.id,
+        workflowVersionId: row.workflow_version_id,
+        triggerKey: row.trigger_key,
+        payload: parseAutomationTriggerEnvelope(jsonValue(row.payload_json)),
+        overlapPolicy: row.overlap_policy,
+        maxConcurrentRuns: row.max_concurrent_runs,
+        deployment: parseAutomationDeploymentSnapshot(jsonValue(row.deployment_json)),
+      },
     });
     if (result.status === 202) {
       const now = new Date().toISOString();
@@ -230,22 +284,34 @@ export async function replayAutomationTriggerDelivery(input: { userId: string; d
   const trigger = row.trigger_id
     ? await db.prepare("SELECT * FROM automation_workflow_triggers WHERE id = ?").get(row.trigger_id) as Record<string, unknown> | undefined
     : undefined;
-  const snapshot = trigger || {
-    id: null,
-    workflow_id: row.workflow_id,
-    workspace_id: row.workspace_id,
-    project_id: row.project_id,
+  const snapshot = {
+    ...(trigger || {
+      id: null,
+      workflow_id: row.workflow_id,
+      workspace_id: row.workspace_id,
+      project_id: row.project_id,
+      type: row.trigger_type,
+      name: row.trigger_name,
+    }),
+    // A replay is authorized and attributed to the operator who requested it.
+    // Its data still comes from the immutable delivery snapshot, never from a
+    // trigger that may have been edited after the failed delivery was accepted.
     created_by: input.userId,
-    type: row.trigger_type,
-    name: row.trigger_name,
     input_json: JSON.stringify(jsonValue(row.runtime_inputs_json)),
   };
   const replay = await enqueueAutomationTriggerDelivery({
     trigger: snapshot,
     deliveryKey: `${row.delivery_key}:replay:${randomUUID()}`,
-    payload: jsonValue<Record<string, unknown>>(row.payload_json),
+    payload: parseAutomationTriggerEnvelope(jsonValue(row.payload_json)),
     scheduledFor: row.scheduled_for,
     replayOfDeliveryId: row.id,
+    snapshot: {
+      workflowVersionId: row.workflow_version_id,
+      triggerKey: row.trigger_key,
+      overlapPolicy: row.overlap_policy,
+      maxConcurrentRuns: row.max_concurrent_runs,
+      deployment: parseAutomationDeploymentSnapshot(jsonValue(row.deployment_json)),
+    },
   });
   return replay ? { ...replay, workspaceId: row.workspace_id, workflowId: row.workflow_id } : null;
 }

@@ -23,6 +23,7 @@ test("calendar schedules are timezone aware and reject ambiguous timer syntax", 
   assert.equal(nextAutomationScheduleAt(config, "2026-08-28T14:00:00.000Z"), "2026-08-31T13:30:00.000Z");
   assert.throws(() => parseAutomationScheduleConfig({ mode: "calendar", cron: "0 0 9 * * 1-5", timezone: "UTC", misfirePolicy: "skip" }), /five cron fields/i);
   assert.throws(() => parseAutomationScheduleConfig({ mode: "calendar", cron: "0 9 * * *", timezone: "Mars\/Olympus", misfirePolicy: "skip" }), /valid IANA timezone/i);
+  assert.throws(() => parseAutomationScheduleConfig({ everyMinutes: 15 }), /mode/i);
 });
 
 test("node preview executes only the selected node with captured port data", async () => {
@@ -42,12 +43,15 @@ test("node preview executes only the selected node with captured port data", asy
     nodeInputs: { data: { exact: "fixture" } },
     context: { runId: "preview", userId: "user", workspaceId: "workspace", projectId: "project", runtimeInputs: {}, runKind: "node-preview" },
     handlers: {
-      "output.finish@1": async ({ inputs }) => { calls += 1; return { result: inputs.data }; },
+      "output.finish@1": async ({ inputs }) => {
+        calls += 1;
+        return { result: { outcome: "completed", message: "Workflow completed", data: inputs.data } };
+      },
       "core.manual-trigger@1": async () => { throw new Error("ancestor must not run"); },
     },
   });
   assert.equal(calls, 1);
-  assert.deepEqual(result.output, { result: { exact: "fixture" } });
+  assert.deepEqual(result.output, { result: { outcome: "completed", message: "Workflow completed", data: { exact: "fixture" } } });
 });
 
 test("migration persists delivery leases, DLQ history, alerts and fixtures", async () => {
@@ -71,6 +75,17 @@ test("system model overrides have a narrow workspace-scoped persistence contract
   assert.match(migration, /PRIMARY KEY \(workflow_id, node_id\)/);
   assert.match(migration, /REFERENCES public\.automation_workflows\(workspace_id, id\) ON DELETE CASCADE/);
   assert.doesNotMatch(migration, /prompt|config_json|graph_json/i);
+});
+
+test("trigger deliveries pin one workflow version, admission policy and canonical payload contract", async () => {
+  const migration = await readFile(new URL("../database/migrations/core/003_automation_trigger_snapshots.sql", import.meta.url), "utf8");
+  assert.match(migration, /active_version_id/);
+  assert.match(migration, /workflow_version_id/);
+  assert.match(migration, /trigger_key/);
+  assert.match(migration, /deployment_json/);
+  assert.match(migration, /automation_trigger_deliveries_workflow_version_fk/);
+  assert.match(migration, /contractVersion/);
+  assert.doesNotMatch(migration, /DROP\s+TABLE|DROP\s+COLUMN|ALTER\s+COLUMN|TRUNCATE/i);
 });
 
 test("worker admission is fair across workspaces before selecting the oldest local job", async () => {

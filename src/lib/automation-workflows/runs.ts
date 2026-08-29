@@ -2,13 +2,14 @@ import { createHash, randomUUID } from "node:crypto";
 import { db, userCanAccessProject, workspaceIdForProject } from "@/lib/postgres-db";
 import { workerIdentity } from "@/lib/worker-identity";
 import { coreAutomationNodeHandlers } from "./node-handlers";
-import { validateAutomationDeploymentBindings } from "./deployment-validation";
+import { parseAutomationDeploymentSnapshot, validateAutomationDeploymentBindings } from "./deployment-validation";
 import type { AutomationDeploymentSnapshot } from "./deployment-validation";
 import { getAutomationWorkflow } from "./repository";
-import { executeAutomationGraph, executeAutomationNodePreview } from "./runtime";
-import { automationWorkflowSettingsSchema, type AutomationNode, type AutomationWorkflowVersion } from "./types";
+import { executeAutomationGraph, executeAutomationNodePreview, materializeAutomationRunInputSnapshot, parseAutomationRunInputSnapshot } from "./runtime";
+import { automationWorkflowGraphSchema, automationWorkflowSettingsSchema, type AutomationNode, type AutomationWorkflowVersion } from "./types";
 import { validateAutomationRunInputs, validateAutomationWorkflowGraph } from "./validation";
 import { canPerformAutomationAction, requireAutomationPermission } from "./permissions";
+import { subworkflowTriggerEnvelope, type AutomationTriggerEnvelope } from "./trigger-envelope";
 
 type RunStatus = "queued" | "running" | "completed" | "completed_with_warnings" | "failed" | "cancelled";
 type RunKind = "production" | "test" | "replay" | "trigger" | "subworkflow" | "node-preview";
@@ -36,6 +37,7 @@ type RunRow = {
   stage_label: string;
   progress: number;
   input_json: unknown;
+  input_snapshot_json: unknown;
   output_json: unknown;
   error: string | null;
   error_code: string | null;
@@ -147,7 +149,7 @@ async function workflowVersionById(id: string) {
   if (!row) return null;
   return {
     id: row.id, workflowId: row.workflow_id, version: Number(row.version), status: row.status,
-    graph: jsonValue(row.graph_json), validation: jsonValue(row.validation_json), createdBy: row.created_by, createdAt: row.created_at, publishedAt: row.published_at,
+    graph: automationWorkflowGraphSchema.parse(jsonValue(row.graph_json)), validation: jsonValue(row.validation_json), createdBy: row.created_by, createdAt: row.created_at, publishedAt: row.published_at,
   } as AutomationWorkflowVersion;
 }
 
@@ -158,7 +160,16 @@ export async function enqueueAutomationWorkflowRun(input: {
   runtimeInputs: Record<string, unknown>;
   useDraft?: boolean;
   mode?: "production" | "test";
-  trigger?: { id: string | null; deliveryId?: string; payload: Record<string, unknown> };
+  trigger?: {
+    id: string | null;
+    deliveryId: string;
+    workflowVersionId: string;
+    triggerKey: string;
+    payload: AutomationTriggerEnvelope;
+    overlapPolicy: "queue" | "skip" | "cancel-previous";
+    maxConcurrentRuns: number;
+    deployment: AutomationDeploymentSnapshot;
+  };
 }) {
   if (!await userCanAccessProject(input.userId, input.projectId)) return { status: 404, error: "Canvas not found" } as const;
   const workspaceId = await workspaceIdForProject(input.projectId);
@@ -172,29 +183,63 @@ export async function enqueueAutomationWorkflowRun(input: {
   }
   const runKind: RunKind = input.trigger ? "trigger" : input.mode === "test" || input.useDraft ? "test" : "production";
   if (runKind === "test" && !await canPerformAutomationAction(input.userId, workspaceId, "automation.edit")) {
-    return { status: 403, error: "This workspace role cannot test unpublished automation drafts" } as const;
+    return { status: 403, error: "This workspace role cannot test automation drafts that are not live" } as const;
   }
-  const version = runKind === "test" ? detail.draft || detail.published : detail.published;
-  if (!version) return { status: 409, error: runKind === "test" ? "Workflow has no version to test" : "Publish the workflow before running it" } as const;
+  const version = input.trigger
+    ? await workflowVersionById(input.trigger.workflowVersionId)
+    : runKind === "test" ? detail.draft || detail.published : detail.published;
+  if (!version) return { status: 409, error: runKind === "test" ? "Workflow has no version to test" : input.trigger ? "The accepted trigger version is unavailable" : "Take the workflow live before running it" } as const;
+  if (version.workflowId !== input.workflowId) return { status: 409, error: "The accepted trigger version belongs to another workflow" } as const;
   const validation = validateAutomationWorkflowGraph(version.graph);
   if (!validation.valid) return { status: 422, error: "Fix workflow validation issues before running", validation } as const;
   const runInputValidation = validateAutomationRunInputs(version.graph, input.runtimeInputs);
   if (!runInputValidation.valid) return { status: 400, error: runInputValidation.issues.map((entry) => entry.message).join(" "), validation: runInputValidation } as const;
-  const deploymentValidation = await validateAutomationDeploymentBindings({ workflowId: input.workflowId, workspaceId, graph: version.graph });
+  const deploymentValidation = input.trigger
+    ? { valid: true as const, issues: [], snapshot: parseAutomationDeploymentSnapshot(input.trigger.deployment) }
+    : await validateAutomationDeploymentBindings({ workflowId: input.workflowId, workspaceId, graph: version.graph });
   if (!deploymentValidation.valid) return { status: 409, error: deploymentValidation.issues.map((entry) => entry.message).join(" "), validation: deploymentValidation } as const;
 
   const now = new Date().toISOString();
   const policy = automationWorkflowSettingsSchema.parse(version.graph.settings || {});
-  const triggerAdmission = input.trigger?.id
-    ? await db.prepare("SELECT overlap_policy, max_concurrent_runs FROM automation_workflow_triggers WHERE id = ?").get(input.trigger.id) as { overlap_policy: typeof policy.overlapPolicy; max_concurrent_runs: number } | undefined
-    : undefined;
-  const overlapPolicy = triggerAdmission?.overlap_policy || policy.overlapPolicy;
-  const maxConcurrentRuns = Math.min(32, Math.max(1, Number(triggerAdmission?.max_concurrent_runs || policy.maxConcurrentRuns)));
-  const admissionKey = input.trigger?.id ? `trigger:${input.trigger.id}` : `workflow:${input.workflowId}`;
+  const overlapPolicy = input.trigger?.overlapPolicy || policy.overlapPolicy;
+  const maxConcurrentRuns = input.trigger?.maxConcurrentRuns ?? policy.maxConcurrentRuns;
+  if (!Number.isInteger(maxConcurrentRuns) || maxConcurrentRuns < 1 || maxConcurrentRuns > 32) {
+    return { status: 409, error: "Trigger admission snapshot is invalid" } as const;
+  }
+  const admissionKey = input.trigger ? `trigger:${input.trigger.triggerKey}` : `workflow:${input.workflowId}`;
   const deadlineAt = new Date(Date.now() + policy.timeoutSeconds * 1_000).toISOString();
+  const candidateRunId = randomUUID();
+  let inputSnapshot;
+  try {
+    inputSnapshot = await materializeAutomationRunInputSnapshot({
+      graph: version.graph,
+      context: {
+        runId: candidateRunId,
+        workflowId: input.workflowId,
+        userId: input.userId,
+        workspaceId,
+        projectId: input.projectId,
+        runtimeInputs: structuredClone(input.runtimeInputs),
+        triggerPayload: input.trigger?.payload,
+        runKind,
+        deadlineAt,
+        policy,
+      },
+      handlers: coreAutomationNodeHandlers(),
+    });
+  } catch (error) {
+    return { status: 422, error: error instanceof Error ? error.message : "Workflow inputs could not be resolved", code: typeof (error as { code?: unknown } | null)?.code === "string" ? String((error as { code: string }).code) : "INPUT_SNAPSHOT_FAILED" } as const;
+  }
   const requestJson = canonicalJson(input.runtimeInputs);
+  const inputSnapshotJson = canonicalJson(inputSnapshot);
+  const resolvedInputNodeIds = new Set(version.graph.nodes.filter((node) => node.type.startsWith("input.")).map((node) => node.id));
+  const dedupeInputSnapshotJson = canonicalJson(Object.fromEntries(Object.entries(inputSnapshot)
+    .filter(([nodeId]) => resolvedInputNodeIds.has(nodeId))
+    .map(([nodeId, entry]) => [nodeId, { nodeType: entry.nodeType, nodeVersion: entry.nodeVersion, output: entry.output }])));
   const triggerJson = input.trigger ? canonicalJson(input.trigger.payload) : "";
-  const dedupeKey = createHash("sha256").update(`${input.userId}:${input.projectId}:${version.id}:${runKind}:${requestJson}:${triggerJson}`).digest("hex");
+  const dedupeKey = createHash("sha256")
+    .update(`${input.userId}:${input.projectId}:${version.id}:${runKind}:${requestJson}:${dedupeInputSnapshotJson}:${triggerJson}`)
+    .digest("hex");
   const queued = await db.transaction(async () => {
     await db.prepare("SELECT pg_advisory_xact_lock(hashtextextended(?, 0))").get(`automation-admission:${admissionKey}`);
     if (input.trigger?.deliveryId) {
@@ -205,7 +250,7 @@ export async function enqueueAutomationWorkflowRun(input: {
     const existing = await db.prepare("SELECT id, status FROM automation_runs WHERE user_id = ? AND dedupe_key = ? AND status IN ('queued', 'running') ORDER BY created_at DESC LIMIT 1")
       .get(input.userId, dedupeKey) as { id: string; status: RunStatus } | undefined;
     if (existing) return { status: 202 as const, runId: existing.id, runStatus: existing.status, deduplicated: true };
-    const id = randomUUID();
+    const id = candidateRunId;
     const active = await db.prepare(`SELECT id FROM automation_runs WHERE admission_key = ? AND parent_run_id IS NULL
       AND status IN ('queued','running') ORDER BY created_at FOR UPDATE`).all(admissionKey) as Array<{ id: string }>;
     if (overlapPolicy === "cancel-previous" && active.length) {
@@ -223,13 +268,13 @@ export async function enqueueAutomationWorkflowRun(input: {
     const skipped = overlapPolicy === "skip" && active.length >= maxConcurrentRuns;
     await db.prepare(`INSERT INTO automation_runs
       (id, workflow_id, workflow_version_id, workspace_id, project_id, user_id, status, run_kind, admission_key, overlap_policy, max_concurrent_runs,
-       trigger_id, trigger_delivery_id, trigger_payload_json, stage_label, progress, input_json, policy_json, deployment_json,
+       trigger_id, trigger_delivery_id, trigger_payload_json, stage_label, progress, input_json, input_snapshot_json, policy_json, deployment_json,
        estimated_credits, charged_credits, reserved_credits, attempts, max_attempts, available_at, deadline_at, dedupe_key, created_at, updated_at, completed_at, error_code)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, 0, 0, 0, 2, ?, ?, ?, ?, ?, ?, ?)`)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, 0, 0, 0, 2, ?, ?, ?, ?, ?, ?, ?)`)
       .run(id, input.workflowId, version.id, workspaceId, input.projectId, input.userId, skipped ? "cancelled" : "queued", runKind,
         admissionKey, overlapPolicy, maxConcurrentRuns, input.trigger?.id || null, input.trigger?.deliveryId || null,
         input.trigger ? JSON.stringify(input.trigger.payload) : null, skipped ? "Skipped because another run is active" : "Waiting for an automation slot",
-        skipped ? 100 : 0, requestJson, JSON.stringify(policy), JSON.stringify(deploymentValidation.snapshot), now, deadlineAt, dedupeKey, now, now,
+        skipped ? 100 : 0, requestJson, inputSnapshotJson, JSON.stringify(policy), JSON.stringify(deploymentValidation.snapshot), now, deadlineAt, dedupeKey, now, now,
         skipped ? now : null, skipped ? "OVERLAP_SKIPPED" : null);
     await appendEvent(id, skipped ? "run.overlap_skipped" : "run.queued", { runKind, workflowVersionId: version.id, admissionKey, overlapPolicy, maxConcurrentRuns });
     scheduleWorkflowRunDrain(50);
@@ -308,9 +353,9 @@ export async function reserveAutomationTreeUsage(runId: string, kind: "node" | "
     if (!run) throw Object.assign(new Error("Automation run is unavailable"), { code: "RUN_LEASE_LOST" });
     const rootRunId = run.root_run_id || runId;
     await db.prepare("SELECT pg_advisory_xact_lock(hashtextextended(?, 0))").get(`automation-run-usage:${rootRunId}`);
-    if (kind === "asset" && usageKey) {
+    if (usageKey) {
       const existing = await db.prepare(`SELECT 1 AS found FROM automation_tree_usage_reservations
-        WHERE run_id = ? AND kind = 'asset' AND usage_key = ?`).get(runId, usageKey);
+        WHERE run_id = ? AND kind = ? AND usage_key = ?`).get(runId, kind, usageKey);
       if (existing) return;
     }
     const root = await db.prepare("SELECT policy_json, tree_node_executions, tree_generated_assets FROM automation_runs WHERE id = ? FOR UPDATE").get(rootRunId) as Pick<RunRow, "policy_json" | "tree_node_executions" | "tree_generated_assets"> | undefined;
@@ -324,9 +369,9 @@ export async function reserveAutomationTreeUsage(runId: string, kind: "node" | "
       const code = kind === "node" ? "NODE_EXECUTION_LIMIT" : "GENERATED_ASSET_LIMIT";
       throw Object.assign(new Error(`Workflow tree exceeded its ${maximum} ${label} limit`), { code });
     }
-    if (kind === "asset" && usageKey) {
+    if (usageKey) {
       await db.prepare(`INSERT INTO automation_tree_usage_reservations (run_id, root_run_id, kind, usage_key, amount, created_at)
-        VALUES (?, ?, 'asset', ?, ?, ?)`).run(runId, rootRunId, usageKey, requested, new Date().toISOString());
+        VALUES (?, ?, ?, ?, ?, ?)`).run(runId, rootRunId, kind, usageKey, requested, new Date().toISOString());
     }
     await db.prepare(`UPDATE automation_runs SET ${column} = ${column} + ?, updated_at = ? WHERE id = ?`).run(requested, new Date().toISOString(), rootRunId);
   })();
@@ -415,7 +460,7 @@ export async function cancelAutomationWorkflowRun(userId: string, runId: string)
   return changed.changes === 1;
 }
 
-export async function retryAutomationWorkflowRun(input: { userId: string; runId: string; nodeId?: string }) {
+export async function retryAutomationWorkflowRun(input: { userId: string; runId: string; nodeId: string }) {
   const source = await db.prepare("SELECT * FROM automation_runs WHERE id = ? AND user_id = ?").get(input.runId, input.userId) as RunRow | undefined;
   if (!source || !await userCanAccessProject(input.userId, source.project_id)) return { status: 404, error: "Automation run not found" } as const;
   if (!await canPerformAutomationAction(input.userId, source.workspace_id, "automation.run")) return { status: 403, error: "This workspace role cannot run automations" } as const;
@@ -426,20 +471,7 @@ export async function retryAutomationWorkflowRun(input: { userId: string; runId:
   const latestRows = await db.prepare(`SELECT DISTINCT ON (node_id) * FROM automation_node_runs
     WHERE run_id = ? ORDER BY node_id, attempt DESC`).all(source.id) as Array<Record<string, unknown>>;
   const latestByNode = new Map(latestRows.map((row) => [String(row.node_id), row]));
-  let selectedNodeId = input.nodeId || "";
-  if (!selectedNodeId) {
-    selectedNodeId = version.graph.nodes.find((node) => latestByNode.get(node.id)?.status === "failed")?.id || "";
-  }
-  if (!selectedNodeId && source.status === "completed_with_warnings") {
-    selectedNodeId = version.graph.nodes.find((node) => {
-      const row = latestByNode.get(node.id);
-      const raw = row?.output_json;
-      const output = raw ? jsonValue<Record<string, unknown>>(raw) : null;
-      return row?.error_code === "FAILURE_POLICY_APPLIED"
-        || (Array.isArray(output?.__warnings) && output.__warnings.length > 0)
-        || (output?.assets && typeof output.assets === "object" && Array.isArray((output.assets as { failures?: unknown }).failures) && (output.assets as { failures: unknown[] }).failures.length > 0);
-    })?.id || "";
-  }
+  const selectedNodeId = input.nodeId;
   if (!version.graph.nodes.some((node) => node.id === selectedNodeId)) return { status: 400, error: "Choose a step from this run to retry" } as const;
 
   const invalidated = new Set([selectedNodeId]);
@@ -462,15 +494,15 @@ export async function retryAutomationWorkflowRun(input: { userId: string; runId:
   const deadlineAt = new Date(Date.now() + policy.timeoutSeconds * 1_000).toISOString();
   await db.transaction(async () => {
     await db.prepare(`INSERT INTO automation_runs
-      (id, workflow_id, workflow_version_id, workspace_id, project_id, user_id, status, run_kind, admission_key, overlap_policy, max_concurrent_runs, stage_label, progress, input_json, policy_json, deployment_json,
+      (id, workflow_id, workflow_version_id, workspace_id, project_id, user_id, status, run_kind, admission_key, overlap_policy, max_concurrent_runs, stage_label, progress, input_json, input_snapshot_json, policy_json, deployment_json,
        estimated_credits, charged_credits, reserved_credits, warning_count, reused_node_count, attempts, max_attempts, available_at, deadline_at,
        replay_of_run_id, root_run_id, execution_depth, created_at, updated_at)
-      VALUES (?, ?, ?, ?, ?, ?, 'queued', 'replay', ?, ?, ?, 'Waiting to retry failed steps', 0, ?, ?, ?, 0, 0, 0, 0, ?, 0, 2, ?, ?, ?, ?, ?, ?, ?)`)
+      VALUES (?, ?, ?, ?, ?, ?, 'queued', 'replay', ?, ?, ?, 'Waiting to retry failed steps', 0, ?, ?, ?, ?, 0, 0, 0, 0, ?, 0, 2, ?, ?, ?, ?, ?, ?, ?)`)
       // A manual retry is a new root execution tree. replay_of_run_id carries
       // lineage; root_run_id must not attach its budgets to the old run.
       .run(id, source.workflow_id, source.workflow_version_id, source.workspace_id, source.project_id, source.user_id,
         `workflow:${source.workflow_id}`, policy.overlapPolicy, policy.maxConcurrentRuns, JSON.stringify(jsonValue(source.input_json) || {}),
-        JSON.stringify(policy), JSON.stringify(jsonValue(source.deployment_json) || {}), reusable.length, now, deadlineAt, source.id, null, 0, now, now);
+        JSON.stringify(jsonValue(source.input_snapshot_json) || {}), JSON.stringify(policy), JSON.stringify(jsonValue(source.deployment_json) || {}), reusable.length, now, deadlineAt, source.id, null, 0, now, now);
     for (const row of reusable) {
       const nodeRunId = randomUUID();
       await db.prepare(`INSERT INTO automation_node_runs
@@ -599,10 +631,10 @@ async function executeBoundSubworkflow(parent: RunRow, input: { parentNodeId: st
         JOIN automation_workflow_versions version ON version.id = workflow.published_version_id
         WHERE binding.workflow_id = ? AND binding.workspace_id = ? AND binding.slot_key = ? AND binding.binding_type = 'subworkflow'`)
       .get(parent.workflow_id, parent.workspace_id, input.slotKey) as { workflow_id: string; published_version_id: string; graph_json: unknown } | undefined;
-  if (!target) throw Object.assign(new Error(`Workflow slot “${input.slotKey}” is not connected to a published workflow`), { code: "SUBWORKFLOW_BINDING_MISSING" });
+  if (!target) throw Object.assign(new Error(`Workflow slot “${input.slotKey}” is not connected to a live workflow`), { code: "SUBWORKFLOW_BINDING_MISSING" });
   const runtimeInputs = input.runtimeInputs || {};
   const inputJson = JSON.stringify(runtimeInputs);
-  const payloadJson = JSON.stringify(input.payload ?? null);
+  const payloadJson = JSON.stringify(subworkflowTriggerEnvelope(input.payload));
   // Resuming a parent after a worker interruption must not run successful Map
   // items twice. Exact child version and exact input are both part of identity.
   const completedExisting = await db.prepare(`SELECT * FROM automation_runs WHERE parent_run_id = ? AND parent_node_id = ?
@@ -617,17 +649,20 @@ async function executeBoundSubworkflow(parent: RunRow, input: { parentNodeId: st
   if (parent.replay_of_run_id) {
     const prior = await db.prepare(`SELECT * FROM automation_runs WHERE parent_run_id = ? AND parent_node_id = ?
       AND item_index IS NOT DISTINCT FROM ? AND workflow_id = ? AND status IN ('completed','completed_with_warnings')
-      AND workflow_version_id = ? ORDER BY completed_at DESC LIMIT 1`).get(parent.replay_of_run_id, input.parentNodeId, input.itemIndex ?? null, target.workflow_id, target.published_version_id) as RunRow | undefined;
+      AND workflow_version_id = ? AND input_json = ?::jsonb
+      AND trigger_payload_json IS NOT DISTINCT FROM ?::jsonb
+      ORDER BY completed_at DESC LIMIT 1`).get(parent.replay_of_run_id, input.parentNodeId, input.itemIndex ?? null,
+        target.workflow_id, target.published_version_id, inputJson, payloadJson) as RunRow | undefined;
     if (prior) {
       const id = randomUUID(); const now = new Date().toISOString();
       await db.prepare(`INSERT INTO automation_runs
         (id, workflow_id, workflow_version_id, workspace_id, project_id, user_id, status, run_kind, admission_key, overlap_policy, max_concurrent_runs, parent_run_id, parent_node_id, root_run_id, replay_of_run_id,
-         item_index, execution_depth, stage_label, progress, input_json, trigger_payload_json, output_json, policy_json, deployment_json, charged_credits, warning_count, reused_node_count,
+         item_index, execution_depth, stage_label, progress, input_json, input_snapshot_json, trigger_payload_json, output_json, policy_json, deployment_json, charged_credits, warning_count, reused_node_count,
          attempts, max_attempts, available_at, started_at, deadline_at, created_at, updated_at, completed_at)
-        VALUES (?, ?, ?, ?, ?, ?, ?, 'subworkflow', ?, ?, ?, ?, ?, ?, ?, ?, ?, 'Reused successful child run', 100, ?, ?, ?, ?, ?, 0, ?, 1, 1, 1, ?, ?, ?, ?, ?, ?)`)
+        VALUES (?, ?, ?, ?, ?, ?, ?, 'subworkflow', ?, ?, ?, ?, ?, ?, ?, ?, ?, 'Reused successful child run', 100, ?, ?, ?, ?, ?, ?, 0, ?, 1, 1, 1, ?, ?, ?, ?, ?, ?)`)
         .run(id, prior.workflow_id, prior.workflow_version_id, parent.workspace_id, parent.project_id, parent.user_id, prior.status,
           parent.admission_key, parent.overlap_policy, parent.max_concurrent_runs, parent.id, input.parentNodeId, parent.root_run_id || parent.id, prior.id,
-          input.itemIndex ?? null, parent.execution_depth + 1, inputJson, payloadJson, prior.output_json, prior.policy_json, JSON.stringify(deployment), prior.warning_count, now, now, parent.deadline_at, now, now, now);
+          input.itemIndex ?? null, parent.execution_depth + 1, inputJson, JSON.stringify(jsonValue(prior.input_snapshot_json) || {}), payloadJson, prior.output_json, prior.policy_json, JSON.stringify(deployment), prior.warning_count, now, now, parent.deadline_at, now, now, now);
       await appendEvent(id, "run.reused", { sourceRunId: prior.id, parentRunId: parent.id, itemIndex: input.itemIndex ?? null });
       return { runId: id, output: jsonValue(prior.output_json), warningCount: Number(prior.warning_count || 0) };
     }
@@ -641,7 +676,7 @@ async function executeBoundSubworkflow(parent: RunRow, input: { parentNodeId: st
     ancestorId = row.parent_run_id;
   }
   if (ancestors.has(target.workflow_id)) throw Object.assign(new Error("Subworkflow recursion is not allowed in the active run chain"), { code: "SUBWORKFLOW_RECURSION" });
-  const graph = jsonValue<AutomationWorkflowVersion["graph"]>(target.graph_json);
+  const graph = automationWorkflowGraphSchema.parse(jsonValue(target.graph_json));
   const validation = validateAutomationWorkflowGraph(graph);
   if (!validation.valid) throw Object.assign(new Error("The bound child workflow is no longer valid"), { code: "SUBWORKFLOW_INVALID" });
   const validationInputs = { ...runtimeInputs };
@@ -662,13 +697,30 @@ async function executeBoundSubworkflow(parent: RunRow, input: { parentNodeId: st
   const now = new Date().toISOString();
   const id = randomUUID();
   const deadlineAt = new Date(Math.min(Date.parse(parent.deadline_at || new Date(Date.now() + policy.timeoutSeconds * 1_000).toISOString()), Date.now() + policy.timeoutSeconds * 1_000)).toISOString();
+  const inputSnapshot = await materializeAutomationRunInputSnapshot({
+    graph,
+    context: {
+      runId: id,
+      workflowId: target.workflow_id,
+      userId: parent.user_id,
+      workspaceId: parent.workspace_id,
+      projectId: parent.project_id,
+      runtimeInputs,
+      triggerPayload: jsonValue(payloadJson),
+      workerId,
+      runKind: "subworkflow",
+      deadlineAt,
+      policy,
+    },
+    handlers: coreAutomationNodeHandlers(),
+  });
   await db.prepare(`INSERT INTO automation_runs
     (id, workflow_id, workflow_version_id, workspace_id, project_id, user_id, status, run_kind, admission_key, overlap_policy, max_concurrent_runs, parent_run_id, parent_node_id, root_run_id, item_index,
-     execution_depth, stage_label, progress, input_json, trigger_payload_json, policy_json, deployment_json, attempts, max_attempts, available_at, locked_at, worker_id, started_at, deadline_at, created_at, updated_at)
-    VALUES (?, ?, ?, ?, ?, ?, 'running', 'subworkflow', ?, ?, ?, ?, ?, ?, ?, ?, 'Running child workflow', 1, ?, ?, ?, ?, 1, 1, ?, ?, ?, ?, ?, ?, ?)`)
+     execution_depth, stage_label, progress, input_json, input_snapshot_json, trigger_payload_json, policy_json, deployment_json, attempts, max_attempts, available_at, locked_at, worker_id, started_at, deadline_at, created_at, updated_at)
+    VALUES (?, ?, ?, ?, ?, ?, 'running', 'subworkflow', ?, ?, ?, ?, ?, ?, ?, ?, 'Running child workflow', 1, ?, ?, ?, ?, ?, 1, 1, ?, ?, ?, ?, ?, ?, ?)`)
     .run(id, target.workflow_id, target.published_version_id, parent.workspace_id, parent.project_id, parent.user_id,
       parent.admission_key, parent.overlap_policy, parent.max_concurrent_runs, parent.id, input.parentNodeId, parent.root_run_id || parent.id,
-      input.itemIndex ?? null, depth, inputJson, payloadJson, JSON.stringify(policy), JSON.stringify(deployment), now, now, workerId, now, deadlineAt, now, now);
+      input.itemIndex ?? null, depth, inputJson, JSON.stringify(inputSnapshot), payloadJson, JSON.stringify(policy), JSON.stringify(deployment), now, now, workerId, now, deadlineAt, now, now);
   await appendEvent(id, "run.started", { runKind: "subworkflow", parentRunId: parent.id, parentNodeId: input.parentNodeId, parentAttempt: input.parentAttempt, itemIndex: input.itemIndex ?? null });
   const child = await db.prepare("SELECT * FROM automation_runs WHERE id = ?").get(id) as RunRow;
   await processRun(child);
@@ -686,12 +738,54 @@ async function processRun(run: RunRow) {
   const credentialIds = Object.fromEntries(Object.entries(deployment.workflows?.[run.workflow_id]?.credentials || {}).map(([slot, binding]) => [slot, binding.credentialId]));
   const nodeIndex = new Map(version.graph.nodes.map((node, index) => [node.id, index]));
   const nodeRunIds = new Map<string, { id: string; attempt: number }>();
+  if (run.run_kind !== "node-preview") {
+    let rawSnapshot = jsonValue<Record<string, unknown>>(run.input_snapshot_json || {}) || {};
+    if (!Object.keys(rawSnapshot).length) {
+      rawSnapshot = await materializeAutomationRunInputSnapshot({
+        graph: version.graph,
+        context: {
+          runId: run.id,
+          workflowId: run.workflow_id,
+          userId: run.user_id,
+          workspaceId: run.workspace_id,
+          projectId: run.project_id,
+          runtimeInputs,
+          triggerPayload: run.trigger_payload_json ? jsonValue<unknown>(run.trigger_payload_json) : undefined,
+          workerId,
+          runKind: run.run_kind,
+          deadlineAt: run.deadline_at || undefined,
+          policy: automationWorkflowSettingsSchema.parse(jsonValue(run.policy_json) || {}),
+        },
+        handlers: coreAutomationNodeHandlers(),
+      });
+      await db.prepare("UPDATE automation_runs SET input_snapshot_json = ?, updated_at = ? WHERE id = ? AND input_snapshot_json = '{}'::jsonb")
+        .run(JSON.stringify(rawSnapshot), new Date().toISOString(), run.id);
+      run.input_snapshot_json = rawSnapshot;
+    }
+    const snapshot = parseAutomationRunInputSnapshot(version.graph, rawSnapshot);
+    for (const node of version.graph.nodes) {
+      const entry = snapshot[node.id];
+      if (!entry) continue;
+      const existing = await db.prepare("SELECT id FROM automation_node_runs WHERE run_id = ? AND node_id = ? AND attempt = 1")
+        .get(run.id, node.id) as { id: string } | undefined;
+      if (existing) continue;
+      await reserveAutomationTreeUsage(run.id, "node", 1, `input-snapshot:${node.id}`);
+      const nodeRunId = randomUUID();
+      const outputPorts = Object.keys(entry.output).filter((key) => !key.startsWith("__") && entry.output[key] !== undefined);
+      const capturedAt = run.created_at;
+      const inserted = await db.prepare(`INSERT INTO automation_node_runs
+        (id, run_id, node_id, node_type, attempt, status, input_json, output_json, output_ports_json, charged_credits, started_at, completed_at, created_at, updated_at)
+        VALUES (?, ?, ?, ?, 1, 'completed', ?, ?, ?, 0, ?, ?, ?, ?) ON CONFLICT (run_id, node_id, attempt) DO NOTHING`)
+        .run(nodeRunId, run.id, node.id, node.type, JSON.stringify(entry.input), JSON.stringify(entry.output), JSON.stringify(outputPorts), capturedAt, capturedAt, capturedAt, capturedAt);
+      if (inserted.changes === 1) await appendEvent(run.id, "node.input_snapshotted", { nodeId: node.id, nodeType: node.type, outputPorts }, nodeRunId);
+    }
+  }
   const priorAttemptRows = await db.prepare("SELECT node_id, MAX(attempt) AS attempt FROM automation_node_runs WHERE run_id = ? GROUP BY node_id")
     .all(run.id) as Array<{ node_id: string; attempt: number }>;
   const attemptBaseByNode = new Map(priorAttemptRows.map((row) => [row.node_id, Number(row.attempt || 0)]));
   const completedRows = await db.prepare(`SELECT DISTINCT ON (node_id) node_id, output_json
     FROM automation_node_runs WHERE run_id = ? AND status = 'completed' AND output_json IS NOT NULL
-    ORDER BY node_id, completed_at DESC`).all(run.id) as Array<{ node_id: string; output_json: unknown }>;
+    ORDER BY node_id, attempt DESC, completed_at DESC, id DESC`).all(run.id) as Array<{ node_id: string; output_json: unknown }>;
   const initialOutputs = new Map(completedRows.map((row) => [row.node_id, jsonValue<Record<string, unknown>>(row.output_json)]));
   const executionAbort = new AbortController();
   let cancellationCheckPending = false;
@@ -771,7 +865,7 @@ async function processRun(run: RunRow) {
         observer: {
           async nodeStarted(node, capturedInput) {
             await assertRunActive(run.id);
-            await reserveAutomationTreeUsage(run.id, "node", 1);
+            await reserveAutomationTreeUsage(run.id, "node", 1, `preview:${node.id}:1`);
             const now = new Date().toISOString();
             await db.prepare(`INSERT INTO automation_node_runs
               (id, run_id, node_id, node_type, attempt, status, input_json, charged_credits, started_at, created_at, updated_at)
@@ -857,9 +951,9 @@ async function processRun(run: RunRow) {
       observer: {
         async nodeStarted(node, nodeInput, attempt) {
           await assertRunActive(run.id);
-          await reserveAutomationTreeUsage(run.id, "node", 1);
-          const nodeRunId = randomUUID();
           const durableAttempt = (attemptBaseByNode.get(node.id) || 0) + attempt;
+          await reserveAutomationTreeUsage(run.id, "node", 1, `node:${node.id}:attempt:${durableAttempt}`);
+          const nodeRunId = randomUUID();
           nodeRunIds.set(`${node.id}:${attempt}`, { id: nodeRunId, attempt: durableAttempt });
           const now = new Date().toISOString();
           const progress = Math.max(2, Math.round(((nodeIndex.get(node.id) || 0) / Math.max(1, version.graph.nodes.length)) * 94));

@@ -1,0 +1,237 @@
+{
+  "schemaVersion": 1,
+  "nodes": {
+    "core.manual-trigger@1": {
+      "inputs": [],
+      "outputs": ["run"],
+      "settings": {}
+    },
+    "input.tiktok-source@2": {
+      "inputs": ["run"],
+      "outputs": ["source"],
+      "settings": {
+        "source": "Selects the exact imported slideshow resolved when the run is enqueued.",
+        "captionMode": "Selects original, replacement or intentionally empty caption semantics.",
+        "caption": "Supplies exact replacement text only when captionMode is replacement."
+      }
+    },
+    "input.identity@2": {
+      "inputs": ["run"],
+      "outputs": ["identity"],
+      "settings": {
+        "identity": "Selects the saved identity resolved when the run is enqueued.",
+        "referenceGroup": "Includes all available, reference, before or after assets exactly as selected.",
+        "optional": "Allows no identity selection to produce null; it does not excuse an empty selected group."
+      }
+    },
+    "input.visual-references@1": {
+      "inputs": ["run"],
+      "outputs": ["references"],
+      "settings": {
+        "references": "Selects ordered workspace image asset IDs resolved when the run is enqueued.",
+        "maxItems": "Rejects a selected reference list above this count without truncating it.",
+        "optional": "Allows an empty selected list to produce an empty reference package."
+      }
+    },
+    "input.creative-settings@1": {
+      "inputs": ["run"],
+      "outputs": ["settings"],
+      "settings": {
+        "mode": "Selects the configured adaptation route value.",
+        "newOutfit": "Selects the exact wardrobe-change boolean.",
+        "newLocation": "Selects the exact location-change boolean.",
+        "textStrategy": "Selects keep, rewrite or remove for on-image text.",
+        "creativeBrief": "Supplies the exact free-text creative direction.",
+        "creativeDirectionPolicy": "Selects whether written direction may propose changes or must agree with switches."
+      }
+    },
+    "input.workflow-data@1": {
+      "inputs": ["run"],
+      "outputs": ["data"],
+      "settings": {
+        "value": "Supplies the visible manual value only when no trigger or parent payload is present.",
+        "payloadPath": "Selects one exact nested field from a trigger or parent payload and never guesses another path."
+      }
+    },
+    "ai.structured-task@2": {
+      "inputs": ["primary", "context", "identity"],
+      "outputs": ["result", "error"],
+      "settings": {
+        "modelId": "Selects the primary AI model for this node.",
+        "userPrompt": "Defines the visible task and variable placement.",
+        "outputMode": "Selects plain text or strict structured output.",
+        "responseSchema": "Defines the exact structured output contract when outputMode is structured.",
+        "runWhen": "Selects always-run or explicit primary-input skip behavior.",
+        "systemPrompt": "Defines workflow-author permanent instructions kept separate from connected data.",
+        "creativity": "Maps Consistent, Balanced or Exploratory to the documented provider temperature.",
+        "maxAttempts": "Bounds attempts made under the node failure policy.",
+        "fallbackModelId": "Selects the explicit model used only after the first failed attempt.",
+        "failureMode": "Selects stop, error output or empty-result continuation."
+      }
+    },
+    "logic.transform@1": {
+      "inputs": ["data"],
+      "outputs": ["result"],
+      "settings": {
+        "template": "Defines the exact deterministic output template rendered from connected values."
+      }
+    },
+    "logic.select-one@1": {
+      "inputs": ["data"],
+      "outputs": ["result"],
+      "settings": {}
+    },
+    "logic.retry-gate@1": {
+      "inputs": ["initial", "feedback"],
+      "outputs": ["current", "exhausted"],
+      "settings": {
+        "maxRetries": "Bounds corrected passes through the visible retry route.",
+        "feedbackPath": "Selects the exact corrected value inside feedback without fallback or repair."
+      }
+    },
+    "logic.select-path@1": {
+      "inputs": ["data"],
+      "outputs": ["result"],
+      "settings": {
+        "path": "Selects one exact existing nested field and fails when it is missing."
+      }
+    },
+    "logic.condition@3": {
+      "inputs": ["data"],
+      "outputs": ["yes", "no"],
+      "settings": {
+        "path": "Selects the exact field inspected by the condition.",
+        "operator": "Selects one explicit JSON-typed comparison and never evaluates code or coerces values.",
+        "compareValue": "Supplies the exact same-type comparison value for operators that require one."
+      }
+    },
+    "logic.prepare-creative-direction@3": {
+      "inputs": ["settings", "source"],
+      "outputs": ["request"],
+      "settings": {
+        "controls": "Defines the only setting paths and values the interpreter may classify.",
+        "briefPath": "Selects the exact settings path read as creative direction.",
+        "policyPath": "Selects the exact settings path read as change policy.",
+        "resultPath": "Selects the exact empty settings path where resolution evidence will be written.",
+        "minConfidence": "Defines the minimum accepted model confidence and never changes a choice.",
+        "maxBriefCharacters": "Rejects an oversized direction without truncating it.",
+        "requirementCategories": "Defines the only accepted IDs for free-text requirement categories.",
+        "requirementPlacements": "Defines the only accepted IDs for preserve, change or avoid destinations.",
+        "maxRequirements": "Rejects too many classified requirements without dropping any.",
+        "allowIgnoredClauses": "Selects whether a fully evidenced non-actionable clause with a reason is permitted."
+      }
+    },
+    "ai.interpret-creative-direction@3": {
+      "inputs": ["request"],
+      "outputs": ["analysis", "error"],
+      "settings": {
+        "systemInstructions": "Defines the visible immutable interpretation contract for this version.",
+        "taskInstructions": "Defines the visible task applied to the prepared request.",
+        "creativity": "Maps the selected consistency mode to the documented provider temperature.",
+        "modelId": "Selects the primary AI model for interpretation.",
+        "maxAttempts": "Bounds attempts made under the node failure policy.",
+        "fallbackModelId": "Selects the explicit model used only after the first failed attempt.",
+        "failureMode": "Selects stop, error output or empty-result continuation."
+      }
+    },
+    "logic.resolve-creative-direction@4": {
+      "inputs": ["request", "analysis"],
+      "outputs": ["resolved", "conflict"],
+      "settings": {}
+    },
+    "logic.limit-batch@1": {
+      "inputs": ["items"],
+      "outputs": ["items", "summary"],
+      "settings": {
+        "maxItems": "Rejects a larger list and passes an allowed list unchanged."
+      }
+    },
+    "logic.merge@1": {
+      "inputs": ["input-1", "input-2"],
+      "outputs": ["result"],
+      "settings": {
+        "mode": "Selects named-object packaging or one-level ordered list append.",
+        "inputs": "Defines the exact stable input socket IDs, names and required flags."
+      }
+    },
+    "logic.run-subworkflow@1": {
+      "inputs": ["data"],
+      "outputs": ["result", "error"],
+      "settings": {
+        "subworkflowSlot": "Selects the deployment binding for one pinned live child workflow.",
+        "childInputs": "Supplies an exact fixed runtime-input object separate from the connected child payload.",
+        "failureMode": "Selects stop, error output or empty-result continuation."
+      }
+    },
+    "logic.map-subworkflow@1": {
+      "inputs": ["items"],
+      "outputs": ["results", "failures", "error"],
+      "settings": {
+        "subworkflowSlot": "Selects the deployment binding for the pinned live child workflow.",
+        "maxItems": "Rejects an oversized list without truncating it.",
+        "concurrency": "Requests parallel child runs subject only to the visible workflow policy cap.",
+        "itemFailure": "Selects keep-successful collection or stop-on-any-failure behavior.",
+        "childInputs": "Supplies the same exact fixed runtime-input object to each child run.",
+        "failureMode": "Selects stop, error output or empty-result continuation for node-level failure."
+      }
+    },
+    "integration.http-request@1": {
+      "inputs": ["data"],
+      "outputs": ["response", "error"],
+      "settings": {
+        "url": "Defines the exact rendered public HTTP or HTTPS destination.",
+        "method": "Selects the exact supported HTTP method.",
+        "body": "Defines the exact rendered JSON body for methods that send one.",
+        "credentialSlot": "Selects a deployment credential binding without embedding a secret.",
+        "credentialKind": "Selects the exact bearer, basic or header serialization.",
+        "headers": "Defines exact rendered non-secret request headers.",
+        "timeoutSeconds": "Bounds one request attempt.",
+        "maxAttempts": "Bounds safe attempts; mutating retries require an explicit idempotency key.",
+        "failureMode": "Selects stop or explicit error-output routing."
+      }
+    },
+    "logic.validate-slide-plans@2": {
+      "inputs": ["data", "contract", "source", "identity", "references"],
+      "outputs": ["plans", "error"],
+      "settings": {
+        "profile": "Selects the visible read-only Recreate TikTok v1 validation contract.",
+        "maxSlides": "Rejects an oversized plan collection without truncating it.",
+        "failureMode": "Selects stop or explicit repair-error routing."
+      }
+    },
+    "generation.image@2": {
+      "inputs": ["requests"],
+      "outputs": ["assets", "error"],
+      "settings": {
+        "modelId": "Selects the exact image model for the batch.",
+        "ratio": "Selects the exact aspect ratio, which must be compatible with every request mode.",
+        "resolution": "Selects the exact supported image resolution.",
+        "partialFailure": "Selects keep-successful output or stop without canvas output.",
+        "concurrency": "Requests parallel generation subject only to the visible workflow policy cap.",
+        "maxAttempts": "Bounds provider attempts for each image request.",
+        "failureMode": "Selects stop or explicit error-output routing when the node fails."
+      }
+    },
+    "logic.prepare-slideshow-image-requests@1": {
+      "inputs": ["plans", "source", "identity", "references"],
+      "outputs": ["requests"],
+      "settings": {}
+    },
+    "output.add-to-canvas@3": {
+      "inputs": ["assets", "source"],
+      "outputs": ["result"],
+      "settings": {
+        "layout": "Selects beside-source or new-row placement.",
+        "includePlanNote": "Selects whether the complete plan is preserved across bounded editable notes beside generated images."
+      }
+    },
+    "output.finish@1": {
+      "inputs": ["data"],
+      "outputs": ["result"],
+      "settings": {
+        "outcome": "Selects successful final output or deliberate run failure.",
+        "message": "Defines the exact rendered result or failure message."
+      }
+    }
+  }
+}

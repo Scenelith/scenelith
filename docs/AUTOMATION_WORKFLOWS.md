@@ -1,5 +1,7 @@
 # Automation workflows
 
+The current per-node settings-to-runtime audit is maintained in [AUTOMATION_NODE_CONTRACT_AUDIT.md](./AUTOMATION_NODE_CONTRACT_AUDIT.md). Update it whenever a current node version, help contract or runtime effect changes.
+
 Scenelith automations are saved, versioned graphs. The editor opens as a separate canvas over the content canvas, while the Automation panel remains the place where a user selects a published workflow, supplies run-time values, starts it, and watches progress.
 
 ## Product flow

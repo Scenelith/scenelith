@@ -1,6 +1,6 @@
 "use client";
 
-import { AlertTriangle, Check, Clock3, Copy, FlaskConical, GitBranch, History, Play, Plus, Radio, RotateCcw, Trash2, X } from "lucide-react";
+import { AlertTriangle, Check, Clock3, Copy, FlaskConical, GitBranch, Play, Plus, Radio, RotateCcw, Trash2, X } from "lucide-react";
 import { useCallback, useEffect, useState } from "react";
 import type { AutomationRunInputField, AutomationWorkflowDetail, AutomationWorkflowVersionSummary } from "@/lib/automation-workflows/types";
 import type { AutomationCapabilities } from "@/editions/contracts/access";
@@ -61,6 +61,29 @@ function statusLabel(status: RunSummary["status"]) {
   return status.charAt(0).toUpperCase() + status.slice(1);
 }
 
+const operationsViewCopy = {
+  runs: {
+    eyebrow: "EXECUTION",
+    title: "Run history",
+    description: "Open a run to see every step, exact route, retry, error and charge.",
+  },
+  versions: {
+    eyebrow: "WORKFLOW HISTORY",
+    title: "Versions",
+    description: "Review live and auto-saved snapshots or restore an earlier version as a new draft.",
+  },
+  triggers: {
+    eyebrow: "AUTOMATIC STARTS",
+    title: "Automatic starts",
+    description: "Choose whether a schedule, webhook or Canvas event can start this workflow without clicking Run.",
+  },
+  fixtures: {
+    eyebrow: "SAFE TESTING",
+    title: "Test a step",
+    description: "Save an input example, then run one selected step without launching the full production workflow.",
+  },
+} as const;
+
 export function AutomationWorkflowOperations({
   projectId,
   workflowId,
@@ -109,6 +132,7 @@ export function AutomationWorkflowOperations({
   const [busyId, setBusyId] = useState("");
   const [error, setError] = useState("");
   const [confirmDeleteId, setConfirmDeleteId] = useState("");
+  const viewCopy = operationsViewCopy[view];
 
   useEffect(() => {
     const onKeyDown = (event: KeyboardEvent) => { if (event.key === "Escape") onClose(); };
@@ -122,7 +146,16 @@ export function AutomationWorkflowOperations({
       const response = await fetch(`/api/automation-runs?projectId=${encodeURIComponent(projectId)}&workflowId=${encodeURIComponent(workflowId)}&limit=50`, { cache: "no-store" });
       const body = await response.json() as { runs?: RunSummary[]; error?: string };
       if (!response.ok) throw new Error(body.error || "Could not load run history");
-      setRuns(body.runs || []);
+      const runList = body.runs || [];
+      setRuns(runList);
+      if (runList[0]) {
+        const latestResponse = await fetch(`/api/automation-runs/${encodeURIComponent(runList[0].id)}`, { cache: "no-store" });
+        const latestBody = await latestResponse.json() as { run?: RunSummary; error?: string };
+        if (!latestResponse.ok || !latestBody.run) throw new Error(latestBody.error || "Could not open the latest run");
+        setSelectedRun(latestBody.run);
+      } else {
+        setSelectedRun(null);
+      }
       setError("");
     } catch (loadError) {
       setError(loadError instanceof Error ? loadError.message : "Could not load run history");
@@ -312,11 +345,11 @@ export function AutomationWorkflowOperations({
     } finally { setBusyId(""); }
   }
 
-  async function retryRun(runId: string, nodeId?: string) {
-    setBusyId(nodeId ? `${runId}:${nodeId}` : runId);
+  async function retryRun(runId: string, nodeId: string) {
+    setBusyId(`${runId}:${nodeId}`);
     try {
       const response = await fetch(`/api/automation-runs/${encodeURIComponent(runId)}/retry`, {
-        method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(nodeId ? { nodeId } : {}),
+        method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ nodeId }),
       });
       const body = await response.json() as { runId?: string; error?: string };
       if (!response.ok || !body.runId) throw new Error(body.error || "Could not retry this run");
@@ -343,15 +376,15 @@ export function AutomationWorkflowOperations({
   return <div className="automation-operations-backdrop" onPointerDown={(event) => event.target === event.currentTarget && onClose()}>
     <section className="automation-operations" role="dialog" aria-modal="true" aria-label="Workflow operations">
       <header>
-        <div><small>WORKFLOW OPERATIONS</small><h2>{view === "runs" ? "Run history" : view === "versions" ? "Version history" : view === "triggers" ? "Triggers" : "Step preview"}</h2></div>
-        <nav><button type="button" className={view === "runs" ? "is-active" : ""} onClick={() => { setView("runs"); setSelectedRun(null); }}><Play size={13} /> Runs</button>{(capabilities.edit || capabilities.publish) && <button type="button" className={view === "versions" ? "is-active" : ""} onClick={() => { setView("versions"); setSelectedRun(null); }}><History size={13} /> Versions</button>}{capabilities.manageTriggers && <button type="button" className={view === "triggers" ? "is-active" : ""} onClick={() => { setView("triggers"); setSelectedRun(null); }}><Radio size={13} /> Triggers</button>}{(capabilities.run || capabilities.edit) && <button type="button" className={view === "fixtures" ? "is-active" : ""} onClick={() => { setView("fixtures"); setSelectedRun(null); }}><FlaskConical size={13} /> Preview</button>}</nav>
+        <div><small>{viewCopy.eyebrow}</small><h2>{viewCopy.title}</h2><p>{viewCopy.description}</p></div>
+        <nav aria-label="Workflow management sections"><button type="button" className={view === "runs" ? "is-active" : ""} onClick={() => { setView("runs"); setSelectedRun(null); }}>Runs</button>{(capabilities.edit || capabilities.publish) && <button type="button" className={view === "versions" ? "is-active" : ""} onClick={() => { setView("versions"); setSelectedRun(null); }}>Versions</button>}{capabilities.manageTriggers && <button type="button" className={view === "triggers" ? "is-active" : ""} onClick={() => { setView("triggers"); setSelectedRun(null); }}>Automatic starts</button>}{(capabilities.run || capabilities.edit) && <button type="button" className={view === "fixtures" ? "is-active" : ""} onClick={() => { setView("fixtures"); setSelectedRun(null); }}>Test a step</button>}</nav>
         <button type="button" className="automation-operations-close" onClick={onClose} aria-label="Close operations"><X size={16} /></button>
       </header>
       {error && <div className="automation-operations-error" role="alert"><AlertTriangle size={14} />{error}</div>}
       <div className="automation-operations-body">
         {loading ? <div className="automation-operations-loading" aria-live="polite"><i />Loading…</div> : view === "runs" ? <>
           <div className="automation-operations-list">
-            {!runs.length && <p className="automation-operations-empty">No runs yet. Test the draft or run a published version.</p>}
+            {!runs.length && <p className="automation-operations-empty">No runs yet. Test the auto-saved draft or run the live version.</p>}
             {runs.map((run) => <button type="button" key={run.id} className={selectedRun?.id === run.id ? "is-selected" : ""} onClick={() => void inspectRun(run.id)}>
               <span className={`is-${run.status}`}>{run.status === "completed" ? <Check size={13} /> : run.status === "failed" ? <AlertTriangle size={13} /> : <Clock3 size={13} />}</span>
               <i><b>{statusLabel(run.status)}</b><small>{run.runKind} · {when(run.createdAt)}</small></i>
@@ -359,15 +392,15 @@ export function AutomationWorkflowOperations({
             </button>)}
           </div>
           <div className="automation-run-inspector">
-            {!selectedRun ? <div className="automation-operations-empty"><GitBranch size={22} /><p>Select a run to inspect every step, chosen branch, retry and charge.</p></div> : <>
+            {!selectedRun ? <div className="automation-operations-empty"><GitBranch size={22} /><p>{runs.length ? "Opening the latest run…" : "Run this workflow once to inspect every step, chosen branch, retry and charge here."}</p></div> : <>
               <div className="automation-run-summary"><span><small>STATUS</small><b>{statusLabel(selectedRun.status)}</b></span><span><small>STARTED</small><b>{when(selectedRun.startedAt || selectedRun.createdAt)}</b></span><span><small>TOTAL USAGE</small><b>{selectedRun.treeChargedCredits} units</b></span><span><small>EXECUTION TREE</small><b>{selectedRun.treeRunCount} run{selectedRun.treeRunCount === 1 ? "" : "s"} · {selectedRun.treeNodeExecutions} steps · {selectedRun.treeGeneratedAssets} assets</b></span></div>
               {selectedRun.error && <div className="automation-run-error"><b>{selectedRun.code || "RUN_FAILED"}</b><p>{selectedRun.error}</p></div>}
-              {capabilities.run && (selectedRun.status === "failed" || selectedRun.status === "completed_with_warnings") && <button type="button" className="automation-run-retry" disabled={Boolean(busyId)} onClick={() => void retryRun(selectedRun.id)}><RotateCcw size={13} /> Retry failed work</button>}
+              {selectedRun.replayOfRunId && <div className="automation-run-error"><b>EXPLICIT REPLAY</b><p>This run restarts from a chosen step in run {selectedRun.replayOfRunId.slice(0, 8)} and reuses {selectedRun.reusedNodeCount} completed upstream step{selectedRun.reusedNodeCount === 1 ? "" : "s"} exactly.</p></div>}
               <div className="automation-run-timeline">{selectedRun.nodeRuns.map((nodeRun) => <article key={nodeRun.id} className={`is-${nodeRun.status}`}>
                 <span>{nodeRun.reusedFromNodeRunId ? <RotateCcw size={12} /> : nodeRun.status === "completed" ? <Check size={12} /> : nodeRun.status === "failed" ? <AlertTriangle size={12} /> : <Clock3 size={12} />}</span>
-                <div><small>{nodeRun.nodeType} · attempt {nodeRun.attempt}</small><b>{nodeRun.nodeId}</b>{nodeRun.outputPorts.length > 0 && <p>Path: {nodeRun.outputPorts.join(" · ")}</p>}{nodeRun.error && <p className="is-error">{nodeRun.error}</p>}</div>
+                <div><small>{nodeRun.nodeType} · attempt {nodeRun.attempt}</small><b>{nodeRun.nodeId}</b>{nodeRun.reusedFromNodeRunId && <p>Reused exact output from node run {nodeRun.reusedFromNodeRunId.slice(0, 8)}</p>}{nodeRun.outputPorts.length > 0 && <p>Path: {nodeRun.outputPorts.join(" · ")}</p>}{nodeRun.error && <p className="is-error">{nodeRun.error}</p>}</div>
                 {capabilities.edit && nodeRun.hasCapturedInput && <button type="button" disabled={Boolean(busyId)} onClick={() => void captureRunNodeFixture(selectedRun, nodeRun)}><FlaskConical size={12} /> Save fixture</button>}
-                {capabilities.run && nodeRun.status === "failed" && <button type="button" disabled={Boolean(busyId)} onClick={() => void retryRun(selectedRun.id, nodeRun.nodeId)}><RotateCcw size={12} /> Retry here</button>}
+                {capabilities.run && (selectedRun.status === "failed" || selectedRun.status === "completed_with_warnings") && <button type="button" disabled={Boolean(busyId)} onClick={() => void retryRun(selectedRun.id, nodeRun.nodeId)}><RotateCcw size={12} /> Retry from here</button>}
               </article>)}</div>
             </>}
           </div>
@@ -375,7 +408,7 @@ export function AutomationWorkflowOperations({
           {!versions.length && <p className="automation-operations-empty">No saved versions yet.</p>}
           {versions.map((version) => <article key={version.id}>
             <span className={`is-${version.status}`}>v{version.version}</span>
-            <div><b>{version.status === "published" ? "Published version" : version.status === "draft" ? "Current draft" : "Previous version"}</b><small>{when(version.publishedAt || version.createdAt)}{version.changeNote ? ` · ${version.changeNote}` : ""}</small><p>{version.validation.valid ? "Valid workflow" : `${version.validation.issues.length} validation issues`}</p></div>
+            <div><b>{version.status === "published" ? "Live version" : version.status === "draft" ? "Current auto-saved draft" : "Previous version"}</b><small>{when(version.publishedAt || version.createdAt)}{version.changeNote ? ` · ${version.changeNote}` : ""}</small><p>{version.validation.valid ? "Valid workflow" : `${version.validation.issues.length} validation issues`}</p></div>
             {capabilities.edit && !readOnly && version.status !== "draft" && <button type="button" disabled={Boolean(busyId)} onClick={() => void restoreVersion(version.id)}><RotateCcw size={13} /> Restore as draft</button>}
           </article>)}
         </div> : view === "triggers" ? <div className="automation-trigger-manager">

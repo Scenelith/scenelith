@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import { createDefaultTikTokWorkflowGraph } from "../src/lib/automation-workflows/default-tiktok";
+import { evaluateAutomationConditionV2 } from "../src/lib/automation-workflows/condition";
 import { previewAutomationPaths } from "../src/lib/automation-workflows/preview";
 
 const edgeId = (source: string, sourcePort: string, target: string, targetPort: string) => `${source}:${sourcePort}->${target}:${targetPort}`;
@@ -23,7 +24,7 @@ test("optional identity activates only when a person or character is selected", 
   assert.equal(withoutIdentity.activeNodeIds.has("inspect-identity"), false);
   assert.equal(withoutIdentity.activeEdgeIds.has(edgeId("manual-run", "run", "identity", "run")), false);
   assert.equal(withoutIdentity.activeEdgeIds.has(edgeId("identity", "identity", "inspect-identity", "primary")), false);
-  assert.equal(withoutIdentity.activeEdgeIds.has(edgeId("identity", "identity", "generate-images", "identity")), false);
+  assert.equal(withoutIdentity.activeEdgeIds.has(edgeId("identity", "identity", "prepare-image-requests", "identity")), false);
   assert.equal(withoutIdentity.activeNodeIds.has("generate-images"), true);
 
   const withIdentity = preview({ identityId: "persona-1", newOutfit: true, newLocation: true, textStrategy: "rewrite" });
@@ -31,7 +32,7 @@ test("optional identity activates only when a person or character is selected", 
   assert.equal(withIdentity.activeNodeIds.has("inspect-identity"), true);
   assert.equal(withIdentity.activeEdgeIds.has(edgeId("manual-run", "run", "identity", "run")), true);
   assert.equal(withIdentity.activeEdgeIds.has(edgeId("identity", "identity", "inspect-identity", "primary")), true);
-  assert.equal(withIdentity.activeEdgeIds.has(edgeId("identity", "identity", "generate-images", "identity")), true);
+  assert.equal(withIdentity.activeEdgeIds.has(edgeId("identity", "identity", "prepare-image-requests", "identity")), true);
   assert.equal(withIdentity.activeNodeIds.has("generate-images"), true);
 });
 
@@ -95,4 +96,33 @@ test("written direction exposes the smart resolver before its runtime choice is 
     assert.equal(result.activeNodeIds.has(nodeId), true, nodeId);
   }
   assert.equal(result.activeNodeIds.has("direction-conflict"), true, "the visible conflict path remains possible until the parser returns a deterministic contract");
+});
+
+test("path preview uses the same versioned defaults as execution", () => {
+  const graph = createDefaultTikTokWorkflowGraph();
+  const choices = graph.nodes.find((node) => node.id === "creative-settings")!;
+  choices.config = {};
+  choices.bindings = {};
+  const result = previewAutomationPaths(graph, { "tiktok-source.source": "source-1" });
+  assert.equal(result.activeNodeIds.has("rebuild-concept-mode"), true, "default mode must be concept");
+  assert.equal(result.activeNodeIds.has("allow-wardrobe-change"), true, "default wardrobe choice must allow change");
+  assert.equal(result.activeNodeIds.has("allow-location-change"), true, "default location choice must allow change");
+  assert.equal(result.activeNodeIds.has("decompose-copy"), true, "default text strategy must use rewrite");
+  assert.equal(result.activeNodeIds.has("direction-conflict"), false, "the default empty direction must not invent an unresolved parser branch");
+});
+
+test("condition preview compares nested JSON values without Node-only runtime APIs", () => {
+  const data = { selection: { roles: ["source", { type: "identity", required: true }] } };
+  const equal = evaluateAutomationConditionV2(data, {
+    path: "selection",
+    operator: "equals",
+    compareValue: { roles: ["source", { required: true, type: "identity" }] },
+  });
+  const different = evaluateAutomationConditionV2(data, {
+    path: "selection.roles",
+    operator: "contains",
+    compareValue: { type: "identity", required: false },
+  });
+  assert.equal(equal, true);
+  assert.equal(different, false);
 });

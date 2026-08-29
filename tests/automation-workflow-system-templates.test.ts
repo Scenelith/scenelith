@@ -15,7 +15,7 @@ const workerSource = readFileSync(new URL("../src/worker.ts", import.meta.url), 
 
 test("system workflow identity, metadata and graph factory have one public-core registry", () => {
   assert.ok(AUTOMATION_SYSTEM_WORKFLOW_TEMPLATES.length);
-  assert.equal(DEFAULT_TIKTOK_AUTOMATION_TEMPLATE.revision, 38);
+  assert.equal(DEFAULT_TIKTOK_AUTOMATION_TEMPLATE.revision, 49);
   assert.equal(
     new Set(AUTOMATION_SYSTEM_WORKFLOW_TEMPLATES.map((template) => template.key)).size,
     AUTOMATION_SYSTEM_WORKFLOW_TEMPLATES.length,
@@ -26,7 +26,10 @@ test("system workflow identity, metadata and graph factory have one public-core 
     assert.ok(template.name.length > 0 && template.name.length <= 120);
     assert.ok(template.description.length <= 500);
     assert.equal(automationSystemWorkflowTemplate(template.key), template);
-    assert.equal(validateAutomationWorkflowGraph(template.createGraph()).valid, true, `${template.key} must build a valid graph`);
+    const graph = template.createGraph();
+    assert.equal(validateAutomationWorkflowGraph(graph).valid, true, `${template.key} must build a valid graph`);
+    const edgeSignatures = graph.edges.map((edge) => `${edge.source}:${edge.sourcePort}:${edge.role}->${edge.target}:${edge.targetPort}`);
+    assert.equal(new Set(edgeSignatures).size, edgeSignatures.length, `${template.key} must not contain duplicate connections`);
   }
   assert.equal(automationSystemWorkflowTemplate("system.unknown"), null);
 });
@@ -38,6 +41,17 @@ test("system workflow persistence consumes the registry instead of duplicating t
   assert.match(repositorySource, /template\.createGraph\(\)/);
   assert.doesNotMatch(repositorySource, /"Recreate TikTok slideshow"/);
   assert.doesNotMatch(defaultWorkflowSource, /system\.tiktok-recreate/);
+});
+
+test("the default workflow has no decorative or bypassed executable nodes", () => {
+  const graph = DEFAULT_TIKTOK_AUTOMATION_TEMPLATE.createGraph();
+  const incoming = new Map(graph.nodes.map((node) => [node.id, graph.edges.filter((edge) => edge.target === node.id)]));
+  const outgoing = new Map(graph.nodes.map((node) => [node.id, graph.edges.filter((edge) => edge.source === node.id)]));
+  assert.deepEqual(graph.nodes.filter((node) => node.disabled).map((node) => node.id), []);
+  assert.deepEqual(graph.nodes.filter((node) => node.type !== "core.manual-trigger" && !incoming.get(node.id)?.length).map((node) => node.id), []);
+  assert.deepEqual(graph.nodes.filter((node) => !node.type.startsWith("output.") && !outgoing.get(node.id)?.length).map((node) => node.id), []);
+  assert.deepEqual(graph.nodes.filter((node) => node.type === "input.visual-references").map((node) => node.id), []);
+  assert.deepEqual(incoming.get("generate-images")?.map((edge) => `${edge.source}.${edge.sourcePort}->${edge.targetPort}`), ["prepare-image-requests.requests->requests"]);
 });
 
 test("automation workers reconcile persisted system workflows before consuming triggers", () => {

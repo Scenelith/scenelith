@@ -7,3 +7,12 @@ test("workflow templates preserve structured whole-value substitutions", () => {
   assert.deepEqual(renderAutomationTemplate("{{ primary }}", { primary: source }), source);
   assert.equal(renderAutomationTemplate("Slides: {{ primary.slides }}", { primary: source }), 'Slides: [\n  {\n    "index": 1\n  },\n  {\n    "index": 2\n  }\n]');
 });
+
+test("workflow templates reject missing and unsafe paths instead of inserting null", () => {
+  assert.throws(() => renderAutomationTemplate("Missing: {{ primary.unknown }}", { primary: {} }), (error: unknown) => (
+    (error as { code?: string }).code === "TEMPLATE_VALUE_MISSING"
+  ));
+  assert.throws(() => renderAutomationTemplate("{{ __proto__.polluted }}", {}), (error: unknown) => (
+    (error as { code?: string }).code === "VALUE_PATH_INVALID"
+  ));
+});

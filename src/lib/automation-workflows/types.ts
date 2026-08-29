@@ -9,12 +9,8 @@ export const automationPortTypes = [
   "creative-direction-request",
   "creative-direction-analysis",
   "resolved-creative-settings",
-  "source-analysis",
-  "creative-plan",
-  "text-sequence",
-  "reference-plan",
   "slide-plan-set",
-  "review-result",
+  "image-request-batch",
   "generated-assets",
   "canvas-result",
   "workflow-result",
@@ -59,16 +55,13 @@ export const automationEdgeSchema = z.object({
   targetPort: z.string().min(1).max(120),
   /**
    * `flow` is the readable execution route shown on the canvas. `data` is
-   * supporting information consumed by a later step. Roles affect execution
-   * semantics; the editor keeps every saved connection visible as a solid line.
-   * when that step is selected. `error` is an explicit recovery route.
-   * `retry` is the one bounded backward route accepted by a Retry gate.
-   *
-   * Optional keeps version-one portable workflows importable. The runtime and
-   * editor treat a missing role as `flow`; newly authored graphs always store
-   * the role explicitly.
+   * supporting information consumed by a later step. `error` is an explicit
+   * recovery route and `retry` is the one bounded backward route accepted by a
+   * Retry gate. Version-one documents without this field are normalized once
+   * to `flow` at the schema boundary; persisted and executed graphs always
+   * contain one explicit role.
    */
-  role: z.enum(automationEdgeRoles).optional(),
+  role: z.enum(automationEdgeRoles).default("flow"),
 }).strict();
 
 export type AutomationEdge = z.infer<typeof automationEdgeSchema>;
@@ -202,6 +195,11 @@ export type AutomationWorkflowDetail = {
   workflow: AutomationWorkflowRecord;
   draft: AutomationWorkflowVersion | null;
   published: AutomationWorkflowVersion | null;
+  systemModelIssues: Array<{
+    nodeId: string;
+    modelId: string;
+    message: string;
+  }>;
 };
 
 export type AutomationValidationIssue = {
@@ -280,7 +278,7 @@ export type AutomationNodeDefinition = {
   description: string;
   example?: string;
   category: "trigger" | "input" | "ai" | "logic" | "integration" | "generation" | "output";
-  icon: "play" | "source" | "identity" | "references" | "choices" | "inbox" | "ai" | "transform" | "select-one" | "select-path" | "condition" | "prepare-direction" | "interpret-direction" | "resolve-direction" | "limit" | "merge" | "workflow" | "repeat" | "retry" | "http" | "validate" | "generate" | "canvas" | "finish";
+  icon: "play" | "source" | "identity" | "references" | "choices" | "inbox" | "ai" | "transform" | "select-one" | "select-path" | "condition" | "prepare-direction" | "interpret-direction" | "resolve-direction" | "limit" | "merge" | "workflow" | "repeat" | "retry" | "http" | "validate" | "image-requests" | "generate" | "canvas" | "finish";
   accent: "mint" | "amber" | "blue" | "rose" | "image" | "neutral";
   inputs: AutomationNodePortDefinition[];
   outputs: AutomationNodePortDefinition[];

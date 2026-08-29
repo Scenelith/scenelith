@@ -3,12 +3,13 @@ import { db, userCanAccessProject, workspaceIdForProject } from "@/lib/postgres-
 import { getAutomationWorkflow } from "./repository";
 import { validateAutomationRunInputs } from "./validation";
 import { validateAutomationDeploymentBindings } from "./deployment-validation";
-import type { AutomationWorkflowGraph } from "./types";
+import { automationWorkflowGraphSchema } from "./types";
 import { enqueueAutomationTriggerDelivery } from "./deliveries";
 import { nextAutomationScheduleAt, parseAutomationScheduleConfig } from "./schedules";
 import { requireAutomationPermission } from "./permissions";
 import { assertAutomationProductEventVersion, AUTOMATION_PRODUCT_EVENT_NAMES, parseAutomationProductEvent, type AutomationProductEventName } from "./product-events";
 import { workerIdentity } from "@/lib/worker-identity";
+import { canvasEventTriggerEnvelope, scheduleTriggerEnvelope, webhookTriggerEnvelope } from "./trigger-envelope";
 
 export type AutomationTriggerType = "schedule" | "webhook" | "canvas-event";
 export type AutomationOverlapPolicy = "queue" | "skip" | "cancel-previous";
@@ -35,11 +36,23 @@ export async function listAutomationWorkflowTriggers(userId: string, workflowId:
   await requireAutomationPermission(userId, detail.workflow.workspaceId, "automation.triggers.manage");
   return await db.prepare(`SELECT id, workflow_id AS "workflowId", project_id AS "projectId", type, status, name,
     overlap_policy AS "overlapPolicy", max_concurrent_runs AS "maxConcurrentRuns", config_json AS config,
-    input_json AS inputs, next_fire_at AS "nextFireAt", last_fired_at AS "lastFiredAt", created_at AS "createdAt", updated_at AS "updatedAt"
+    input_json AS inputs, active_version_id AS "activeVersionId", next_fire_at AS "nextFireAt", last_fired_at AS "lastFiredAt", created_at AS "createdAt", updated_at AS "updatedAt"
     FROM automation_workflow_triggers WHERE workflow_id = ? ORDER BY created_at`).all(workflowId);
 }
 
 export async function createAutomationWorkflowTrigger(input: { userId: string; workflowId: string; projectId: string; type: AutomationTriggerType; name: string; overlapPolicy?: AutomationOverlapPolicy; maxConcurrentRuns?: number; config: Record<string, unknown>; inputs: Record<string, unknown> }) {
+  const name = input.name.trim();
+  if (!name || name.length > 120) throw Object.assign(new Error("Trigger name must contain 1 to 120 characters"), { code: "TRIGGER_NAME_INVALID" });
+  if (!["schedule", "webhook", "canvas-event"].includes(input.type)) throw Object.assign(new Error("Choose a supported trigger type"), { code: "TRIGGER_TYPE_INVALID" });
+  const overlapPolicy = input.overlapPolicy || "queue";
+  if (!["queue", "skip", "cancel-previous"].includes(overlapPolicy)) throw Object.assign(new Error("Choose a supported overlap policy"), { code: "TRIGGER_OVERLAP_POLICY_INVALID" });
+  const maxConcurrentRuns = input.maxConcurrentRuns ?? 1;
+  if (!Number.isInteger(maxConcurrentRuns) || maxConcurrentRuns < 1 || maxConcurrentRuns > 32) {
+    throw Object.assign(new Error("Concurrent trigger runs must be an integer from 1 to 32"), { code: "TRIGGER_CONCURRENCY_INVALID" });
+  }
+  if (!input.config || typeof input.config !== "object" || Array.isArray(input.config) || !input.inputs || typeof input.inputs !== "object" || Array.isArray(input.inputs)) {
+    throw Object.assign(new Error("Trigger configuration and inputs must be JSON objects"), { code: "TRIGGER_CONFIGURATION_INVALID" });
+  }
   const detail = await getAutomationWorkflow(input.userId, input.workflowId);
   if (!detail || !detail.published || !await userCanAccessProject(input.userId, input.projectId)) return null;
   if (detail.workflow.workspaceId !== await workspaceIdForProject(input.projectId)) return null;
@@ -52,8 +65,6 @@ export async function createAutomationWorkflowTrigger(input: { userId: string; w
   let hash: string | null = null;
   let nextFireAt: string | null = null;
   let config: Record<string, unknown> = input.config;
-  const overlapPolicy = input.overlapPolicy || "queue";
-  const maxConcurrentRuns = Math.min(32, Math.max(1, input.maxConcurrentRuns || 1));
   if (input.type === "webhook") {
     token = randomBytes(32).toString("base64url");
     hash = tokenHash(token);
@@ -66,7 +77,7 @@ export async function createAutomationWorkflowTrigger(input: { userId: string; w
   if (input.type === "canvas-event") {
     const event = String(input.config.event || "");
     if (!AUTOMATION_CANVAS_EVENTS.includes(event as AutomationCanvasEvent)) throw new Error("Choose a supported canvas event");
-    const version = Number(input.config.version || 1);
+    const version = Number(input.config.version);
     // Validate the event identity now. Payload validation happens for every
     // delivery because product events are versioned contracts, not loose JSON.
     assertAutomationProductEventVersion(event, version);
@@ -75,31 +86,40 @@ export async function createAutomationWorkflowTrigger(input: { userId: string; w
   await db.prepare(`INSERT INTO automation_workflow_triggers
     (id, workflow_id, workspace_id, project_id, type, status, name, overlap_policy, max_concurrent_runs, config_json, input_json, webhook_token_hash, next_fire_at, created_by, created_at, updated_at)
     VALUES (?, ?, ?, ?, ?, 'paused', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`)
-    .run(id, input.workflowId, detail.workflow.workspaceId, input.projectId, input.type, input.name.trim().slice(0, 120), overlapPolicy,
+    .run(id, input.workflowId, detail.workflow.workspaceId, input.projectId, input.type, name, overlapPolicy,
       maxConcurrentRuns, JSON.stringify(config), JSON.stringify(input.inputs), hash, nextFireAt, input.userId, now, now);
-  return { trigger: { id, workflowId: input.workflowId, projectId: input.projectId, type: input.type, status: "paused", name: input.name,
-    overlapPolicy, maxConcurrentRuns, config, inputs: input.inputs, nextFireAt, lastFiredAt: null }, token };
+  return { trigger: { id, workflowId: input.workflowId, projectId: input.projectId, type: input.type, status: "paused", name,
+    overlapPolicy, maxConcurrentRuns, config, inputs: input.inputs, activeVersionId: null, nextFireAt, lastFiredAt: null }, token };
 }
 
 export async function setAutomationWorkflowTriggerStatus(userId: string, triggerId: string, status: "active" | "paused") {
-  const row = await db.prepare(`SELECT trigger.workflow_id, trigger.workspace_id, trigger.type, trigger.input_json, trigger.config_json, workflow.published_version_id, version.graph_json
-    FROM automation_workflow_triggers trigger JOIN automation_workflows workflow ON workflow.id = trigger.workflow_id
-    LEFT JOIN automation_workflow_versions version ON version.id = workflow.published_version_id WHERE trigger.id = ?`).get(triggerId) as { workflow_id: string; workspace_id: string; type: AutomationTriggerType; input_json: unknown; config_json: unknown; published_version_id: string | null; graph_json: unknown } | undefined;
-  if (!row || !await getAutomationWorkflow(userId, row.workflow_id)) return null;
-  await requireAutomationPermission(userId, row.workspace_id, "automation.triggers.manage");
-  if (status === "active") {
-    if (!row.published_version_id || !row.graph_json) throw new Error("Publish the workflow before activating this trigger");
-    const inputs = jsonValue<Record<string, unknown>>(row.input_json);
-    const graph = jsonValue<AutomationWorkflowGraph>(row.graph_json);
-    const validation = validateAutomationRunInputs(graph, inputs);
-    if (!validation.valid) throw new Error(`Trigger inputs no longer match the published workflow: ${validation.issues.map((entry) => entry.message).join(" ")}`);
-    const deployment = await validateAutomationDeploymentBindings({ workflowId: row.workflow_id, workspaceId: row.workspace_id, graph });
-    if (!deployment.valid) throw new Error(`Connect this workflow before activating the trigger: ${deployment.issues.map((entry) => entry.message).join(" ")}`);
-  }
-  const now = new Date().toISOString();
-  const nextFireAt = status === "active" && row.type === "schedule" ? nextAutomationScheduleAt(jsonValue(row.config_json), now) : null;
-  await db.prepare("UPDATE automation_workflow_triggers SET status = ?, next_fire_at = CASE WHEN type = 'schedule' THEN ? ELSE next_fire_at END, updated_at = ? WHERE id = ?").run(status, nextFireAt, now, triggerId);
-  return { id: triggerId, status, workflowId: row.workflow_id, workspaceId: row.workspace_id };
+  const owner = await db.prepare("SELECT workflow_id, workspace_id FROM automation_workflow_triggers WHERE id = ?").get(triggerId) as { workflow_id: string; workspace_id: string } | undefined;
+  if (!owner || !await getAutomationWorkflow(userId, owner.workflow_id)) return null;
+  await requireAutomationPermission(userId, owner.workspace_id, "automation.triggers.manage");
+  return await db.transaction(async () => {
+    await db.prepare("SELECT pg_advisory_xact_lock(hashtextextended(?, 0))").get(`automation-workflow:${owner.workflow_id}`);
+    const row = await db.prepare(`SELECT trigger.workflow_id, trigger.workspace_id, trigger.type, trigger.input_json, trigger.config_json,
+      workflow.published_version_id, version.graph_json
+      FROM automation_workflow_triggers trigger JOIN automation_workflows workflow ON workflow.id = trigger.workflow_id
+      LEFT JOIN automation_workflow_versions version ON version.id = workflow.published_version_id WHERE trigger.id = ? FOR UPDATE OF trigger`).get(triggerId) as { workflow_id: string; workspace_id: string; type: AutomationTriggerType; input_json: unknown; config_json: unknown; published_version_id: string | null; graph_json: unknown } | undefined;
+    if (!row) return null;
+    if (status === "active") {
+      if (!row.published_version_id || !row.graph_json) throw new Error("Take the workflow live before activating this trigger");
+      const inputs = jsonValue<Record<string, unknown>>(row.input_json);
+      const graph = automationWorkflowGraphSchema.parse(jsonValue(row.graph_json));
+      const validation = validateAutomationRunInputs(graph, inputs);
+      if (!validation.valid) throw new Error(`Trigger inputs no longer match the live workflow: ${validation.issues.map((entry) => entry.message).join(" ")}`);
+      const deployment = await validateAutomationDeploymentBindings({ workflowId: row.workflow_id, workspaceId: row.workspace_id, graph });
+      if (!deployment.valid) throw new Error(`Connect this workflow before activating the trigger: ${deployment.issues.map((entry) => entry.message).join(" ")}`);
+    }
+    const now = new Date().toISOString();
+    const nextFireAt = status === "active" && row.type === "schedule" ? nextAutomationScheduleAt(jsonValue(row.config_json), now) : null;
+    const activeVersionId = status === "active" ? row.published_version_id : null;
+    await db.prepare(`UPDATE automation_workflow_triggers SET status = ?, active_version_id = ?,
+      next_fire_at = CASE WHEN type = 'schedule' THEN ? ELSE next_fire_at END, updated_at = ? WHERE id = ?`)
+      .run(status, activeVersionId, nextFireAt, now, triggerId);
+    return { id: triggerId, status, workflowId: row.workflow_id, workspaceId: row.workspace_id, activeVersionId };
+  })();
 }
 
 export async function deleteAutomationWorkflowTrigger(userId: string, triggerId: string) {
@@ -118,11 +138,12 @@ export async function fireAutomationWebhook(triggerId: string, token: string, pa
   if (actual.length !== expected.length || !timingSafeEqual(actual, expected)) return null;
   const key = idempotencyKey?.trim().slice(0, 240);
   const deliveryKey = key ? `${triggerId}:webhook:${tokenHash(key)}` : `${triggerId}:webhook:${randomUUID()}`;
-  const delivery = await enqueueAutomationTriggerDelivery({ trigger: row, deliveryKey, payload: { "trigger.payload": payload } });
+  const delivery = await enqueueAutomationTriggerDelivery({ trigger: row, deliveryKey, payload: webhookTriggerEnvelope(payload) });
   return delivery ? { status: 202 as const, deliveryId: delivery.id, deliveryStatus: delivery.status, deduplicated: delivery.deduplicated } : null;
 }
 
 export async function fireAutomationCanvasEvent(input: { userId: string; projectId: string; event: string; version?: number; payload: Record<string, unknown>; sourceKey?: string }) {
+  if (!await userCanAccessProject(input.userId, input.projectId)) return null;
   const workspaceId = await workspaceIdForProject(input.projectId);
   if (!workspaceId) return null;
   const actor = await db.prepare("SELECT id FROM users WHERE id = ?").get(input.userId) as { id: string } | undefined;
@@ -166,11 +187,11 @@ async function processAutomationProductEvent(row: ProductEventOutboxRow) {
       .all(row.project_id) as Array<Record<string, unknown>>;
     for (const trigger of triggers) {
       const config = jsonValue<Record<string, unknown>>(trigger.config_json);
-      if (String(config.event) !== event.name || Number(config.version || 1) !== event.version) continue;
+      if (String(config.event) !== event.name || Number(config.version) !== event.version) continue;
       await enqueueAutomationTriggerDelivery({
         trigger,
         deliveryKey: `${trigger.id}:event:${row.id}`,
-        payload: { "trigger.event": event.name, "trigger.eventVersion": event.version, "trigger.payload": event.payload },
+        payload: canvasEventTriggerEnvelope({ event: event.name, eventVersion: event.version, payload: event.payload }),
       });
     }
     const now = new Date().toISOString();
@@ -227,7 +248,7 @@ export async function drainAutomationWorkflowTriggers(limit = 50) {
         trigger: snapshot,
         deliveryKey: `${snapshot.id}:schedule:${scheduledFor}`,
         scheduledFor,
-        payload: { "trigger.scheduledAt": scheduledFor },
+        payload: scheduleTriggerEnvelope(scheduledFor),
       });
     })();
     if (delivery) queued += 1;

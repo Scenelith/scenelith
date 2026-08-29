@@ -5,7 +5,7 @@ import { enforceDistributedRateLimit } from "@/lib/distributed-rate-limit";
 
 export const runtime = "nodejs";
 
-const retrySchema = z.object({ nodeId: z.string().min(1).max(120).optional() }).strict();
+const retrySchema = z.object({ nodeId: z.string().min(1).max(120) }).strict();
 
 export async function POST(request: Request, context: RouteContext<"/api/automation-runs/[runId]/retry">) {
   const auth = await requireApiUser();

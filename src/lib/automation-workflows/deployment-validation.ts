@@ -1,7 +1,8 @@
 import { db } from "@/lib/postgres-db";
 import { automationNodeDefinition } from "./registry";
 import { automationRunInputFields, validateAutomationRunInputs } from "./validation";
-import { DEFAULT_AUTOMATION_WORKFLOW_SETTINGS, type AutomationNode, type AutomationValidationIssue, type AutomationWorkflowGraph } from "./types";
+import { automationWorkflowGraphSchema, DEFAULT_AUTOMATION_WORKFLOW_SETTINGS, type AutomationNode, type AutomationValidationIssue, type AutomationWorkflowGraph } from "./types";
+import { z } from "zod";
 
 type BindingRow = {
   slot_key: string;
@@ -13,13 +14,19 @@ type BindingRow = {
   graph_json: unknown;
 };
 
-export type AutomationDeploymentSnapshot = {
-  version: 1;
-  workflows: Record<string, {
-    credentials: Record<string, { credentialId: string; kind: string }>;
-    subworkflows: Record<string, { workflowId: string; workflowVersionId: string }>;
-  }>;
-};
+export const automationDeploymentSnapshotSchema = z.object({
+  version: z.literal(1),
+  workflows: z.record(z.string().min(1), z.object({
+    credentials: z.record(z.string().min(1), z.object({ credentialId: z.string().min(1), kind: z.string().min(1) }).strict()),
+    subworkflows: z.record(z.string().min(1), z.object({ workflowId: z.string().min(1), workflowVersionId: z.string().min(1) }).strict()),
+  }).strict()),
+}).strict();
+
+export type AutomationDeploymentSnapshot = z.infer<typeof automationDeploymentSnapshotSchema>;
+
+export function parseAutomationDeploymentSnapshot(value: unknown): AutomationDeploymentSnapshot {
+  return automationDeploymentSnapshotSchema.parse(value);
+}
 
 function jsonValue<T>(value: unknown): T {
   return (typeof value === "string" ? JSON.parse(value) : value) as T;
@@ -93,10 +100,10 @@ export async function validateAutomationDeploymentBindings(input: {
         continue;
       }
       if (!binding.published_version_id || !binding.graph_json) {
-        issues.push({ code: "SUBWORKFLOW_NOT_PUBLISHED", message: `The workflow connected to “${slot}” must have a published version.`, nodeId: requirement.nodes[0]?.id });
+        issues.push({ code: "SUBWORKFLOW_NOT_PUBLISHED", message: `The workflow connected to “${slot}” must have a live version.`, nodeId: requirement.nodes[0]?.id });
         continue;
       }
-      const childGraph = jsonValue<AutomationWorkflowGraph>(binding.graph_json);
+      const childGraph = automationWorkflowGraphSchema.parse(jsonValue(binding.graph_json));
       const childFields = new Map(automationRunInputFields(childGraph).map((field) => [field.key, field]));
       for (const node of requirement.nodes) {
         const definition = automationNodeDefinition(node.type, node.version);

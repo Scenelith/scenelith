@@ -38,7 +38,7 @@ export async function POST(request: Request, context: { params: Promise<{ workfl
   let result;
   try { result = await createAutomationWorkflowTrigger({ userId: auth.user.id, workflowId, ...parsed.data }); }
   catch (error) { return automationApiErrorResponse(error, "Trigger inputs are invalid"); }
-  if (!result) return Response.json({ error: "Publish the workflow before adding triggers" }, { status: 409 });
+  if (!result) return Response.json({ error: "Take the workflow live before adding automatic starts" }, { status: 409 });
   const workflow = await getAutomationWorkflow(auth.user.id, workflowId);
   if (workflow) await appendAuditEvent({ workspaceId: workflow.workflow.workspaceId, actorUserId: auth.user.id, action: "automation.trigger.created", targetType: "automation_trigger", targetId: result.trigger.id, metadata: { workflowId, type: result.trigger.type } });
   return Response.json(result, { status: 201 });

@@ -50,10 +50,9 @@ export function AutomationReferencePicker({
   const [nextCursor, setNextCursor] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
-  const [draftIds, setDraftIds] = useState<string[]>(selectedIds);
   const libraryRequestRef = useRef(0);
   const fieldRef = useRef<HTMLDivElement>(null);
-  const selected = useMemo(() => new Set(draftIds), [draftIds]);
+  const selected = useMemo(() => new Set(selectedIds), [selectedIds]);
   const limit = Math.min(32, Math.max(1, maxItems || 8));
 
   useEffect(() => {
@@ -133,40 +132,33 @@ export function AutomationReferencePicker({
     }
   };
 
-  const identityReferences = useMemo(() => personas.flatMap((persona) => persona.assets.map((asset) => {
-    const siblings = persona.assets.filter((candidate) => candidate.role === asset.role);
-    const roleIndex = siblings.findIndex((candidate) => candidate.id === asset.id) + 1;
-    const roleLabel = asset.role === "reference" ? "Identity" : asset.role === "before" ? "Before" : "After";
-    return {
-      assetId: asset.id,
-      url: asset.url,
-      thumbnailUrl: asset.thumbnailUrl,
-      title: `${persona.name} · ${roleLabel} ${String(roleIndex).padStart(2, "0")}`,
-      detail: `${persona.name} · ${roleLabel.toLowerCase()} reference`,
-    } satisfies AutomationReferenceCandidate;
-  })), [personas]);
+  const identityReferences = useMemo(() => personas.flatMap((persona) => persona.assets.map((asset) => ({
+    assetId: asset.id,
+    url: asset.url,
+    thumbnailUrl: asset.thumbnailUrl,
+    title: `${persona.name} · ${asset.role === "reference" ? "Identity" : asset.role === "before" ? "Before" : "After"}`,
+    detail: persona.name,
+  } satisfies AutomationReferenceCandidate))), [personas]);
   const candidates = tab === "canvas" ? canvasReferences : tab === "library" ? libraryAssets : identityReferences;
   const toggle = (assetId: string) => {
     setError("");
     if (selected.has(assetId)) {
-      setDraftIds((current) => current.filter((id) => id !== assetId));
+      onChange(selectedIds.filter((id) => id !== assetId));
       return;
     }
-    if (draftIds.length >= limit) {
+    if (selectedIds.length >= limit) {
       setError(`Choose up to ${limit} reference${limit === 1 ? "" : "s"}`);
       return;
     }
-    setDraftIds((current) => [...current, assetId]);
+    onChange([...selectedIds, assetId]);
   };
 
   const openPicker = () => {
     if (disabled) return;
-    setDraftIds(selectedIds);
     setError("");
     setOpen(true);
   };
   const togglePicker = () => { if (open) setOpen(false); else openPicker(); };
-  const apply = () => { onChange(draftIds); setOpen(false); };
 
   const compact = placement === "node";
   const sourceTabs = <nav className="automation-reference-tabs" aria-label="Reference source">
@@ -174,20 +166,44 @@ export function AutomationReferencePicker({
     <button type="button" className={tab === "library" ? "is-active" : ""} onClick={() => { setTab("library"); setError(""); }}><Library size={14} /><span>Library</span></button>
     <button type="button" className={tab === "identities" ? "is-active" : ""} onClick={() => { setTab("identities"); setError(""); }}><UserRound size={14} /><span>Identities</span><b>{identityReferences.length}</b></button>
   </nav>;
+  const referenceTile = (candidate: AutomationReferenceCandidate, compactIdentity = false) => <button
+    type="button"
+    key={candidate.assetId}
+    className={`${selected.has(candidate.assetId) ? "is-selected" : ""} ${compactIdentity ? "is-identity-tile" : ""}`}
+    aria-pressed={selected.has(candidate.assetId)}
+    aria-label={`${selected.has(candidate.assetId) ? "Remove" : "Add"} ${candidate.title}`}
+    title={candidate.title}
+    disabled={!selected.has(candidate.assetId) && selectedIds.length >= limit}
+    onClick={() => toggle(candidate.assetId)}
+  >
+    <span><img src={candidate.thumbnailUrl || candidate.url} alt="" loading="lazy" decoding="async" />{selected.has(candidate.assetId) && <i><Check size={12} /></i>}</span>
+    {!compactIdentity && <><b title={candidate.title}>{candidate.title}</b><small>{candidate.detail}</small></>}
+  </button>;
   const choices = <>
     {sourceTabs}
     {tab === "library" && <label className="automation-reference-search"><Search size={14} /><input value={search} onChange={(event) => setSearch(event.target.value)} placeholder="Search images and canvases…" /></label>}
-    <div className="automation-reference-grid">
-      {candidates.map((candidate) => <button type="button" key={candidate.assetId} className={selected.has(candidate.assetId) ? "is-selected" : ""} aria-pressed={selected.has(candidate.assetId)} onClick={() => toggle(candidate.assetId)}>
-        <span><img src={candidate.thumbnailUrl || candidate.url} alt="" loading="lazy" decoding="async" />{selected.has(candidate.assetId) && <i><Check size={12} /></i>}</span>
-        <b title={candidate.title}>{candidate.title}</b><small>{candidate.detail}</small>
-      </button>)}
-      {loading && !candidates.length && <div className="automation-reference-empty"><LoaderCircle size={19} className="is-spinning" /><b>Loading images…</b></div>}
-      {!loading && !candidates.length && <div className="automation-reference-empty">{tab === "identities" ? <UserRound size={20} /> : <Images size={20} />}<b>{tab === "canvas" ? "No image assets on this canvas" : tab === "library" ? "No Library images found" : "No identity references yet"}</b><small>{tab === "canvas" ? "Generated and imported images with saved assets appear here." : tab === "library" ? "Try another search or add images to the Library." : "Add a person or character in Identities, then return here."}</small></div>}
-    </div>
+    {tab === "identities" && identityReferences.length > 0
+      ? <div className="automation-reference-personas">
+        {personas.filter((persona) => persona.assets.length).map((persona) => <section key={persona.id}>
+          <header>{persona.avatarUrl ? <img src={persona.avatarUrl} alt="" /> : <span><UserRound size={13} /></span>}<strong>{persona.name}</strong><small>{persona.assets.length}</small></header>
+          {(["reference", "before", "after"] as const).map((role) => {
+            const assets = persona.assets.filter((asset) => asset.role === role);
+            if (!assets.length) return null;
+            return <div className={`automation-reference-persona-role is-${role}`} key={role}>
+              <div><strong>{role === "reference" ? "IDENTITY" : role.toUpperCase()}</strong><span>{assets.length}</span></div>
+              <div className="automation-reference-grid is-identity-grid">{assets.map((asset) => referenceTile({ assetId: asset.id, url: asset.url, thumbnailUrl: asset.thumbnailUrl, title: `${persona.name} · ${role === "reference" ? "Identity" : role === "before" ? "Before" : "After"}`, detail: persona.name }, true))}</div>
+            </div>;
+          })}
+        </section>)}
+      </div>
+      : <div className="automation-reference-grid">
+        {candidates.map((candidate) => referenceTile(candidate))}
+        {loading && !candidates.length && <div className="automation-reference-empty"><LoaderCircle size={19} className="is-spinning" /><b>Loading images…</b></div>}
+        {!loading && !candidates.length && <div className="automation-reference-empty">{tab === "identities" ? <UserRound size={20} /> : <Images size={20} />}<b>{tab === "canvas" ? "No image assets on this canvas" : tab === "library" ? "No Library images found" : "No identity references yet"}</b><small>{tab === "canvas" ? "Generated and imported images with saved assets appear here." : tab === "library" ? "Try another search or add images to the Library." : "Add a person or character in Identities, then return here."}</small></div>}
+      </div>}
     {tab === "library" && nextCursor && <button type="button" className="automation-reference-more" disabled={loading} onClick={() => void loadMore()}>{loading ? "Loading…" : "Load more"}</button>}
   </>;
-  const footer = <footer className="automation-reference-footer"><span>{error || `${Math.max(0, limit - draftIds.length)} slots available`}</span><div>{draftIds.length > 0 && <button type="button" className="is-clear" onClick={() => { setDraftIds([]); setError(""); }}>Clear</button>}<button type="button" onClick={apply}>Use {draftIds.length || "no"} reference{draftIds.length === 1 ? "" : "s"}</button></div></footer>;
+  const footer = <footer className="automation-reference-footer"><span>{error || `${Math.max(0, limit - selectedIds.length)} slots available · selections apply immediately`}</span>{selectedIds.length > 0 && <button type="button" className="is-clear" onClick={() => { onChange([]); setError(""); }}>Clear</button>}</footer>;
 
   return <div ref={fieldRef} className={`automation-reference-field ${compact ? "is-node" : ""}`} onPointerDown={(event) => event.stopPropagation()} onClick={(event) => event.stopPropagation()} onWheel={(event) => event.stopPropagation()}>
     <button
@@ -203,7 +219,7 @@ export function AutomationReferencePicker({
       <em>{selectedIds.length}/{limit}</em>
     </button>
     {open && compact && <ReferenceMenuShell
-      attachedLabel={`${draftIds.length} ATTACHED`}
+      attachedLabel={`${selectedIds.length} ATTACHED`}
       capacityTitle="Visual references"
       capacityDescription={`Choose up to ${limit} images from Canvas, Library or Identities`}
       className="automation-reference-node-menu"
@@ -214,7 +230,7 @@ export function AutomationReferencePicker({
     {open && !compact && typeof document !== "undefined" && createPortal(<>
       <button type="button" className="automation-reference-dismiss" aria-label="Close reference picker" onClick={() => setOpen(false)} />
       <section className={`automation-reference-drawer is-${placement}`} role="dialog" aria-modal="false" aria-label="Choose visual references" onPointerDown={(event) => event.stopPropagation()} onWheel={(event) => event.stopPropagation()}>
-        <header><span><b>Visual references</b><small>Choose only the images this workflow needs</small></span><em>{draftIds.length}/{limit}</em><button type="button" aria-label="Close" onClick={() => setOpen(false)}><X size={16} /></button></header>
+        <header><span><b>Visual references</b><small>Choose only the images this workflow needs</small></span><em>{selectedIds.length}/{limit}</em><button type="button" aria-label="Close" onClick={() => setOpen(false)}><X size={16} /></button></header>
         {choices}
         {footer}
       </section>
