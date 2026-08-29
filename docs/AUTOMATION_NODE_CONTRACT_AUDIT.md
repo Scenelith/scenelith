@@ -14,7 +14,7 @@ Node defaults are runtime behavior. Changing a default, port, field meaning, out
 | --- | --- | --- | --- |
 | `core.manual-trigger@1` | Trigger configuration outside the graph | Emits run metadata and the captured trigger payload | One start node per workflow |
 | `input.tiktok-source@2` | Source, caption mode, replacement caption | Loads the selected ordered slideshow; preserves, replaces or empties the caption exactly as selected | Access, media-type and source-shape checks |
-| `input.identity@1` | Identity, reference group, optional flag | Resolves only assets in the selected saved identity group | Access and image checks |
+| `input.identity@2` | Identity, reference group, optional flag | Resolves only assets in the selected saved identity group; optional applies only when nothing is selected | Access and image checks; a selected empty group fails explicitly |
 | `input.visual-references@1` | Ordered asset IDs, maximum, optional flag | Preserves the selected asset order and emits only those images | Access, uniqueness, type and count checks |
 | `input.creative-settings@1` | Six visible Recreate TikTok choices | Emits those six values without interpretation | Typed field validation |
 | `input.workflow-data@1` | Manual value and optional payload path | Uses a trigger or parent payload when present; otherwise uses the visible manual value | Exact safe-path lookup |

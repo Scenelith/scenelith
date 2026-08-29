@@ -65,7 +65,7 @@ const helpByType: Record<string, AutomationNodeHelp> = {
     setup: ["Connect Start workflow to the Run input.", "If you have added a person or character in the Identities section, choose them here. Otherwise enable Ask on run or allow this step to continue without an identity.", "Leave the reference choice on All available unless Before, After or Reference has a specific meaning in this workflow.", "Connect Identity to every step that needs the person, not only to the final image step."],
     exampleFlow: { before: "Start workflow", after: "Inspect identity and create images", explanation: "One selected identity can inform both the reasoning steps and the final visual generation." },
     tips: ["Enable Can run without a person for product, place or general-visual workflows.", "If a person is mandatory, disable that option and mark the identity as required before run."],
-    technicalNotes: ["Outputs identity metadata plus the references allowed by the selected group.", "Provider credentials and private asset storage locations are not embedded in the portable workflow."],
+    technicalNotes: ["Outputs identity metadata plus the references allowed by the selected group.", "Can run without a person applies only when no identity is selected. If a selected identity has no usable images in the selected group, the run stops instead of silently removing that user choice.", "Provider credentials and private asset storage locations are not embedded in the portable workflow."],
   },
   "input.visual-references": {
     whenToUse: "Use this when later AI or image steps need visual examples that are not a saved person or character: composition, pose, product, place, lighting, style or another scene.",
@@ -228,6 +228,10 @@ const helpOverridesByVersion: Record<string, Partial<AutomationNodeHelp>> = {
     setup: ["Connect Start workflow to the Run input.", "Choose a fixed slideshow, or enable Ask on run so the person can choose one each time.", "Optionally enter replacement caption text. An empty replacement preserves the original caption in this historical version.", "Connect Source to the next step."],
     technicalNotes: ["Historical contract: one caption field is both the replacement and the fallback switch.", "An empty caption field preserves the source title; use version 2 when preserve, replace and empty must be separate explicit choices."],
   },
+  "input.identity@1": {
+    setup: ["Connect Start workflow to the Run input.", "Choose a saved identity and reference group, or leave the identity empty when the step is optional.", "Connect Identity to the steps that need it.", "Migrate to version 2 when a selected identity must never continue with an empty reference group."],
+    technicalNotes: ["Historical contract: when Can run without a person is enabled, a selected identity whose selected group contains no usable images emits identity metadata with an empty assets list.", "Use version 2 so optional applies only when no identity is selected and an empty selected group fails explicitly."],
+  },
   "logic.condition@1": {
     technicalNotes: ["Historical predicate contract: yes/no rules use JavaScript truthiness, so non-empty text such as false counts as yes.", "Use version 2 for exact booleans and typed empty rules. The original incoming value is still passed unchanged."],
   },
@@ -308,6 +312,16 @@ const rawDefinitions: Array<Omit<AutomationNodeDefinition, "help">> = [
         { value: "auto", label: "All available" }, { value: "reference", label: "Reference only" }, { value: "before", label: "Before only" }, { value: "after", label: "After only" },
       ] },
       { id: "optional", label: "Can run without a person", description: "Keep enabled when this workflow should also work for products, places or general visuals.", kind: "boolean", defaultValue: true },
+    ],
+  },
+  {
+    type: "input.identity", version: 2, title: "Identity", description: "Gives later steps the selected saved person or character and requires usable images when one is chosen.", example: "Choose a person or character when this run must preserve them; leave the choice empty only when the workflow may run without a person.", category: "input", icon: "identity", accent: "blue",
+    inputs: [{ id: "run", label: "Run", type: "run-context", required: true }], outputs: [{ id: "identity", label: "Identity", type: "identity" }], fields: [
+      { id: "identity", label: "Person or character", description: "If you have added a person or character in the Identities section, choose them here or ask for one before every run.", kind: "select", runtimeBindable: true, runtimeValueType: "identity" },
+      { id: "referenceGroup", label: "Which references to use", description: "All available passes every saved reference. A chosen group must contain at least one usable image.", kind: "select", defaultValue: "auto", options: [
+        { value: "auto", label: "All available" }, { value: "reference", label: "Reference only" }, { value: "before", label: "Before only" }, { value: "after", label: "After only" },
+      ] },
+      { id: "optional", label: "Can run without a person", description: "When enabled, the step may continue only if no person is selected. A selected person still requires a usable image in the chosen group.", kind: "boolean", defaultValue: true },
     ],
   },
   {

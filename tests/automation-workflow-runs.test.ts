@@ -283,6 +283,70 @@ test("TikTok source v2 can intentionally snapshot an empty caption without falli
   assert.equal(data?.source?.label, "Original caption");
 });
 
+test("Identity v2 fails when a selected group is empty while historical v1 preserves its saved behavior", async () => {
+  const owner = await seedOwner();
+  const inputs = await seedSnapshotInputs(owner);
+
+  const historicalWorkflow = await repository.createAutomationWorkflow({ userId: owner.userId, projectId: owner.projectId, name: "Historical optional identity" });
+  const historicalGraph = inputSnapshotGraph(inputs);
+  const historicalIdentity = historicalGraph.nodes.find((node) => node.id === "identity")!;
+  historicalIdentity.version = 1;
+  historicalIdentity.config.referenceGroup = "before";
+  historicalIdentity.config.optional = true;
+  await repository.saveAutomationWorkflowDraft({
+    userId: owner.userId,
+    workflowId: historicalWorkflow!.workflow.id,
+    baseDraftVersionId: historicalWorkflow!.draft!.id,
+    graph: historicalGraph,
+  });
+  const historicalRun = await runs.enqueueAutomationWorkflowRun({ userId: owner.userId, projectId: owner.projectId, workflowId: historicalWorkflow!.workflow.id, runtimeInputs: {}, mode: "test" });
+  assert.ok("runId" in historicalRun);
+  await runs.drainAutomationWorkflowRuns();
+  const historicalResult = await runs.getAutomationWorkflowRun(owner.userId, "runId" in historicalRun ? historicalRun.runId : "");
+  const historicalIdentityOutput = (historicalResult?.output as { finish?: { result?: { data?: { identity?: { assets?: unknown[] } } } } })?.finish?.result?.data?.identity;
+  assert.equal(historicalResult?.status, "completed");
+  assert.deepEqual(historicalIdentityOutput?.assets, []);
+
+  const currentWorkflow = await repository.createAutomationWorkflow({ userId: owner.userId, projectId: owner.projectId, name: "Strict optional identity" });
+  const currentGraph = inputSnapshotGraph(inputs);
+  const currentIdentity = currentGraph.nodes.find((node) => node.id === "identity")!;
+  currentIdentity.version = 2;
+  currentIdentity.config.referenceGroup = "before";
+  currentIdentity.config.optional = true;
+  await repository.saveAutomationWorkflowDraft({
+    userId: owner.userId,
+    workflowId: currentWorkflow!.workflow.id,
+    baseDraftVersionId: currentWorkflow!.draft!.id,
+    graph: currentGraph,
+  });
+  const rejected = await runs.enqueueAutomationWorkflowRun({ userId: owner.userId, projectId: owner.projectId, workflowId: currentWorkflow!.workflow.id, runtimeInputs: {}, mode: "test" });
+  assert.deepEqual(rejected, {
+    status: 422,
+    error: "The selected identity has no usable images in the Before group",
+    code: "INPUT_SNAPSHOT_FAILED",
+  });
+
+  const noSelectionWorkflow = await repository.createAutomationWorkflow({ userId: owner.userId, projectId: owner.projectId, name: "No optional identity selected" });
+  const noSelectionGraph = inputSnapshotGraph(inputs);
+  const noSelectionIdentity = noSelectionGraph.nodes.find((node) => node.id === "identity")!;
+  noSelectionIdentity.version = 2;
+  noSelectionIdentity.config.identity = "";
+  noSelectionIdentity.config.optional = true;
+  await repository.saveAutomationWorkflowDraft({
+    userId: owner.userId,
+    workflowId: noSelectionWorkflow!.workflow.id,
+    baseDraftVersionId: noSelectionWorkflow!.draft!.id,
+    graph: noSelectionGraph,
+  });
+  const noSelectionRun = await runs.enqueueAutomationWorkflowRun({ userId: owner.userId, projectId: owner.projectId, workflowId: noSelectionWorkflow!.workflow.id, runtimeInputs: {}, mode: "test" });
+  assert.ok("runId" in noSelectionRun);
+  await runs.drainAutomationWorkflowRuns();
+  const noSelectionResult = await runs.getAutomationWorkflowRun(owner.userId, "runId" in noSelectionRun ? noSelectionRun.runId : "");
+  const noSelectionIdentityOutput = (noSelectionResult?.output as { finish?: { result?: { data?: { identity?: unknown } } } })?.finish?.result?.data?.identity;
+  assert.equal(noSelectionResult?.status, "completed");
+  assert.equal(noSelectionIdentityOutput, null);
+});
+
 test("retry creates a linked run and reuses only safe upstream outputs", async () => {
   const owner = await seedOwner();
   const workflow = await repository.createAutomationWorkflow({ userId: owner.userId, projectId: owner.projectId, name: "Replay" });

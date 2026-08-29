@@ -210,7 +210,7 @@ export function createDefaultTikTokWorkflowGraph(): AutomationWorkflowGraph {
       },
     }),
     node({
-      id: "identity", type: "input.identity", name: "Identity", description: "Optional person or character references.", position: { x: 430, y: 296 },
+      id: "identity", type: "input.identity", version: 2, name: "Identity", description: "Optional person or character references.", position: { x: 430, y: 296 },
       config: { referenceGroup: "auto", optional: true },
       bindings: { identity: { mode: "ask-on-run", label: "Identity", required: false } },
     }),

@@ -768,7 +768,7 @@ test("default automation keeps every selected rule through an approved no-repair
     handlers: {
       ...handlers,
       "input.tiktok-source@2": async () => ({ source: sourceValue("source-1") }),
-      "input.identity@1": async () => ({ identity: { id: "person-identity", name: "Maya", notes: "", assets: [{ id: "person", filename: "person.png", role: "reference", path: "person.png", mimeType: "image/png", analysisPath: "person.png", analysisMimeType: "image/png" }] } }),
+      "input.identity@2": async () => ({ identity: { id: "person-identity", name: "Maya", notes: "", assets: [{ id: "person", filename: "person.png", role: "reference", path: "person.png", mimeType: "image/png", analysisPath: "person.png", analysisMimeType: "image/png" }] } }),
       "input.visual-references@1": async () => ({ references: { assetIds: [], assets: [] } }),
       "ai.interpret-creative-direction@3": async ({ inputs }) => {
         const request = inputs.request as { briefHash: string; clauses: Array<{ id: string; text: string }> };

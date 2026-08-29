@@ -222,7 +222,7 @@ async function tiktokSourceV2(execution: AutomationNodeExecution) {
   return { source: { sourceNodeId: resolved.source.id, label: resolved.source.label, caption, slides: resolved.slides } };
 }
 
-async function identity(execution: AutomationNodeExecution) {
+async function resolveIdentity(execution: AutomationNodeExecution, requireSelectedGroupReferences: boolean) {
   const identityId = stringSetting(execution, "identity", true);
   const optional = booleanSetting(execution, "optional");
   if (!identityId && optional) return { identity: null };
@@ -238,8 +238,19 @@ async function identity(execution: AutomationNodeExecution) {
   const filtered = requestedGroup === "auto" ? rows : rows.filter((asset) => asset.role === requestedGroup);
   const invalidAsset = filtered.find((asset) => !asset.mime_type.startsWith("image/"));
   if (invalidAsset) throw new Error(`${invalidAsset.filename || "An identity reference"} is not an image`);
-  if (!filtered.length && !optional) throw new Error("This identity has no usable references in the selected group");
+  if (!filtered.length && (requireSelectedGroupReferences || !optional)) {
+    const groupLabel = requestedGroup === "auto" ? "selected" : requestedGroup === "reference" ? "Reference" : requestedGroup === "before" ? "Before" : "After";
+    throw new Error(`The selected identity has no usable images in the ${groupLabel} group`);
+  }
   return { identity: { ...persona, assets: filtered.map((asset) => ({ id: asset.id, filename: asset.filename, role: asset.role, path: asset.storage_path, mimeType: asset.mime_type, analysisPath: asset.thumbnail_storage_path || asset.storage_path, analysisMimeType: asset.thumbnail_mime_type || asset.mime_type })) } };
+}
+
+async function identityV1(execution: AutomationNodeExecution) {
+  return await resolveIdentity(execution, false);
+}
+
+async function identityV2(execution: AutomationNodeExecution) {
+  return await resolveIdentity(execution, true);
 }
 
 async function visualReferences(execution: AutomationNodeExecution) {
@@ -1874,7 +1885,8 @@ export function coreAutomationNodeHandlers(): AutomationNodeHandlers {
     "core.manual-trigger@1": manualTrigger,
     "input.tiktok-source@1": tiktokSource,
     "input.tiktok-source@2": tiktokSourceV2,
-    "input.identity@1": identity,
+    "input.identity@1": identityV1,
+    "input.identity@2": identityV2,
     "input.visual-references@1": visualReferences,
     "input.creative-settings@1": creativeSettings,
     "input.workflow-data@1": workflowData,
