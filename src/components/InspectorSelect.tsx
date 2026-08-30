@@ -2,6 +2,7 @@
 
 import { Check, ChevronDown } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
+import { createPortal } from "react-dom";
 
 export type InspectorSelectOption = {
   value: string;
@@ -20,13 +21,46 @@ export function InspectorSelect({ value, options, label, onChange, disabled = fa
 }) {
   const [open, setOpen] = useState(false);
   const rootRef = useRef<HTMLDivElement>(null);
+  const menuRef = useRef<HTMLDivElement>(null);
+  const [menuPosition, setMenuPosition] = useState<{ left: number; top: number; width: number; maxHeight: number; placement: "above" | "below" } | null>(null);
   const selected = options.find((option) => option.value === value) || options[0];
   const groups = Array.from(new Set(options.map((option) => option.group || "")));
+
+  const positionMenu = () => {
+    const rect = rootRef.current?.getBoundingClientRect();
+    if (!rect) return;
+    const gap = 6;
+    const viewportPadding = 10;
+    const below = window.innerHeight - rect.bottom - viewportPadding - gap;
+    const above = rect.top - viewportPadding - gap;
+    const placement = below >= Math.min(220, above) ? "below" : "above";
+    const maxHeight = Math.max(120, Math.min(300, placement === "below" ? below : above));
+    setMenuPosition({
+      left: Math.max(viewportPadding, Math.min(rect.left, window.innerWidth - rect.width - viewportPadding)),
+      top: placement === "below" ? rect.bottom + gap : rect.top - gap,
+      width: rect.width,
+      maxHeight,
+      placement,
+    });
+  };
+
+  useEffect(() => {
+    if (!open) return;
+    positionMenu();
+    const updatePosition = () => positionMenu();
+    window.addEventListener("resize", updatePosition);
+    window.addEventListener("scroll", updatePosition, true);
+    return () => {
+      window.removeEventListener("resize", updatePosition);
+      window.removeEventListener("scroll", updatePosition, true);
+    };
+  }, [open]);
 
   useEffect(() => {
     if (!open) return;
     const closeOutside = (event: PointerEvent) => {
-      if (!rootRef.current?.contains(event.target as Node)) setOpen(false);
+      const target = event.target as Node;
+      if (!rootRef.current?.contains(target) && !menuRef.current?.contains(target)) setOpen(false);
     };
     const closeOnEscape = (event: KeyboardEvent) => {
       if (event.key === "Escape") setOpen(false);
@@ -45,8 +79,15 @@ export function InspectorSelect({ value, options, label, onChange, disabled = fa
         <span><span>{selected?.label || value}</span>{selected?.badge && <b className="inspector-select-badge">{selected.badge}</b>}</span>
         <ChevronDown size={14} />
       </button>
-      {open && (
-        <div className="inspector-select-menu" role="listbox" aria-label={label} onWheel={(event) => event.stopPropagation()}>
+      {open && menuPosition && createPortal(
+        <div
+          ref={menuRef}
+          className={`inspector-select-menu is-portal is-${menuPosition.placement}`}
+          role="listbox"
+          aria-label={label}
+          style={{ left: menuPosition.left, top: menuPosition.top, width: menuPosition.width, maxHeight: menuPosition.maxHeight }}
+          onWheel={(event) => event.stopPropagation()}
+        >
           {groups.map((group) => (
             <div className="inspector-select-group" key={group || "options"}>
               {group && <div className="inspector-select-group-label">{group}</div>}
@@ -58,7 +99,8 @@ export function InspectorSelect({ value, options, label, onChange, disabled = fa
               ))}
             </div>
           ))}
-        </div>
+        </div>,
+        document.body,
       )}
     </div>
   );
