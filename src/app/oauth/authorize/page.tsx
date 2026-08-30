@@ -3,6 +3,7 @@ import { redirect } from "next/navigation";
 import { Bot, Boxes, CircleAlert, Image, LockKeyhole, Network, Play, Sparkles, Workflow } from "lucide-react";
 import { getCurrentUser } from "@/lib/auth";
 import { createMcpOAuthConsentRequest, type McpScope } from "@/lib/mcp/oauth";
+import { OAuthConsentForm } from "./OAuthConsentForm";
 import { ResourceAccessPicker } from "./ResourceAccessPicker";
 import styles from "./oauth-authorize.module.css";
 
@@ -77,7 +78,7 @@ export default async function OAuthAuthorizePage({ searchParams }: { searchParam
         <div><p>Connect an AI agent</p><h1>{consent.client.name} wants to access Scenelith</h1></div>
       </div>
 
-      <form action="/api/mcp/oauth/authorize" method="post">
+      <OAuthConsentForm>
         <input type="hidden" name="request_id" value={consent.id} />
         <input type="hidden" name="scope" value="mcp:read" />
 
@@ -102,11 +103,7 @@ export default async function OAuthAuthorizePage({ searchParams }: { searchParam
           <strong>{consent.client.redirectHost}</strong>
         </div>
 
-        <div className={styles.actions}>
-          <button type="submit" name="decision" value="deny" className={styles.cancel}>Cancel</button>
-          <button type="submit" name="decision" value="allow" className={styles.allow}>Allow access</button>
-        </div>
-      </form>
+      </OAuthConsentForm>
 
       <footer>Signed in as <strong>{user.email}</strong>. You can revoke this connection at any time.</footer>
     </section>

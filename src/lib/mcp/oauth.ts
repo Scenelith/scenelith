@@ -279,8 +279,19 @@ export async function decideMcpOAuthConsent(input: {
 }) {
   return await db.transaction(async () => {
     const row = await db.prepare("SELECT * FROM mcp_oauth_authorizations WHERE id = ? FOR UPDATE").get(input.requestId) as AuthorizationRow | undefined;
-    if (!row || row.user_id !== input.userId || row.decided_at || Date.parse(row.expires_at) <= Date.now()) throw new Error("This authorization request expired. Return to your agent and connect again.");
+    if (!row || row.user_id !== input.userId || Date.parse(row.expires_at) <= Date.now()) {
+      throw new Error("This authorization request expired. Return to your agent and connect again.");
+    }
     const now = new Date();
+    if (row.decided_at) {
+      const canRetryApproval = input.allow && row.code_hash && !row.code_consumed_at
+        && row.code_expires_at && Date.parse(row.code_expires_at) > now.getTime();
+      if (!canRetryApproval) throw new Error("This authorization request was already completed. Return to your agent to check the connection.");
+      const replacementCode = `scn_code_${randomToken(32)}`;
+      await db.prepare("UPDATE mcp_oauth_authorizations SET code_hash = ?, code_expires_at = ? WHERE id = ?")
+        .run(hashOpaqueToken(replacementCode), new Date(now.getTime() + 5 * 60 * 1000).toISOString(), row.id);
+      return authorizationRedirect(row, { code: replacementCode });
+    }
     if (!input.allow) {
       await db.prepare("UPDATE mcp_oauth_authorizations SET decided_at = ? WHERE id = ?").run(now.toISOString(), row.id);
       return authorizationRedirect(row, { error: "access_denied", error_description: "The user denied access" });
