@@ -227,7 +227,7 @@ export function AutomationWorkflowOperations({ projectId, workflowId, capabiliti
               </section>
               {selectedRun.error && <div className="automation-run-error"><b>{selectedRun.code || "RUN_FAILED"}</b><p>{selectedRun.error}</p></div>}
               {selectedRun.replayOfRunId && <div className="automation-run-note"><RotateCcw size={13} /><p>Retried from a previous run and reused {selectedRun.reusedNodeCount} completed upstream step{selectedRun.reusedNodeCount === 1 ? "" : "s"}.</p></div>}
-              <div className="automation-run-steps-heading"><span>Run route</span><em>{selectedRun.nodeRuns.length} executed steps</em></div>
+              <div className="automation-run-steps-heading"><span>Run route</span><em>{selectedRun.nodeRuns.length} steps</em></div>
               <div className="automation-run-timeline">{selectedRun.nodeRuns.map((nodeRun, index) => {
                 const stepName = workflowNodeNames.get(nodeRun.nodeId) || nodeRun.nodeId.replaceAll("-", " ");
                 const meaningfulPorts = nodeRun.outputPorts.filter((port) => !routineOutputPorts.has(port.toLowerCase()));
@@ -241,19 +241,20 @@ export function AutomationWorkflowOperations({ projectId, workflowId, capabiliti
                 const skipped = nodeRun.status === "skipped";
                 return <article key={nodeRun.id} className={`automation-run-step is-${nodeRun.status} ${expanded ? "is-expanded" : ""}`}>
                   <button type="button" className="automation-run-step-summary" aria-expanded={expanded} aria-controls={`run-step-${nodeRun.id}`} onClick={() => void inspectStep(selectedRun.id, nodeRun.nodeId, nodeRun.id)}>
-                    <span><StatusIcon status={nodeRun.status} size={12} /></span>
+                    <span><StatusIcon status={nodeRun.status} size={13} /></span>
                     <em>{String(index + 1).padStart(2, "0")}</em>
                     <div><b>{stepName}</b><small>{statusLabel(nodeRun.status)}{nodeRun.attempt > 1 ? ` · attempt ${nodeRun.attempt}` : ""}{nodeRun.reusedFromNodeRunId ? " · reused previous output" : ""}</small>{meaningfulPorts.length > 0 && <p>Route: {meaningfulPorts.map(readablePort).join(" · ")}</p>}{skipped && <p className="automation-run-step-reason">Not used on this route</p>}{nodeRun.status === "failed" && nodeRun.error && <p className="is-error">{nodeRun.error}</p>}</div>
                     <aside>{nodeRun.chargedCredits > 0 && <small>{nodeRun.chargedCredits} units</small>}<small>{duration(nodeRun.startedAt, nodeRun.completedAt)}</small><ChevronDown size={13} /></aside>
                   </button>
                   {expanded && <div className="automation-run-step-detail" id={`run-step-${nodeRun.id}`}>
                     {details?.loading ? <p>Loading step details…</p> : details?.error ? <p className="is-error">{details.error}</p> : <>
-                      <p>{skipped ? "This step belongs to a route that was not selected. No input reached it, so it was skipped while the rest of the run completed normally." : nodeRun.status === "failed" ? attempt?.error || nodeRun.error || "This step failed before it produced an output." : "This step completed normally."}</p>
+                      {skipped && <p>This path was not selected for this run, so the step received no input.</p>}
+                      {nodeRun.status === "failed" && <p className="is-error">{attempt?.error || nodeRun.error || "This step failed before it produced an output."}</p>}
                       {attempt?.errorCode && nodeRun.status === "failed" && <small>{attempt.errorCode}</small>}
                       {canRetry && <button type="button" className="automation-run-retry" disabled={Boolean(busyId)} onClick={() => void retryRun(selectedRun.id, nodeRun.nodeId)}><RotateCcw size={12} /> Retry from this step</button>}
                       {attempt && !skipped && <div className="automation-run-step-payloads">
-                        <details><summary>Captured input</summary><pre>{JSON.stringify(attempt.input ?? {}, null, 2)}</pre></details>
-                        <details><summary>Produced output</summary><pre>{JSON.stringify(attempt.output ?? null, null, 2)}</pre></details>
+                        <details><summary>Input</summary><pre>{JSON.stringify(attempt.input ?? {}, null, 2)}</pre></details>
+                        <details><summary>Output</summary><pre>{JSON.stringify(attempt.output ?? null, null, 2)}</pre></details>
                       </div>}
                     </>}
                   </div>}

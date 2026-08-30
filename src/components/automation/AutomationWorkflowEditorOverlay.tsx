@@ -41,6 +41,7 @@ import {
   Image as ImageIcon,
   Images,
   Inbox,
+  ChevronDown,
   ChevronLeft,
   Layers3,
   ListTree,
@@ -1079,6 +1080,7 @@ export function AutomationWorkflowEditorOverlay({ workspaceId, projectId, workfl
   const [editRevision, setEditRevision] = useState(0);
   const [savedRevision, setSavedRevision] = useState(0);
   const [availableWorkflows, setAvailableWorkflows] = useState<AutomationWorkflowRecord[]>([]);
+  const [manageOpen, setManageOpen] = useState(false);
   const [mobileInspectorOpen, setMobileInspectorOpen] = useState(false);
   const [runHistoryOpen, setRunHistoryOpen] = useState(false);
   const [validation, setValidation] = useState<AutomationValidationResult | null>(null);
@@ -1087,6 +1089,7 @@ export function AutomationWorkflowEditorOverlay({ workspaceId, projectId, workfl
   const [newCredentialValue, setNewCredentialValue] = useState("");
   const [newCredentialUsername, setNewCredentialUsername] = useState("");
   const [newCredentialHeaderName, setNewCredentialHeaderName] = useState("");
+  const manageMenuRef = useRef<HTMLDivElement>(null);
   const flowStageRef = useRef<HTMLElement>(null);
   const dirty = editRevision !== savedRevision;
 
@@ -1133,6 +1136,14 @@ export function AutomationWorkflowEditorOverlay({ workspaceId, projectId, workfl
       stopSpacePanning();
     };
   }, []);
+  useEffect(() => {
+    if (!manageOpen) return;
+    const onPointerDown = (event: PointerEvent) => {
+      if (event.target instanceof globalThis.Node && !manageMenuRef.current?.contains(event.target)) setManageOpen(false);
+    };
+    document.addEventListener("pointerdown", onPointerDown);
+    return () => document.removeEventListener("pointerdown", onPointerDown);
+  }, [manageOpen]);
   useEffect(() => {
     let cancelled = false;
     void fetch(`/api/automation-workflows?projectId=${encodeURIComponent(projectId)}`, { cache: "no-store" })
@@ -1607,12 +1618,13 @@ export function AutomationWorkflowEditorOverlay({ workspaceId, projectId, workfl
     const onKeyDown = (event: KeyboardEvent) => {
       if (event.key !== "Escape") return;
       if (runHistoryOpen) return;
+      if (manageOpen) { setManageOpen(false); return; }
       if (mobileInspectorOpen) { setMobileInspectorOpen(false); return; }
       void closeEditor();
     };
     window.addEventListener("keydown", onKeyDown);
     return () => window.removeEventListener("keydown", onKeyDown);
-  }, [closeEditor, mobileInspectorOpen, runHistoryOpen]);
+  }, [closeEditor, manageOpen, mobileInspectorOpen, runHistoryOpen]);
 
   async function exportWorkflow() {
     const current = dirty ? await saveDraft() : detail;
@@ -1702,11 +1714,16 @@ export function AutomationWorkflowEditorOverlay({ workspaceId, projectId, workfl
       <header className="automation-editor-topbar">
         <div className="automation-editor-title">
           <button type="button" className="automation-editor-collapse" disabled={saving} onClick={() => void closeEditor()} aria-label="Collapse workflow editor" title="Collapse workflow editor"><ChevronLeft size={19} /></button>
-          <span><small>AUTOMATION CANVAS</small><input aria-label="Workflow name" value={name} disabled={Boolean(readOnly)} onChange={(event) => { setName(event.target.value); markDirty(); }} /></span>
-          {!systemReadOnly && <span className={`automation-editor-save-state ${saving || dirty ? "is-saving" : validation?.valid ? "is-saved" : "is-attention"}`}>
-            {saving || dirty ? <LoaderCircle size={12} /> : validation?.valid ? <Check size={12} /> : <CircleAlert size={12} />}
-            {saving || dirty ? "Saving" : validation?.valid ? "Saved" : "Saved · needs attention"}
-          </span>}
+          <span className="automation-editor-heading">
+            <small>AUTOMATION CANVAS</small>
+            <span className="automation-editor-name-row">
+              <input aria-label="Workflow name" value={name} disabled={Boolean(readOnly)} onChange={(event) => { setName(event.target.value); markDirty(); }} />
+              {!systemReadOnly && <span className={`automation-editor-save-state ${saving || dirty ? "is-saving" : validation?.valid ? "is-saved" : "is-attention"}`}>
+                {saving || dirty ? <LoaderCircle size={11} /> : validation?.valid ? <Check size={11} /> : <CircleAlert size={11} />}
+                {saving || dirty ? "Saving" : validation?.valid ? "Saved" : "Saved · needs attention"}
+              </span>}
+            </span>
+          </span>
         </div>
         <div className="automation-editor-actions">
           <div className="automation-workflow-switcher">
@@ -1720,17 +1737,23 @@ export function AutomationWorkflowEditorOverlay({ workspaceId, projectId, workfl
               onChange={(nextWorkflowId) => void requestWorkflowSwitch(nextWorkflowId)}
             />
           </div>
-          {validation && !validation.valid && <button type="button" className="automation-editor-tool-button is-attention" aria-label={`Review ${validation.issues.length} workflow issues`} title={`Review ${validation.issues.length} workflow issues`} onClick={() => {
-            const nextValidation = validateAutomationWorkflowGraph(graph);
-            setValidation(nextValidation);
-            if (!nextValidation.valid) {
-              setError(nextValidation.issues.slice(0, 4).map((entry) => entry.message).join(" · "));
-              const firstNodeId = nextValidation.issues.find((entry) => entry.nodeId)?.nodeId;
-              if (firstNodeId) setSelectedId(firstNodeId);
-            }
-          }}><CircleAlert size={15} /></button>}
-          <button type="button" className="automation-editor-tool-button" aria-label="Run history" title="Run history" onClick={() => setRunHistoryOpen(true)}><Activity size={15} /></button>
-          <button type="button" className="automation-editor-tool-button" aria-label="Export workflow JSON" title="Export workflow JSON" disabled={saving} onClick={() => void exportWorkflow()}><Download size={15} /></button>
+          <div className="automation-manage-menu" ref={manageMenuRef}>
+            <button type="button" className={manageOpen ? "is-open" : ""} aria-haspopup="menu" aria-expanded={manageOpen} onClick={() => setManageOpen((open) => !open)}>Manage <ChevronDown size={13} /></button>
+            {manageOpen && <div role="menu">
+              {validation && !validation.valid && <button type="button" role="menuitem" onClick={() => {
+                setManageOpen(false);
+                const nextValidation = validateAutomationWorkflowGraph(graph);
+                setValidation(nextValidation);
+                if (!nextValidation.valid) {
+                  setError(nextValidation.issues.slice(0, 4).map((entry) => entry.message).join(" · "));
+                  const firstNodeId = nextValidation.issues.find((entry) => entry.nodeId)?.nodeId;
+                  if (firstNodeId) setSelectedId(firstNodeId);
+                }
+              }}><CircleAlert size={14} /><span><b>Review issues</b><small>{validation.issues.length} item{validation.issues.length === 1 ? "" : "s"} need attention</small></span></button>}
+              <button type="button" role="menuitem" onClick={() => { setManageOpen(false); setRunHistoryOpen(true); }}><Activity size={14} /><span><b>Run history</b><small>See routes, errors and output</small></span></button>
+              <button type="button" role="menuitem" disabled={saving} onClick={() => { setManageOpen(false); void exportWorkflow(); }}><Download size={14} /><span><b>Export JSON</b><small>Portable workflow file</small></span></button>
+            </div>}
+          </div>
           {systemReadOnly && capabilities.edit && <button type="button" className="is-primary" disabled={saving} onClick={() => void duplicateSystem()}><Copy size={14} /> Duplicate to customize</button>}
         </div>
       </header>
