@@ -208,6 +208,59 @@ test("runtime inputs are derived from node contracts rather than built-in node i
   assert.ok(!fields.some((field) => field.key === "tiktok-source.source"));
 });
 
+test("new input nodes expose only the fields deliberately chosen for the run panel", () => {
+  const defaults = (type: string) => automationNodeDefinitions()
+    .find((definition) => definition.type === type)!
+    .fields.filter((field) => field.defaultRunInput)
+    .map((field) => field.id);
+
+  assert.deepEqual(defaults("input.tiktok-source"), ["source"]);
+  assert.deepEqual(defaults("input.identity"), ["identity"]);
+  assert.deepEqual(defaults("input.visual-references"), ["references"]);
+  assert.deepEqual(defaults("input.workflow-data"), ["value"]);
+  assert.deepEqual(defaults("input.creative-settings"), [
+    "mode",
+    "newOutfit",
+    "newLocation",
+    "textStrategy",
+    "creativeBrief",
+    "creativeDirectionPolicy",
+  ]);
+  assert.deepEqual(defaults("ai.structured-task"), []);
+  assert.deepEqual(defaults("generation.image"), []);
+});
+
+test("replacement caption is required only while replacement mode is visible", () => {
+  const graph = createDefaultTikTokWorkflowGraph();
+  const source = graph.nodes.find((node) => node.id === "tiktok-source")!;
+  source.bindings.captionMode = { mode: "ask-on-run", required: true };
+  source.bindings.caption = { mode: "ask-on-run", required: false };
+
+  const baseValues = Object.fromEntries(automationRunInputFields(graph)
+    .filter((field) => field.key !== "tiktok-source.captionMode" && field.key !== "tiktok-source.caption")
+    .map((field) => [field.key, field.value ?? (field.required ? "selected" : "")]));
+  baseValues["creative-settings.newOutfit"] = true;
+  baseValues["creative-settings.newLocation"] = true;
+
+  assert.equal(validateAutomationRunInputs(graph, {
+    ...baseValues,
+    "tiktok-source.captionMode": "original",
+  }).valid, true);
+
+  const missingReplacement = validateAutomationRunInputs(graph, {
+    ...baseValues,
+    "tiktok-source.captionMode": "replacement",
+  });
+  assert.equal(missingReplacement.valid, false);
+  assert.ok(missingReplacement.issues.some((entry) => entry.code === "MISSING_RUN_INPUT" && entry.nodeId === "tiktok-source"));
+
+  assert.equal(validateAutomationRunInputs(graph, {
+    ...baseValues,
+    "tiktok-source.captionMode": "replacement",
+    "tiktok-source.caption": "A new caption",
+  }).valid, true);
+});
+
 test("server validates exact published run inputs and rejects hidden extras", () => {
   const graph = createDefaultTikTokWorkflowGraph();
   const values = Object.fromEntries(automationRunInputFields(graph).map((field) => [field.key, field.value ?? (field.required ? "selected" : "")]));

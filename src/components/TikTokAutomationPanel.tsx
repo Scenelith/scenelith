@@ -1,10 +1,10 @@
 "use client";
 
-import { ArrowDownToLine, ArrowRight, Check, Plus, Settings2, Workflow, X } from "lucide-react";
-import { useEffect, useMemo, useRef, useState } from "react";
+import { ArrowRight, Check, Settings2, Workflow, X } from "lucide-react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { generatorRatiosFor, generatorResolutionsFor, type GeneratorModelOption } from "@/components/FrameNode";
 import { InspectorSelect } from "@/components/InspectorSelect";
-import type { AutomationReferenceCandidate } from "@/components/automation/AutomationReferencePicker";
+import { AutomationReferencePicker, type AutomationReferenceCandidate } from "@/components/automation/AutomationReferencePicker";
 import { assistantModels } from "@/lib/assistant-models";
 import type { AutomationCapabilities } from "@/editions/contracts/access";
 import type { PersonaRecord } from "@/lib/types";
@@ -60,6 +60,8 @@ function RuntimeJsonField({ value, disabled, onChange }: { value: unknown; disab
 }
 
 export function TikTokAutomationPanel({
+  workspaceId,
+  canvasReferences = [],
   projectId,
   workflowId,
   setWorkflowId,
@@ -106,13 +108,11 @@ export function TikTokAutomationPanel({
   onConfirmChanges?: (runtimeInputs: Record<string, unknown>, mode: "production" | "test") => void;
   onDismissConfirmation?: () => void;
 }) {
-  const initialDemoInputs = demo ? [...new Map([...(demo.productionRunInputs || []), ...(demo.draftRunInputs || [])].map((field) => [field.key, field])).values()] : [];
+  const initialDemoInputs = demo ? (demo.productionRunInputs.length ? demo.productionRunInputs : demo.draftRunInputs || []) : [];
   const [workflows, setWorkflows] = useState<AutomationWorkflowRecord[]>(() => demo?.workflows || []);
   const [capabilities, setCapabilities] = useState<AutomationCapabilities>(() => demo?.capabilities || { run: false, edit: false, publish: false, manageTriggers: false, manageCredentials: false });
   const [openTriggerAlerts, setOpenTriggerAlerts] = useState<Record<string, number>>(() => demo?.openTriggerAlerts || {});
   const [workflowError, setWorkflowError] = useState("");
-  const [creatingWorkflow, setCreatingWorkflow] = useState(false);
-  const importInputRef = useRef<HTMLInputElement>(null);
   const [runInputs, setRunInputs] = useState<AutomationRunInputField[]>(() => initialDemoInputs);
   const [productionRunInputs, setProductionRunInputs] = useState<AutomationRunInputField[]>(() => demo?.productionRunInputs || []);
   const [runtimeValuesByWorkflow, setRuntimeValuesByWorkflow] = useState<Record<string, Record<string, unknown>>>(() => demo ? { [demo.detail.workflow.id]: demo.runtimeValues || {} } : {});
@@ -128,12 +128,12 @@ export function TikTokAutomationPanel({
   }, [workflowId, workflows]);
   const selectedAlertCount = openTriggerAlerts[workflowId] || 0;
   const runtimeValues = useMemo(() => runtimeValuesByWorkflow[workflowId] || {}, [runtimeValuesByWorkflow, workflowId]);
-  const nodeManagedInputKeys = useMemo(() => new Set(runInputs.filter((field) => field.valueType === "visual-references").map((field) => field.key)), [runInputs]);
-  const panelRuntimeValues = useMemo(() => Object.fromEntries(Object.entries(runtimeValues).filter(([key]) => !nodeManagedInputKeys.has(key))), [nodeManagedInputKeys, runtimeValues]);
-  const visibleRunInputs = useMemo(() => runInputs.filter((field) => field.valueType !== "visual-references"), [runInputs]);
+  const runInputVisible = useCallback((field: AutomationRunInputField) => !field.visibleWhen || field.visibleWhen.values.some((value) => Object.is(value, runtimeValues[field.visibleWhen!.key] ?? field.visibleWhen!.value)), [runtimeValues]);
+  const visibleRunInputs = useMemo(() => runInputs.filter(runInputVisible), [runInputVisible, runInputs]);
+  const visibleProductionRunInputs = useMemo(() => productionRunInputs.filter(runInputVisible), [productionRunInputs, runInputVisible]);
   const runtimeValuesChangeRef = useRef(onRuntimeValuesChange);
   useEffect(() => { runtimeValuesChangeRef.current = onRuntimeValuesChange; }, [onRuntimeValuesChange]);
-  useEffect(() => { runtimeValuesChangeRef.current?.(workflowId, panelRuntimeValues); }, [panelRuntimeValues, workflowId]);
+  useEffect(() => { runtimeValuesChangeRef.current?.(workflowId, runtimeValues); }, [runtimeValues, workflowId]);
 
   useEffect(() => { workflowIdRef.current = workflowId; }, [workflowId]);
   useEffect(() => { setWorkflowIdRef.current = setWorkflowId; }, [setWorkflowId]);
@@ -168,7 +168,7 @@ export function TikTokAutomationPanel({
         if (cancelled) return;
         const publishedFields = body.runInputs || [];
         const draftFields = body.draftRunInputs || [];
-        const fields = [...new Map([...publishedFields, ...draftFields].map((field) => [field.key, field])).values()];
+        const fields = publishedFields.length ? publishedFields : draftFields;
         setProductionRunInputs(publishedFields);
         if (body.capabilities) setCapabilities(body.capabilities);
         setRunInputs(fields);
@@ -222,7 +222,7 @@ export function TikTokAutomationPanel({
 
   const sourceField = runInputs.find((field) => field.valueType === "tiktok-source");
   const selectedSource = sourceField ? sources.find((source) => source.id === runtimeValues[sourceField.key]) : null;
-  const requiredMissing = (fields: AutomationRunInputField[]) => fields.some((field) => field.required && emptyRuntimeValue(runtimeValues[field.key]));
+  const requiredMissing = (fields: AutomationRunInputField[]) => fields.some((field) => (field.required || field.requiredWhenVisible) && emptyRuntimeValue(runtimeValues[field.key]));
   const inputsFor = (fields: AutomationRunInputField[]) => Object.fromEntries(fields.map((field) => [field.key, runtimeValues[field.key]]));
   const confirmChanges = () => {
     if (!confirmation || !onConfirmChanges) return;
@@ -256,63 +256,9 @@ export function TikTokAutomationPanel({
     return field.options?.map((option) => ({ ...option })) || [];
   };
 
-  async function createWorkflow() {
-    if (creatingWorkflow || busy) return;
-    setCreatingWorkflow(true);
-    setWorkflowError("");
-    try {
-      const response = await fetch("/api/automation-workflows", {
-        method: "POST",
-        headers: { "content-type": "application/json" },
-        body: JSON.stringify({ projectId, name: "Untitled automation" }),
-      });
-      const body = await response.json() as AutomationWorkflowDetail & { error?: string };
-      if (!response.ok || !body.workflow?.id) throw new Error(body.error || "Could not create a workflow");
-      setWorkflows((current) => [...current.filter((workflow) => workflow.id !== body.workflow.id), body.workflow]);
-      setWorkflowId(body.workflow.id);
-      onConfigure(body.workflow.id);
-    } catch (error) {
-      setWorkflowError(error instanceof Error ? error.message : "Could not create a workflow");
-    } finally {
-      setCreatingWorkflow(false);
-    }
-  }
-
-  async function importWorkflow(file: File | undefined) {
-    if (!file || busy || creatingWorkflow) return;
-    setCreatingWorkflow(true);
-    setWorkflowError("");
-    try {
-      if (file.size > 3_000_000) throw new Error("Automation packages must be smaller than 3 MB");
-      const portable = JSON.parse(await file.text()) as unknown;
-      const response = await fetch("/api/automation-workflows/import", {
-        method: "POST",
-        headers: { "content-type": "application/json" },
-        body: JSON.stringify({ projectId, package: portable }),
-      });
-      const body = await response.json() as { detail?: AutomationWorkflowDetail; error?: string };
-      if (!response.ok || !body.detail?.workflow) throw new Error(body.error || "Could not import this automation");
-      const imported = body.detail.workflow;
-      setWorkflows((current) => [...current.filter((workflow) => workflow.id !== imported.id), imported]);
-      setWorkflowId(imported.id);
-      onConfigure(imported.id);
-    } catch (error) {
-      setWorkflowError(error instanceof SyntaxError ? "Choose a valid Scenelith automation JSON file" : error instanceof Error ? error.message : "Could not import this automation");
-    } finally {
-      setCreatingWorkflow(false);
-      if (importInputRef.current) importInputRef.current.value = "";
-    }
-  }
-
   return <aside className="tiktok-automation-panel" onPointerDown={(event) => event.stopPropagation()}>
     <header className="tiktok-automation-head">
-      <div><span className="eyebrow">AUTOMATION</span><h2>{selectedWorkflow?.name || "Choose a workflow"}</h2><p>{selectedWorkflow?.description || "Select, configure and run a workflow."}</p>
-        {capabilities.edit && <div className="tiktok-automation-create-actions">
-          <input ref={importInputRef} type="file" accept="application/json,.json,.scenelith-automation.json" hidden onChange={(event) => void importWorkflow(event.target.files?.[0])} />
-          <button type="button" disabled={busy || creatingWorkflow} onClick={() => importInputRef.current?.click()}><ArrowDownToLine size={14} /> Import</button>
-          <button type="button" disabled={busy || creatingWorkflow} onClick={() => void createWorkflow()}><Plus size={14} /> New workflow</button>
-        </div>}
-      </div>
+      <div><span className="eyebrow">AUTOMATION</span><h2>{selectedWorkflow?.name || "Choose a workflow"}</h2><p>{selectedWorkflow?.description || "Select, configure and run a workflow."}</p></div>
       <div className="tiktok-automation-head-actions">
         <button type="button" className={selectedAlertCount ? "has-alert" : undefined} disabled={!workflowId} onClick={() => workflowId && onConfigure(workflowId)} aria-label={selectedAlertCount ? `Configure workflow, ${selectedAlertCount} trigger alerts need attention` : "Configure workflow"} title={selectedAlertCount ? `${selectedAlertCount} trigger alert${selectedAlertCount === 1 ? "" : "s"} need attention` : "Configure workflow"}><Settings2 size={16} />{selectedAlertCount > 0 && <i>{Math.min(99, selectedAlertCount)}</i>}</button>
         <button type="button" onClick={onClose} aria-label="Close automation"><X size={16} /></button>
@@ -328,12 +274,17 @@ export function TikTokAutomationPanel({
 
       <section className="tiktok-automation-runtime-fields">
         <span className="eyebrow">RUN INPUTS</span>
-        {!visibleRunInputs.length && <p className="tiktok-automation-empty-inputs">Run-specific values are configured on the workflow nodes.</p>}
+        {!visibleRunInputs.length && <div className="tiktok-automation-empty-inputs">
+          <Settings2 size={15} />
+          <span><strong>No run inputs yet</strong><p>Add an input node, or select any configurable step and choose <b>Add to run inputs</b> beside the value you want to set before each run.</p></span>
+        </div>}
         {visibleRunInputs.map((field) => {
           const options = fieldOptions(field);
           const value = runtimeValues[field.key];
-          return <label key={`${workflowId}:${field.key}`}><span>{field.label}{!field.required && <em>optional</em>}</span>{field.valueType === "boolean"
-            ? <button type="button" className={`tiktok-automation-runtime-toggle ${value ? "is-on" : ""}`} disabled={busy || !capabilities.run} onClick={() => setRuntimeField(field, !value)}><i />{value ? "Enabled" : "Disabled"}</button>
+          return <label key={`${workflowId}:${field.key}`}><span>{field.label}{!field.required && !field.requiredWhenVisible && <em>optional</em>}</span>{field.valueType === "visual-references" && workspaceId
+            ? <AutomationReferencePicker workspaceId={workspaceId} projectId={projectId} canvasReferences={canvasReferences || []} personas={personas} selectedIds={Array.isArray(value) ? value.filter((item): item is string => typeof item === "string") : []} maxItems={field.selectionLimit || field.max || 8} disabled={busy || !capabilities.run} placement="run-panel" onChange={(assetIds) => setRuntimeField(field, assetIds)} />
+            : field.valueType === "boolean"
+            ? <InspectorSelect label={field.label} value={value ? "true" : "false"} disabled={busy || !capabilities.run} options={[{ value: "true", label: "Enabled" }, { value: "false", label: "Disabled" }]} onChange={(next) => setRuntimeField(field, next === "true")} />
             : field.valueType === "json"
               ? <RuntimeJsonField value={value} disabled={busy || !capabilities.run} onChange={(next) => setRuntimeField(field, next)} />
               : options.length
@@ -368,7 +319,7 @@ export function TikTokAutomationPanel({
       <div className="tiktok-automation-run-control">
         {busy
           ? capabilities.run && <button type="button" className="is-cancel" onClick={onCancel} title="Cancel workflow run">Cancel run</button>
-          : capabilities.run && <button type="button" disabled={!runnable || requiredMissing(productionRunInputs)} onClick={() => onRun(inputsFor(productionRunInputs), "production")} title="Run selected workflow"><Workflow size={15} />Run automation</button>}
+          : capabilities.run && <button type="button" disabled={!runnable || requiredMissing(visibleProductionRunInputs)} onClick={() => onRun(inputsFor(visibleProductionRunInputs), "production")} title="Run selected workflow"><Workflow size={15} />Run automation</button>}
       </div>
     </footer>
   </aside>;

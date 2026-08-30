@@ -61,7 +61,7 @@ import {
 import { assetDirectUrl, assetDownloadUrl, assetThumbnailUrl, FrameNodeCard, GeneratorNodeContext, OPEN_NODE_CREATOR_EVENT, OPEN_VIDEO_EDITOR_EVENT, generatorModelCreditDescription, generatorRatiosFor, generatorResolutionsFor, generatorSettingsForModel, type GeneratorModelOption, type GeneratorNodeActions } from "./FrameNode";
 import { InspectorSelect } from "./InspectorSelect";
 import { TikTokAutomationPanel, type AutomationChoiceConfirmation, type TikTokAutomationSlideState, type TikTokAutomationStatus } from "./TikTokAutomationPanel";
-import type { AutomationWorkflowExecutionState } from "./automation/AutomationWorkflowEditorOverlay";
+import type { AutomationWorkflowEditorHandle, AutomationWorkflowExecutionState } from "./automation/AutomationWorkflowEditorOverlay";
 import type { AutomationReferenceCandidate } from "./automation/AutomationReferencePicker";
 import { MediaViewer, type ImageEditOptions } from "./MediaViewer";
 import { VideoEditorViewer, type VideoEditorReference } from "./VideoEditorViewer";
@@ -525,6 +525,7 @@ function CanvasWorkspace({ initialProject, projects: initialProjects, initialWor
   const [automationWorkflowId, setAutomationWorkflowId] = useState("");
   const [automationWorkflowRefreshKey, setAutomationWorkflowRefreshKey] = useState(0);
   const [automationEditorWorkflowId, setAutomationEditorWorkflowId] = useState<string | null>(null);
+  const automationWorkflowEditorRef = useRef<AutomationWorkflowEditorHandle>(null);
   const [automationRuntimePreview, setAutomationRuntimePreview] = useState<{ workflowId: string; values: Record<string, unknown> } | null>(null);
   const [automationSourceId, setAutomationSourceId] = useState("");
   const [automationStatus, setAutomationStatus] = useState<TikTokAutomationStatus>("idle");
@@ -4638,9 +4639,25 @@ function CanvasWorkspace({ initialProject, projects: initialProjects, initialWor
       {ProductPanelRouter && <ProductPanelRouter focus={productPanelFocus} user={user} workspace={workspace} onRequestAccountView={(view) => { setProductPanelFocus(null); setAccountView(view); }} onClose={() => setProductPanelFocus(null)} />}
 
       {tiktokAutomationOpen && <TikTokAutomationPanel
+        workspaceId={workspace.id}
+        canvasReferences={automationCanvasReferences}
         projectId={project.id}
         workflowId={automationWorkflowId}
-        setWorkflowId={(value) => { setAutomationWorkflowId(value); setAutomationRuntimePreview(null); setAutomationStatus("idle"); setAutomationSlideStates([]); setAutomationExecution(null); setAutomationChoiceConfirmation(null); }}
+        setWorkflowId={(value) => {
+          if (automationEditorWorkflowId && automationEditorWorkflowId !== value) {
+            const editor = automationWorkflowEditorRef.current;
+            if (editor) {
+              void editor.requestWorkflowSwitch(value);
+              return;
+            }
+          }
+          setAutomationWorkflowId(value);
+          setAutomationRuntimePreview(null);
+          setAutomationStatus("idle");
+          setAutomationSlideStates([]);
+          setAutomationExecution(null);
+          setAutomationChoiceConfirmation(null);
+        }}
         workflowRefreshKey={automationWorkflowRefreshKey}
         onConfigure={(workflowId) => {
           setTikTokAutomationOpen(true);
@@ -4673,6 +4690,7 @@ function CanvasWorkspace({ initialProject, projects: initialProjects, initialWor
       />}
       {automationEditorWorkflowId && <AutomationWorkflowEditorOverlay
         key={automationEditorWorkflowId}
+        ref={automationWorkflowEditorRef}
         workspaceId={workspace.id}
         projectId={project.id}
         workflowId={automationEditorWorkflowId}
@@ -4688,8 +4706,16 @@ function CanvasWorkspace({ initialProject, projects: initialProjects, initialWor
         }))}
         onClose={() => setAutomationEditorWorkflowId(null)}
         onWorkflowChanged={(workflowId) => {
+          const changedWorkflow = workflowId !== automationWorkflowId;
           setAutomationWorkflowId(workflowId);
           setAutomationEditorWorkflowId(workflowId);
+          if (changedWorkflow) {
+            setAutomationRuntimePreview(null);
+            setAutomationStatus("idle");
+            setAutomationSlideStates([]);
+            setAutomationExecution(null);
+            setAutomationChoiceConfirmation(null);
+          }
           setAutomationWorkflowRefreshKey((current) => current + 1);
         }}
       />}

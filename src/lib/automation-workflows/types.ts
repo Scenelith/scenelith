@@ -236,6 +236,10 @@ export type AutomationNodeFieldDefinition = {
   defaultValue?: unknown;
   options?: Array<{ value: string; label: string }>;
   runtimeBindable?: boolean;
+  /** Expose this field before each run when a user adds this node to a custom workflow. */
+  defaultRunInput?: boolean;
+  /** A conditionally visible run input must be completed whenever it is visible. */
+  requiredWhenVisible?: boolean;
   runtimeValueType?: AutomationRuntimeValueType;
   required?: boolean;
   min?: number;
@@ -299,6 +303,8 @@ export type AutomationRunInputField = {
   fieldKind: AutomationNodeFieldDefinition["kind"];
   modelCapability?: AutomationNodeFieldDefinition["modelCapability"];
   options?: Array<{ value: string; label: string }>;
+  visibleWhen?: { key: string; values: unknown[]; value?: unknown };
+  requiredWhenVisible?: boolean;
   min?: number;
   max?: number;
   selectionLimit?: number;
