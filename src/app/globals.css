@@ -1801,6 +1801,4 @@ select.panel-input { color-scheme: dark; }
 .canvas-collaboration-presence.is-connecting .canvas-collaboration-dot { animation:collaboration-pulse 1s ease-in-out infinite; }
 .canvas-collaboration-presence.is-offline .canvas-collaboration-dot,
 .canvas-collaboration-presence.is-error .canvas-collaboration-dot { background:#d49a68; }
-.canvas-collaboration-presence i { display:grid; place-items:center; width:24px; height:24px; margin-left:-5px; border:2px solid #111214; border-radius:999px; background:var(--collaborator-color); color:#0d1010; font:700 10px/1 var(--font-sans, sans-serif); font-style:normal; }
-.canvas-collaboration-presence small { margin-left:4px; color:#88888d; font:600 10px/1 var(--font-mono, monospace); }
 @keyframes collaboration-pulse { 0%,100% { opacity:.35; transform:scale(.75); } 50% { opacity:1; transform:scale(1); } }
