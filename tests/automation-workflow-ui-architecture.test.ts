@@ -416,13 +416,12 @@ test("valid workflow edits auto-save and become runnable without a publish actio
   assert.match(canvasSource, /setAutomationEditorWorkflowId\(\(current\) => current === workflowId \? null : workflowId\)/);
 });
 
-test("automation toolbar keeps management focused on run history", () => {
-  assert.match(workflowEditorSource, /className=\{`automation-validation-pill/);
-  assert.doesNotMatch(workflowEditorSource, /automation-validation-pill[\s\S]{0,500}<Check/);
-  assert.match(workflowEditorSource, /aria-expanded=\{manageOpen\}/);
-  assert.match(workflowEditorSource, />Manage<\/button>/);
-  assert.match(workflowEditorSource, /<b>Run history<\/b><small>See routes, failures and usage<\/small>/);
-  assert.match(workflowEditorSource, /<b>Export JSON<\/b>/);
+test("automation toolbar exposes quiet direct actions without status badges", () => {
+  assert.doesNotMatch(workflowEditorSource, /automation-validation-pill|>Valid<\/button>|>Manage<\/button>|manageOpen/);
+  assert.match(workflowEditorSource, /className="automation-editor-tool-button" aria-label="Run history"/);
+  assert.match(workflowEditorSource, /className="automation-editor-tool-button" aria-label="Export workflow JSON"/);
+  assert.match(workflowEditorSource, /validation && !validation\.valid/);
+  assert.match(workflowEditorSource, /aria-label=\{`Review \$\{validation\.issues\.length\} workflow issues`\}/);
   assert.doesNotMatch(workflowEditorSource, /<b>Versions<\/b>|<b>Automatic starts<\/b>|<b>Test a step<\/b>|<b>Workflow settings<\/b>/);
   assert.doesNotMatch(workflowOperationsSource, /Automatic starts|Test a step|Save fixture|Restore as draft/);
   assert.match(workflowOperationsSource, /Opening the latest run/);
@@ -432,6 +431,12 @@ test("automation toolbar keeps management focused on run history", () => {
   assert.match(workflowOperationsSource, /Not used on this route/);
   assert.match(workflowOperationsSource, /rest of the run completed normally/);
   assert.match(workflowOperationsSource, /nodeRun\.status === "failed" && nodeRun\.error && <p className="is-error"/);
+});
+
+test("collaboration status stays a quiet dot without helper or peer avatars", () => {
+  assert.match(canvasSource, /className=\{`canvas-collaboration-presence is-\$\{collaborationStatus\}`\}/);
+  assert.match(canvasSource, /<span className="canvas-collaboration-dot" \/>/);
+  assert.doesNotMatch(canvasSource, /collaborators\.slice|collaborator\.name\.slice|\+\{collaborators\.length/);
 });
 
 test("automation dropdown fields reuse the unclipped InspectorSelect", () => {

@@ -1403,56 +1403,21 @@ body,
 .automation-workflow-switcher .inspector-select-menu button small { overflow:visible; color:var(--color-text-dim); font-size:8px; line-height:1.25; text-overflow:clip; white-space:normal; }
 .automation-workflow-switcher .inspector-select-option-state .inspector-select-badge { height:auto; min-width:0; padding:0; background:transparent; color:var(--color-text-dim); font:700 6.5px/1 ui-monospace,monospace; letter-spacing:.07em; text-transform:uppercase; }
 .automation-workflow-switcher .inspector-select-menu button.is-selected .inspector-select-badge,.automation-workflow-switcher .inspector-select-menu button.is-selected svg { color:var(--color-mint); }
-.automation-manage-menu { position: relative; }
-.automation-manage-menu > button {
+.automation-editor-actions > button.automation-editor-tool-button {
+  width: 30px;
   min-height: 32px;
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  gap: 7px;
-  padding: 0 10px;
-  border: 1px solid var(--color-border-faint);
-  border-radius: 9px;
-  background: var(--color-ink-4);
-  color: var(--color-text-soft);
-  font-size: 11px;
-  font-weight: 720;
-  cursor: pointer;
-}
-.automation-manage-menu > button:hover,.automation-manage-menu > button.is-open { border-color: var(--color-border); color: var(--color-text); }
-.automation-manage-menu > div {
-  position: absolute;
-  z-index: 20;
-  right: 0;
-  top: calc(100% + 8px);
-  width: 246px;
-  display: grid;
-  gap: 3px;
-  padding: 7px;
-  border: 1px solid var(--color-border);
-  border-radius: 12px;
-  background: color-mix(in srgb, var(--color-ink-3) 96%, transparent);
-  box-shadow: 0 22px 60px rgba(0,0,0,.5), inset 0 1px rgba(255,255,255,.035);
-}
-.automation-manage-menu > div > button {
-  min-height: 48px;
-  display: grid;
-  grid-template-columns: 24px minmax(0,1fr);
-  align-items: center;
-  gap: 8px;
-  padding: 6px 8px;
+  padding: 0;
   border: 0;
-  border-radius: 8px;
+  border-radius: 0;
   background: transparent;
-  color: var(--color-text-muted);
-  text-align: left;
+  color: var(--color-text-dim);
   cursor: pointer;
 }
-.automation-manage-menu > div > button:hover { background: var(--color-ink-5); color: var(--color-text); }
-.automation-manage-menu > div > button:disabled { opacity: .42; cursor: default; }
-.automation-manage-menu > div > button > span { min-width: 0; display: grid; gap: 3px; }
-.automation-manage-menu > div b { color: var(--color-text-soft); font-size: 11px; }
-.automation-manage-menu > div small { color: var(--color-text-dim); font-size: 9px; font-weight: 500; }
+.automation-editor-actions > button.automation-editor-tool-button:hover { border: 0; background: transparent; color: var(--color-text); }
+.automation-editor-actions > button.automation-editor-tool-button.is-attention { color: var(--color-amber); }
 .automation-editor-title > span { min-width: 180px; display: flex; flex-direction: column; gap: 2px; }
 .automation-editor-title > span small { color: var(--color-mint); font: 720 7px/1 ui-monospace, monospace; letter-spacing: .12em; }
 .automation-editor-title > span input {
@@ -1488,8 +1453,6 @@ body,
 .automation-editor-save-state.is-attention { color: var(--color-amber); }
 .automation-editor-save-state.is-saving svg { animation: automation-save-spin .8s linear infinite; }
 @keyframes automation-save-spin { to { transform: rotate(360deg); } }
-.automation-validation-pill.is-valid { color: var(--color-mint) !important; }
-.automation-validation-pill:not(.is-valid) { color: var(--color-rose) !important; }
 .automation-editor-error {
   grid-row:2;
   min-height: 34px;
@@ -2152,7 +2115,6 @@ body,
   .automation-editor-title > span input { width:min(180px,18vw); }
   .automation-editor-title > i { display:none; }
   .automation-workflow-switcher { width:160px; flex-basis:160px; }
-  .automation-manage-menu > button { padding-inline:10px; }
   .automation-editor-actions > button.is-primary { width:auto; padding-inline:11px; font-size:10px; }
 }
 @media (max-width: 1180px) {
@@ -2184,13 +2146,11 @@ body,
   .automation-editor-title { gap:6px; }
   .automation-editor-title > span { min-width:0; }
   .automation-editor-title > span input { width: 30vw; }
-  .automation-validation-pill { display:none !important; }
   .automation-workflow-switcher { width: 140px; flex-basis: 140px; }
   .automation-workflow-switcher .inspector-select-menu { width:min(280px,calc(100vw - 20px)); }
   .automation-editor-actions > button { padding:0 9px; }
   .automation-editor-actions > button:not(.is-primary) { padding-inline:8px; }
-  .automation-manage-menu > button { width:34px; padding:0; font-size:0; }
-  .automation-manage-menu > div { position:fixed; right:10px; top:66px; width:min(280px,calc(100vw - 20px)); }
+  .automation-editor-actions > button.automation-editor-tool-button { padding:0; }
   .automation-operations-backdrop { padding:0; }
   .automation-operations { border:0; border-radius:0; }
   .automation-operations > header { min-height:124px; grid-template-columns:1fr auto; grid-template-rows:auto auto; gap:8px; padding:12px; }

@@ -638,7 +638,7 @@ function CanvasWorkspace({ initialProject, projects: initialProjects, initialWor
       setProjectSwitchingId(null);
     }
   }, [models, project]);
-  const { status: collaborationStatus, ready: collaborationReady, collaborators, peerCount, mutate: mutateCollaborativeGraph, flush: flushCollaborativeGraph } = useCanvasCollaboration({ projectId: project.id, user, onRemoteGraph: applyCollaborativeGraph });
+  const { status: collaborationStatus, ready: collaborationReady, peerCount, mutate: mutateCollaborativeGraph, flush: flushCollaborativeGraph } = useCanvasCollaboration({ projectId: project.id, user, onRemoteGraph: applyCollaborativeGraph });
   const mutateCollaborativeGraphRef = useRef(mutateCollaborativeGraph);
   mutateCollaborativeGraphRef.current = mutateCollaborativeGraph;
   const markGraphCommitted = useCallback(() => {
@@ -4554,8 +4554,6 @@ function CanvasWorkspace({ initialProject, projects: initialProjects, initialWor
         <div className="top-actions">
           <div data-testid="collaboration-status" data-status={collaborationStatus} data-peer-count={peerCount} className={`canvas-collaboration-presence is-${collaborationStatus}`} title={collaborationStatus === "synced" ? "Canvas is live and saved continuously" : collaborationStatus === "offline" ? "Reconnecting — local changes are kept" : "Connecting to the live canvas"}>
             <span className="canvas-collaboration-dot" />
-            {collaborators.slice(0, 3).map((collaborator) => <i key={collaborator.clientId} style={{ "--collaborator-color": collaborator.color } as React.CSSProperties} title={collaborator.name}>{collaborator.name.slice(0, 1).toUpperCase()}</i>)}
-            {collaborators.length > 3 && <small>+{collaborators.length - 3}</small>}
           </div>
           <TaskCenter onNavigate={(task) => {
             const targetProject = projects.find((item) => item.id === task.projectId);
