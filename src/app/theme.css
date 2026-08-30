@@ -1662,6 +1662,44 @@ button.automation-editor-validation-state.is-attention[aria-expanded="true"] { b
 .automation-flow-stage .react-flow__node.dragging { cursor: grabbing; }
 .automation-flow-stage .react-flow__controls { overflow: hidden; border: 1px solid var(--color-border); border-radius: 10px; box-shadow: none; }
 .automation-flow-stage .react-flow__controls button { border-color: var(--color-border-faint); background: var(--color-ink-4); fill: var(--color-text-muted); }
+.automation-run-dock {
+  position:absolute;
+  z-index:6;
+  left:50%;
+  bottom:16px;
+  min-height:42px;
+  display:flex;
+  align-items:center;
+  gap:3px;
+  padding:4px;
+  border:1px solid var(--color-border);
+  border-radius:21px;
+  background:rgba(25,25,27,.96);
+  box-shadow:0 12px 28px rgba(0,0,0,.24),inset 0 1px rgba(255,255,255,.035);
+  backdrop-filter:blur(18px);
+  transform:translateX(-50%);
+}
+.automation-run-dock-status { height:32px; display:flex; align-items:center; gap:7px; padding:0 9px 0 8px; color:var(--color-text-muted); }
+.automation-run-dock-status > i { width:6px; height:6px; flex:none; border-radius:50%; background:var(--color-stone-3); }
+.automation-run-dock-status > b { min-width:42px; color:inherit; font:700 8px/1 var(--font-mono); letter-spacing:.035em; white-space:nowrap; }
+.automation-run-dock.is-ready .automation-run-dock-status > i,
+.automation-run-dock.is-complete .automation-run-dock-status > i { background:var(--color-mint); }
+.automation-run-dock.is-running .automation-run-dock-status > i { background:var(--color-mint); animation:automation-run-dock-pulse 1.3s ease-in-out infinite; }
+.automation-run-dock.is-stopped .automation-run-dock-status,
+.automation-run-dock.is-confirm .automation-run-dock-status { color:var(--color-danger); }
+.automation-run-dock.is-input .automation-run-dock-status { color:var(--color-source); }
+.automation-run-dock.is-stopped .automation-run-dock-status > i,
+.automation-run-dock.is-confirm .automation-run-dock-status > i { background:var(--color-danger); }
+.automation-run-dock.is-input .automation-run-dock-status > i { background:var(--color-source); }
+.automation-run-dock-separator { width:1px; height:18px; margin:0 3px; background:var(--color-border-faint); }
+.automation-run-dock > button { width:32px; height:32px; display:grid; place-items:center; padding:0; border:0; border-radius:50%; background:transparent; color:var(--color-text-muted); cursor:pointer; transition:color .14s ease,background .14s ease,transform .14s ease; }
+.automation-run-dock > button:hover:not(:disabled) { background:var(--color-ink-5); color:var(--color-text); transform:scale(1.04); }
+.automation-run-dock > button:active:not(:disabled) { transform:scale(.96); }
+.automation-run-dock > button.is-primary { background:var(--color-text); color:var(--color-ink-1); }
+.automation-run-dock > button.is-stop { color:var(--color-danger); }
+.automation-run-dock > button.is-stop.is-armed { background:var(--color-danger); color:var(--color-ink-1); }
+.automation-run-dock > button:disabled { opacity:.25; cursor:default; transform:none; }
+@keyframes automation-run-dock-pulse { 50% { opacity:.42; } }
 .automation-flow-stage .react-flow__edge-path { stroke: var(--color-stone-2); stroke-width: 1.5; stroke-linecap:round; stroke-linejoin:round; transition:stroke .16s ease,stroke-width .16s ease,opacity .16s ease; }
 .automation-flow-stage .react-flow__edge.selected .react-flow__edge-path { stroke: var(--color-mint); }
 .automation-flow-stage .react-flow__edge.is-traced .react-flow__edge-path { stroke:var(--color-mint); stroke-width:2.25; opacity:1; }
@@ -1726,6 +1764,7 @@ button.automation-editor-validation-state.is-attention[aria-expanded="true"] { b
 .automation-flow-node.is-execution-running { border-color:var(--color-border-strong); box-shadow:none; }
 .automation-flow-node.is-execution-completed { border-color:color-mix(in srgb,var(--color-mint) 48%,var(--color-border)); }
 .automation-flow-node.is-execution-failed { border-color:var(--color-rose); }
+.automation-flow-node.is-execution-cancelled { border-color:var(--color-warn); }
 .automation-flow-node.is-execution-skipped { border-color:var(--color-stone-3); }
 .automation-flow-node.is-disabled { opacity: 1; filter: saturate(.28); border-style: dashed; }
 .automation-flow-node.is-preview-inactive { opacity:.34; filter:saturate(.22); box-shadow:none; }
@@ -1737,6 +1776,7 @@ button.automation-editor-validation-state.is-attention[aria-expanded="true"] { b
 .automation-flow-node-run-state { flex:none; display:inline-flex; align-items:center; gap:4px; color:var(--color-text-dim); font:720 7px/1 ui-monospace,monospace; font-style:normal; letter-spacing:.04em; }
 .automation-flow-node-run-state.is-running,.automation-flow-node-run-state.is-completed { color:var(--color-mint); }
 .automation-flow-node-run-state.is-failed { color:var(--color-rose); }
+.automation-flow-node-run-state.is-cancelled { color:var(--color-warn); }
 .automation-flow-node-run-state.is-skipped { color:var(--color-text-dim); }
 .automation-flow-node > strong { color: var(--color-text); font-size: 13px; line-height: 1.25; }
 .automation-flow-node > p { min-height: 36px; margin: 0; overflow: hidden; color: var(--color-text-muted); font-size: 10.5px; line-height: 1.5; display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 2; }
@@ -1876,6 +1916,7 @@ button.automation-editor-validation-state.is-attention[aria-expanded="true"] { b
 .automation-definition-preview > button { min-height:34px; display:inline-flex; align-items:center; gap:6px; padding:0 10px; border:1px solid var(--color-mint-line); border-radius:8px; background:var(--color-mint); color:var(--color-ink-1); font-size:9px; font-weight:720; cursor:pointer; }
 .automation-definition-preview > button.is-secondary { background:var(--color-ink-4); color:var(--color-text-soft); }
 .automation-template-notice { display:grid; grid-template-columns:auto minmax(0,1fr); align-items:start; gap:8px; padding:0 0 13px; border-bottom:1px solid var(--color-border-faint); color:var(--color-mint); }
+.automation-inspector-scroll > .automation-template-notice:first-child { margin-top:15px; }
 .automation-template-notice > span { display:grid; gap:4px; }
 .automation-template-notice b { color:var(--color-text); font-size:10px; }
 .automation-template-notice small { color:var(--color-text-muted); font-size:9px; line-height:1.45; }
@@ -1895,21 +1936,35 @@ button.automation-editor-validation-state.is-attention[aria-expanded="true"] { b
 .automation-execution-empty p { max-width:280px; margin:0; color:var(--color-text-muted); font-size:9px; line-height:1.55; }
 .automation-execution-attempt { margin-top:10px; overflow:hidden; border:1px solid var(--color-border-faint); border-radius:9px; background:var(--color-ink-3); }
 .automation-execution-attempt > header { display:grid; grid-template-columns:minmax(0,1fr) auto; align-items:center; gap:10px; padding:10px 11px; border-bottom:1px solid var(--color-border-faint); }
-.automation-execution-attempt > header span { min-width:0; display:flex; align-items:center; gap:7px; }
+.automation-execution-attempt > header span { min-width:0; display:flex; align-items:baseline; gap:9px; }
 .automation-execution-attempt > header b { flex:none; color:var(--color-text-soft); font-size:10px; white-space:nowrap; }
-.automation-execution-attempt > header small { min-width:0; overflow:hidden; padding:2px 5px; border-radius:999px; background:var(--color-ink-5); color:var(--color-text-dim); font:700 7px/1.3 var(--font-mono); text-overflow:ellipsis; text-transform:uppercase; white-space:nowrap; }
-.automation-execution-attempt.is-failed > header small { background:color-mix(in srgb,var(--color-danger) 18%,transparent); color:var(--color-danger); }
-.automation-execution-attempt.is-completed > header small { background:color-mix(in srgb,var(--color-mint) 14%,transparent); color:var(--color-mint); }
+.automation-execution-attempt > header small { min-width:0; overflow:hidden; padding:0; background:transparent; color:var(--color-text-dim); font:700 7px/1.3 var(--font-mono); letter-spacing:.06em; text-overflow:ellipsis; text-transform:uppercase; white-space:nowrap; }
+.automation-execution-attempt.is-failed > header small { color:var(--color-danger); }
+.automation-execution-attempt.is-cancelled > header small { color:var(--color-warn); }
+.automation-execution-attempt.is-completed > header small { color:var(--color-mint); }
 .automation-execution-attempt > header em { color:var(--color-text-dim); font:700 8px/1 var(--font-mono); font-style:normal; }
 .automation-execution-error { display:grid; gap:5px; padding:10px; border-bottom:1px solid color-mix(in srgb,var(--color-danger) 24%,transparent); background:color-mix(in srgb,var(--color-danger) 7%,transparent); }
 .automation-execution-error small { color:var(--color-danger); font:700 8px/1.2 var(--font-mono); }
 .automation-execution-error b { color:var(--color-text-soft); font-size:10px; line-height:1.5; }
+.automation-execution-error p { margin:0; color:var(--color-text-muted); font-size:8.5px; line-height:1.5; }
+.automation-execution-error.is-cancelled { border-bottom-color:color-mix(in srgb,var(--color-warn) 22%,transparent); background:color-mix(in srgb,var(--color-warn) 5%,transparent); }
+.automation-execution-error.is-cancelled small { color:var(--color-warn); }
 .automation-execution-attempt > details { border-bottom:1px solid var(--color-border-faint); }
 .automation-execution-attempt > details:last-child { border-bottom:0; }
 .automation-execution-attempt > details > summary { display:flex; align-items:center; justify-content:space-between; padding:9px 10px; color:var(--color-text-muted); font-size:9px; cursor:pointer; list-style:none; }
 .automation-execution-attempt > details > summary::-webkit-details-marker { display:none; }
-.automation-execution-attempt > details[open] > summary svg { transform:rotate(45deg); }
+.automation-execution-attempt > details > summary svg { flex:none; transition:transform .14s ease; }
+.automation-execution-attempt > details[open] > summary svg { transform:rotate(90deg); }
 .automation-execution-attempt pre { max-height:360px; margin:0; overflow:auto; padding:10px; border-top:1px solid var(--color-border-faint); background:var(--color-ink-1); color:var(--color-text-muted); font:8px/1.55 var(--font-mono); white-space:pre-wrap; word-break:break-word; }
+.automation-execution-no-output { margin:0; padding:11px 10px; border-top:1px solid var(--color-border-faint); background:var(--color-ink-1); color:var(--color-text-dim); font-size:8.5px; }
+.automation-execution-resume { display:grid; gap:10px; margin:9px 0 12px; padding:11px; border:1px solid var(--color-mint-line); border-radius:9px; background:color-mix(in srgb,var(--color-mint) 5%,var(--color-ink-3)); }
+.automation-execution-resume > span { display:grid; grid-template-columns:18px minmax(0,1fr); align-items:start; gap:8px; color:var(--color-mint); }
+.automation-execution-resume i { min-width:0; display:grid; gap:4px; font-style:normal; }
+.automation-execution-resume b { color:var(--color-text-soft); font-size:10px; }
+.automation-execution-resume small { color:var(--color-text-muted); font-size:8.5px; line-height:1.45; }
+.automation-execution-resume button { min-height:32px; display:inline-flex; align-items:center; justify-content:center; gap:6px; border:0; border-radius:7px; background:var(--color-mint); color:var(--color-ink-1); font-size:8.5px; font-weight:800; cursor:pointer; }
+.automation-execution-resume button:disabled { opacity:.55; cursor:wait; }
+.automation-execution-action-error { margin:0 0 10px; color:var(--color-danger); font-size:8.5px; line-height:1.45; }
 .automation-setting-summary { display:grid; gap:5px; padding:11px 0; border-bottom:1px solid var(--color-border-faint); }
 .automation-setting-summary > span { min-width:0; display:flex; align-items:center; justify-content:space-between; gap:8px; }
 .automation-setting-summary > span b { overflow:hidden; color:var(--color-text-soft); font-size:9px; text-overflow:ellipsis; white-space:nowrap; }
@@ -3377,7 +3432,11 @@ button.automation-editor-validation-state.is-attention[aria-expanded="true"] { b
 .tiktok-automation-run-control:hover > span[role="tooltip"],.tiktok-automation-run-control:focus-within > span[role="tooltip"] { opacity:1; transform:translateY(0); }
 .tiktok-automation-panel > footer button { min-height: 40px; display: inline-flex; align-items: center; justify-content: center; gap: 8px; padding: 0 14px; border: 0; border-radius: 10px; background: var(--color-mint); color: var(--color-ink-0); font-size: 11px; font-weight: 800; cursor: pointer; }
 .tiktok-automation-panel > footer button.is-cancel { border: 1px solid color-mix(in srgb, var(--color-rose) 45%, transparent); background: color-mix(in srgb, var(--color-rose) 10%, var(--color-ink-4)); color: var(--color-rose); }
+.tiktok-automation-panel > footer button.is-cancel.is-armed { border-color:var(--color-rose); background:var(--color-rose); color:var(--color-ink-1); }
+.tiktok-automation-panel > footer button.is-start-over { min-height:32px; background:transparent; color:var(--color-text-muted); font-size:9px; font-weight:680; }
+.tiktok-automation-run-control:has(.is-resume) { flex-direction:column; }
 .tiktok-automation-run-control > button:not(:last-child):not(.is-cancel) { border: 1px solid var(--color-border); background: var(--color-ink-4); color: var(--color-text-soft); }
+.tiktok-automation-run-control > button.is-resume { border-color:transparent; background:var(--color-mint); color:var(--color-ink-1); }
 .tiktok-automation-panel > footer button:disabled { opacity: .42; cursor: not-allowed; }
 .tiktok-automation-panel > footer button svg { flex: 0 0 auto; }
 .tiktok-automation-panel button:focus-visible,.tiktok-automation-panel input:focus-visible,.tiktok-automation-panel textarea:focus-visible { outline:2px solid var(--color-mint); outline-offset:2px; }

@@ -412,6 +412,29 @@ test("retry creates a linked run and reuses only safe upstream outputs", async (
   assert.ok(replayed?.events.some((event) => event.type === "node.reused"));
 });
 
+test("a cancelled run can resume from its interrupted step", async () => {
+  const owner = await seedOwner();
+  const workflow = await repository.createAutomationWorkflow({ userId: owner.userId, projectId: owner.projectId, name: "Resume cancelled" });
+  await repository.saveAutomationWorkflowDraft({ userId: owner.userId, workflowId: workflow!.workflow.id, baseDraftVersionId: workflow!.draft!.id, graph: finishGraph("failed") });
+  const queued = await runs.enqueueAutomationWorkflowRun({ userId: owner.userId, projectId: owner.projectId, workflowId: workflow!.workflow.id, runtimeInputs: {}, mode: "test" });
+  assert.ok("runId" in queued);
+  stopScheduledWorkflowDrain();
+  await runs.drainAutomationWorkflowRuns();
+  const source = await runs.getAutomationWorkflowRun(owner.userId, "runId" in queued ? queued.runId : "");
+  assert.equal(source?.status, "failed");
+  await db.prepare("UPDATE automation_runs SET status = 'cancelled', stage_label = 'Cancelled', error = NULL, error_code = NULL WHERE id = ?").run(source!.id);
+
+  const resumed = await runs.retryAutomationWorkflowRun({ userId: owner.userId, runId: source!.id, nodeId: "finish" });
+  assert.ok("runId" in resumed);
+  if (!("runId" in resumed)) throw new Error("Cancelled replay was not queued");
+  stopScheduledWorkflowDrain();
+  const replay = await runs.getAutomationWorkflowRun(owner.userId, resumed.runId);
+  assert.equal(replay?.status, "queued");
+  assert.equal(replay?.runKind, "replay");
+  assert.equal(replay?.replayOfRunId, source?.id);
+  assert.equal(replay?.reusedNodeCount, 1);
+});
+
 test("an overlapping drain request guarantees a follow-up queue sweep", async () => {
   const owner = await seedOwner();
   const workflow = await repository.createAutomationWorkflow({ userId: owner.userId, projectId: owner.projectId, name: "Overlapping drain" });

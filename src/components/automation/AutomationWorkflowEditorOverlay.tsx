@@ -44,6 +44,7 @@ import {
   Inbox,
   ChevronDown,
   ChevronLeft,
+  ChevronRight,
   Layers3,
   ListTree,
   ListFilter,
@@ -58,6 +59,7 @@ import {
   ShieldCheck,
   SlidersHorizontal,
   Sparkles,
+  Square,
   StickyNote,
   Trash2,
   UserRound,
@@ -78,6 +80,7 @@ import type {
   AutomationAnnotation,
   AutomationEdgeRole,
   AutomationNodeFieldDefinition,
+  AutomationRunInputField,
   AutomationValidationResult,
   AutomationWorkflowDetail,
   AutomationWorkflowGraph,
@@ -122,7 +125,7 @@ type FlowNoteData = {
 
 type AutomationFlowData = FlowNodeData | FlowNoteData;
 
-export type AutomationWorkflowNodeExecutionStatus = "idle" | "running" | "completed" | "failed" | "skipped";
+export type AutomationWorkflowNodeExecutionStatus = "idle" | "running" | "completed" | "failed" | "cancelled" | "skipped";
 export type AutomationWorkflowExecutionState = {
   workflowId: string;
   runId: string | null;
@@ -159,6 +162,8 @@ type WorkflowBinding = { slotKey: string; type: "credential" | "subworkflow"; cr
 type AutomationWorkflowClientDetail = AutomationWorkflowDetail & {
   capabilities: AutomationCapabilities;
   systemModelDefaults?: Record<string, string>;
+  runInputs?: AutomationRunInputField[];
+  draftRunInputs?: AutomationRunInputField[];
 };
 type AutomationNodeDefinitionRecord = ReturnType<typeof automationNodeDefinitions>[number];
 
@@ -166,6 +171,12 @@ function workflowSwitcherPresentation(workflow: AutomationWorkflowRecord) {
   if (workflow.status === "system") return { description: "Default workflow" };
   if (workflow.status === "archived") return { description: "Archived workflow" };
   return { description: "Saved automatically" };
+}
+
+function emptyAutomationRuntimeValue(value: unknown) {
+  if (value == null || value === "") return true;
+  if (Array.isArray(value)) return value.length === 0;
+  return false;
 }
 
 const categoryNodeLabels = Object.fromEntries(
@@ -227,7 +238,7 @@ function AutomationNodeCard({ data, selected }: NodeProps<Node<FlowNodeData>>) {
       style={{ top: `${((index + 1) / (inputPorts.length + 1)) * 100}%` }}
       title={port.label}
     />)}
-    <span className="automation-flow-node-kicker"><AutomationNodeIcon definition={definition} size={13} /><em>{String(data.stepIndex).padStart(2, "0")}</em><b>{definition.title}</b>{data.executionStatus === "running" ? <i className="automation-flow-node-run-state is-running" title="Running now">Running</i> : data.executionStatus === "completed" ? <i className="automation-flow-node-run-state is-completed" title="Completed"><Check size={12} />Done</i> : data.executionStatus === "failed" ? <i className="automation-flow-node-run-state is-failed" title="Stopped on this step"><CircleAlert size={12} />Stopped</i> : data.executionStatus === "skipped" ? <i className="automation-flow-node-run-state is-skipped" title="Skipped">Skipped</i> : null}</span>
+    <span className="automation-flow-node-kicker"><AutomationNodeIcon definition={definition} size={13} /><em>{String(data.stepIndex).padStart(2, "0")}</em><b>{definition.title}</b>{data.executionStatus === "running" ? <i className="automation-flow-node-run-state is-running" title="Running now">Running</i> : data.executionStatus === "completed" ? <i className="automation-flow-node-run-state is-completed" title="Completed"><Check size={12} />Done</i> : data.executionStatus === "cancelled" ? <i className="automation-flow-node-run-state is-cancelled" title="Run cancelled on this step"><Square size={10} />Cancelled</i> : data.executionStatus === "failed" ? <i className="automation-flow-node-run-state is-failed" title="Stopped on this step"><CircleAlert size={12} />Stopped</i> : data.executionStatus === "skipped" ? <i className="automation-flow-node-run-state is-skipped" title="Skipped">Skipped</i> : null}</span>
     <strong>{node.name}</strong>
     <p>{node.description || definition.description}</p>
     {data.referenceControl && <div className="automation-flow-node-references nodrag nopan nowheel">
@@ -484,8 +495,10 @@ function displayGraph(
     if (!current || nodeRun.attempt >= current.attempt) latestNodeRuns.set(nodeRun.nodeId, nodeRun);
   }
   const executionStatus = (nodeId: string): AutomationWorkflowNodeExecutionStatus => {
-    const status = latestNodeRuns.get(nodeId)?.status;
-    if (status === "running" || status === "completed" || status === "failed" || status === "skipped") return status;
+    const nodeRun = latestNodeRuns.get(nodeId);
+    if (nodeRun?.status === "failed" && nodeRun.errorCode === "RUN_CANCELLED") return "cancelled";
+    const status = nodeRun?.status;
+    if (status === "running" || status === "completed" || status === "failed" || status === "cancelled" || status === "skipped") return status;
     return "idle";
   };
   const relation = (nodeId: string): FlowNodeData["relation"] => {
@@ -554,7 +567,7 @@ function displayGraph(
         const targetStatus = executionStatus(edge.target);
         const edgeExecutionStatus: AutomationWorkflowNodeExecutionStatus = targetStatus === "running" && sourceStatus === "completed"
           ? "running"
-          : targetStatus === "failed" && sourceStatus === "completed"
+          : (targetStatus === "failed" || targetStatus === "cancelled") && sourceStatus === "completed"
             ? "failed"
             : sourceStatus === "completed" && (targetStatus === "completed" || targetStatus === "skipped")
               ? "completed"
@@ -1060,9 +1073,12 @@ export const AutomationWorkflowEditorOverlay = forwardRef<AutomationWorkflowEdit
   execution?: AutomationWorkflowExecutionState | null;
   runtimeValues?: Record<string, unknown>;
   onRuntimeValueChange?: (workflowId: string, key: string, value: unknown) => void;
+  onRun?: (runtimeInputs: Record<string, unknown>, mode: "production" | "test") => void;
+  onCancel?: () => void;
+  onRetryFromNode?: (runId: string, nodeId: string) => Promise<void>;
   onClose: () => void;
   onWorkflowChanged?: (workflowId: string) => void;
-}>(function AutomationWorkflowEditorOverlay({ workspaceId, projectId, workflowId, sources, personas, models, canvasReferences, execution = null, runtimeValues = {}, onRuntimeValueChange, onClose, onWorkflowChanged }, ref) {
+}>(function AutomationWorkflowEditorOverlay({ workspaceId, projectId, workflowId, sources, personas, models, canvasReferences, execution = null, runtimeValues = {}, onRuntimeValueChange, onRun, onCancel, onRetryFromNode, onClose, onWorkflowChanged }, ref) {
   const [detail, setDetail] = useState<AutomationWorkflowClientDetail | null>(null);
   const [graph, setGraph] = useState<AutomationWorkflowGraph | null>(null);
   const [name, setName] = useState("");
@@ -1071,6 +1087,8 @@ export const AutomationWorkflowEditorOverlay = forwardRef<AutomationWorkflowEdit
   const [previewDefinitionKey, setPreviewDefinitionKey] = useState<string | null>(null);
   const [inspectorView, setInspectorView] = useState<"guide" | "settings" | "execution">("settings");
   const [executionResult, setExecutionResult] = useState<{ key: string; attempts: AutomationNodeExecutionAttempt[] }>({ key: "", attempts: [] });
+  const [retryingNodeId, setRetryingNodeId] = useState("");
+  const [executionActionError, setExecutionActionError] = useState("");
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState("");
@@ -1082,6 +1100,7 @@ export const AutomationWorkflowEditorOverlay = forwardRef<AutomationWorkflowEdit
   const [validationOpen, setValidationOpen] = useState(false);
   const [mobileInspectorOpen, setMobileInspectorOpen] = useState(false);
   const [runHistoryOpen, setRunHistoryOpen] = useState(false);
+  const [runDockStopArmed, setRunDockStopArmed] = useState(false);
   const [validation, setValidation] = useState<AutomationValidationResult | null>(null);
   const [bindingOptions, setBindingOptions] = useState<{ credentials: CredentialOption[]; workflows: WorkflowBindingOption[]; bindings: WorkflowBinding[] }>({ credentials: [], workflows: [], bindings: [] });
   const [newCredentialName, setNewCredentialName] = useState("");
@@ -1237,6 +1256,43 @@ export const AutomationWorkflowEditorOverlay = forwardRef<AutomationWorkflowEdit
 
   const focusedNodeId = selectedId && graph?.nodes.some((node) => node.id === selectedId) ? selectedId : null;
   const visibleExecution = execution?.workflowId === workflowId ? execution : null;
+  const runDockBusy = visibleExecution?.status === "queued" || visibleExecution?.status === "running";
+  const runDockStoppedNode = [...(visibleExecution?.nodeRuns || [])].reverse().find((nodeRun) => nodeRun.status === "failed");
+  const runDockCanResume = Boolean(
+    capabilities.run
+    && onRetryFromNode
+    && visibleExecution?.runId
+    && (visibleExecution.status === "failed" || visibleExecution.status === "cancelled" || visibleExecution.status === "completed_with_warnings")
+    && runDockStoppedNode,
+  );
+  const runDockFields = detail?.runInputs?.length ? detail.runInputs : detail?.draftRunInputs || [];
+  const runDockMissingInput = runDockFields.some((field) => {
+    const visible = !field.visibleWhen || field.visibleWhen.values.some((value) => Object.is(value, runtimeValues[field.visibleWhen!.key] ?? field.visibleWhen!.value));
+    return visible && (field.required || field.requiredWhenVisible) && emptyAutomationRuntimeValue(runtimeValues[field.key]);
+  });
+  const runDockReady = Boolean(capabilities.run && onRun && validation?.valid && !saving && !dirty && !runDockMissingInput);
+  const runDockUnavailableTitle = runDockMissingInput ? "Complete required run inputs in the Automation panel"
+    : validation?.valid ? "Wait for the workflow to finish saving" : "Resolve workflow issues before running";
+  const runDockState = runDockStopArmed ? "confirm"
+    : runDockBusy ? "running"
+      : visibleExecution?.status === "failed" || visibleExecution?.status === "cancelled" ? "stopped"
+        : visibleExecution?.status === "completed" || visibleExecution?.status === "completed_with_warnings" ? "complete"
+          : runDockMissingInput ? "input" : validation?.valid ? "ready" : "setup";
+  const runDockLabel = runDockStopArmed ? "Stop?"
+    : runDockBusy ? "Running"
+      : runDockState === "stopped" ? "Stopped"
+        : runDockState === "complete" ? "Complete"
+          : runDockState === "ready" ? "Ready" : runDockState === "input" ? "Needs input" : "Needs setup";
+  useEffect(() => {
+    if (!runDockStopArmed) return;
+    const timer = window.setTimeout(() => setRunDockStopArmed(false), 5_000);
+    return () => window.clearTimeout(timer);
+  }, [runDockStopArmed]);
+  useEffect(() => {
+    if (runDockBusy) return;
+    const timer = window.setTimeout(() => setRunDockStopArmed(false), 0);
+    return () => window.clearTimeout(timer);
+  }, [runDockBusy]);
   const display = useMemo(() => graph ? displayGraph(graph, Boolean(readOnly), focusedNodeId, visibleExecution, runtimeValues, {
     workspaceId,
     projectId,
@@ -1283,6 +1339,16 @@ export const AutomationWorkflowEditorOverlay = forwardRef<AutomationWorkflowEdit
   )));
   const previewDefinition = previewDefinitionKey ? automationNodeDefinitions().find((definition) => `${definition.type}@${definition.version}` === previewDefinitionKey) || null : null;
   const executionDetailKey = selectedNode && execution?.runId && execution.workflowId === workflowId ? `${execution.runId}:${selectedNode.id}` : "";
+  const selectedExecutionNodeRun = selectedNode
+    ? [...(execution?.nodeRuns || [])].reverse().find((nodeRun) => nodeRun.nodeId === selectedNode.id)
+    : null;
+  const selectedExecutionCanRetry = Boolean(
+    capabilities.run
+    && onRetryFromNode
+    && execution?.runId
+    && (execution.status === "failed" || execution.status === "cancelled" || execution.status === "completed_with_warnings")
+    && selectedExecutionNodeRun?.status === "failed",
+  );
   useEffect(() => {
     if (!selectedNode || !execution?.runId || !executionDetailKey) return;
     let cancelled = false;
@@ -1296,6 +1362,19 @@ export const AutomationWorkflowEditorOverlay = forwardRef<AutomationWorkflowEdit
       .catch(() => { if (!cancelled) setExecutionResult({ key: executionDetailKey, attempts: [] }); });
     return () => { cancelled = true; };
   }, [execution?.nodeRuns, execution?.runId, execution?.status, executionDetailKey, selectedNode]);
+
+  async function retrySelectedExecutionNode() {
+    if (!selectedNode || !execution?.runId || !onRetryFromNode || !selectedExecutionCanRetry || retryingNodeId) return;
+    setRetryingNodeId(selectedNode.id);
+    setExecutionActionError("");
+    try {
+      await onRetryFromNode(execution.runId, selectedNode.id);
+    } catch (retryError) {
+      setExecutionActionError(retryError instanceof Error ? retryError.message : "Could not resume from this step");
+    } finally {
+      setRetryingNodeId("");
+    }
+  }
   function selectedFieldOptions(field: AutomationNodeFieldDefinition) {
     if (!selectedNode) return field.options || [];
     if (field.runtimeValueType === "tiktok-source") return sources.map((source) => ({ value: source.id, label: source.label }));
@@ -2001,6 +2080,40 @@ export const AutomationWorkflowEditorOverlay = forwardRef<AutomationWorkflowEdit
               />
             </ReactFlow>
           </ReactFlowProvider>
+          <nav className={`automation-run-dock is-${runDockState}`} aria-label="Automation run controls" onPointerDown={(event) => event.stopPropagation()}>
+            <span className="automation-run-dock-status" aria-live="polite"><i aria-hidden="true" /><b>{runDockLabel}</b></span>
+            <span className="automation-run-dock-separator" aria-hidden="true" />
+            {runDockBusy
+              ? <button key="automation-dock-stop" type="button" className={`is-stop ${runDockStopArmed ? "is-armed" : ""}`} disabled={!onCancel} aria-label={runDockStopArmed ? "Confirm stop automation" : "Stop automation"} title={runDockStopArmed ? "Click again to stop the automation" : "Stop automation"} onClick={(event) => {
+                event.currentTarget.blur();
+                if (!runDockStopArmed) {
+                  setRunDockStopArmed(true);
+                  return;
+                }
+                setRunDockStopArmed(false);
+                onCancel?.();
+              }}><Square size={15} /></button>
+              : runDockCanResume && visibleExecution?.runId && runDockStoppedNode
+                ? <>
+                  <button key="automation-dock-resume" type="button" className="is-primary" aria-label="Resume from stopped step" title="Resume from stopped step" onClick={(event) => {
+                    event.currentTarget.blur();
+                    void onRetryFromNode?.(visibleExecution.runId!, runDockStoppedNode.nodeId);
+                  }}><RotateCcw size={16} /></button>
+                  <button key="automation-dock-start-over" type="button" disabled={!runDockReady} aria-label="Start automation over" title={runDockReady ? "Start over" : runDockUnavailableTitle} onClick={(event) => {
+                    event.currentTarget.blur();
+                    onRun?.(runtimeValues, "production");
+                  }}><Play size={16} /></button>
+                </>
+                : <button key="automation-dock-run" type="button" className="is-primary" disabled={!runDockReady} aria-label={runDockState === "complete" ? "Run automation again" : "Start automation"} title={runDockReady ? runDockState === "complete" ? "Run again" : "Start automation" : runDockUnavailableTitle} onClick={(event) => {
+                  event.currentTarget.blur();
+                  onRun?.(runtimeValues, "production");
+                }}><Play size={16} /></button>}
+            <span className="automation-run-dock-separator" aria-hidden="true" />
+            <button type="button" aria-label="Open automation run history" title="Run history" onClick={(event) => {
+              event.currentTarget.blur();
+              setRunHistoryOpen(true);
+            }}><Activity size={16} /></button>
+          </nav>
         </main>
 
         <aside className={`automation-node-inspector ${mobileInspectorOpen ? "is-open" : ""}`}>
@@ -2036,14 +2149,22 @@ export const AutomationWorkflowEditorOverlay = forwardRef<AutomationWorkflowEdit
                   {!readOnly && <div className="automation-inspector-danger"><button type="button" onClick={(event) => { event.preventDefault(); event.stopPropagation(); removeSelectedNode(selectedNode.id); }}><Trash2 size={13} /> Remove step</button></div>}
                 </> : <section className="automation-node-execution">
                   <div className="automation-inspector-section-label"><b>Step execution</b><span>{execution?.runId ? `Run ${execution.runId.slice(0, 8)}` : "Run the workflow to capture exact data"}</span></div>
+                  {selectedExecutionCanRetry && <div className="automation-execution-resume"><span><RotateCcw size={14} /><i><b>{execution?.status === "cancelled" || selectedExecutionNodeRun?.errorCode === "RUN_CANCELLED" ? "Continue from this step" : "Retry from this step"}</b><small>Starts a new run here and reuses every safe completed step before it.</small></i></span><button type="button" disabled={Boolean(retryingNodeId)} onClick={() => void retrySelectedExecutionNode()}><RotateCcw size={13} />{retryingNodeId ? "Starting…" : execution?.status === "cancelled" ? "Resume" : "Retry"}</button></div>}
+                  {executionActionError && <p className="automation-execution-action-error" role="alert">{executionActionError}</p>}
                   {!execution?.runId ? <div className="automation-execution-empty"><Activity size={18} /><b>No execution selected</b><p>After a run starts, this panel shows every attempt, the exact captured input, output and any error returned by this step.</p></div>
                     : executionResult.key !== executionDetailKey ? <div className="automation-execution-empty"><Activity size={18} /><b>Loading execution…</b></div>
-                      : executionResult.attempts.length ? executionResult.attempts.map((attempt) => <article key={attempt.id} className={`automation-execution-attempt is-${attempt.status}`}>
-                        <header><span><b>Attempt {attempt.attempt}</b><small>{attempt.reusedFromNodeRunId ? `reused exact output from ${attempt.reusedFromNodeRunId.slice(0, 8)}` : attempt.status.replaceAll("_", " ")}</small></span>{attempt.chargedCredits > 0 && <em>{attempt.chargedCredits} credits</em>}</header>
-                        {attempt.error && <div className="automation-execution-error"><small>{attempt.errorCode || "STEP_ERROR"}</small><b>{attempt.error}</b></div>}
-                        <details open={Boolean(attempt.error)}><summary>Captured input <Plus size={12} /></summary><pre>{JSON.stringify(attempt.input ?? {}, null, 2)}</pre></details>
-                        <details open={Boolean(attempt.error && attempt.output)}><summary>Produced output <Plus size={12} /></summary><pre>{JSON.stringify(attempt.output ?? null, null, 2)}</pre></details>
-                      </article>)
+                      : executionResult.attempts.length ? executionResult.attempts.map((attempt) => {
+                        const cancelledAttempt = attempt.errorCode === "RUN_CANCELLED";
+                        const statusLabel = attempt.reusedFromNodeRunId
+                          ? `Reused from ${attempt.reusedFromNodeRunId.slice(0, 8)}`
+                          : cancelledAttempt ? "Cancelled" : attempt.status.replaceAll("_", " ");
+                        return <article key={attempt.id} className={`automation-execution-attempt is-${cancelledAttempt ? "cancelled" : attempt.status}`}>
+                          <header><span><b>Attempt {attempt.attempt}</b><small>{statusLabel}</small></span>{attempt.chargedCredits > 0 && <em>{attempt.chargedCredits} credits</em>}</header>
+                          {attempt.error && <div className={`automation-execution-error ${cancelledAttempt ? "is-cancelled" : ""}`}><small>{attempt.errorCode || "STEP_ERROR"}</small><b>{cancelledAttempt ? "Run cancelled before this step produced an output" : attempt.error}</b>{cancelledAttempt && <p>This is not a model failure. Resume from this step to keep the completed work.</p>}</div>}
+                          <details open={Boolean(attempt.error)}><summary><span>Captured input</span><ChevronRight size={13} /></summary><pre>{JSON.stringify(attempt.input ?? {}, null, 2)}</pre></details>
+                          <details><summary><span>Produced output</span><ChevronRight size={13} /></summary>{attempt.output == null ? <p className="automation-execution-no-output">No output was produced.</p> : <pre>{JSON.stringify(attempt.output, null, 2)}</pre>}</details>
+                        </article>;
+                      })
                         : <div className="automation-execution-empty"><Activity size={18} /><b>This step did not run</b><p>Its required route may not have produced a value in the selected run.</p></div>}
                 </section>}
               </div>

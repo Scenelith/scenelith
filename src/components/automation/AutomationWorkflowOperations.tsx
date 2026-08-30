@@ -231,7 +231,7 @@ export function AutomationWorkflowOperations({ projectId, workflowId, capabiliti
               <div className="automation-run-timeline">{selectedRun.nodeRuns.map((nodeRun, index) => {
                 const stepName = workflowNodeNames.get(nodeRun.nodeId) || nodeRun.nodeId.replaceAll("-", " ");
                 const meaningfulPorts = nodeRun.outputPorts.filter((port) => !routineOutputPorts.has(port.toLowerCase()));
-                const canRetry = capabilities.run && (selectedRun.status === "failed" || selectedRun.status === "completed_with_warnings") && nodeRun.status === "failed";
+                const canRetry = capabilities.run && (selectedRun.status === "failed" || selectedRun.status === "cancelled" || selectedRun.status === "completed_with_warnings") && nodeRun.status === "failed";
                 const stepKey = `${selectedRun.id}:${nodeRun.id}`;
                 const expanded = expandedStepKey === stepKey;
                 const details = stepDetails[stepKey];
@@ -251,7 +251,7 @@ export function AutomationWorkflowOperations({ projectId, workflowId, capabiliti
                       {skipped && <p>This path was not selected for this run, so the step received no input.</p>}
                       {nodeRun.status === "failed" && <p className="is-error">{attempt?.error || nodeRun.error || "This step failed before it produced an output."}</p>}
                       {attempt?.errorCode && nodeRun.status === "failed" && <small>{attempt.errorCode}</small>}
-                      {canRetry && <button type="button" className="automation-run-retry" disabled={Boolean(busyId)} onClick={() => void retryRun(selectedRun.id, nodeRun.nodeId)}><RotateCcw size={12} /> Retry from this step</button>}
+                      {canRetry && <button type="button" className="automation-run-retry" disabled={Boolean(busyId)} onClick={() => void retryRun(selectedRun.id, nodeRun.nodeId)}><RotateCcw size={12} /> {selectedRun.status === "cancelled" ? "Resume from this step" : "Retry from this step"}</button>}
                       {attempt && !skipped && <div className="automation-run-step-payloads">
                         <details><summary>Input</summary><pre>{JSON.stringify(attempt.input ?? {}, null, 2)}</pre></details>
                         <details><summary>Output</summary><pre>{JSON.stringify(attempt.output ?? null, null, 2)}</pre></details>
