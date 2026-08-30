@@ -133,6 +133,15 @@ test("automation workflow discovery is not restarted by an unstable parent callb
   assert.doesNotMatch(panelSource, /\[demo, projectId, setWorkflowId, workflowId, workflowRefreshKey\]/);
 });
 
+test("run controls cannot retain focus when their action changes into stop or resume", () => {
+  assert.match(panelSource, /key="run-new"/);
+  assert.match(panelSource, /key="stop-run"/);
+  assert.match(panelSource, /key="resume-run"/);
+  assert.match(panelSource, /key="start-over"/);
+  assert.match(panelSource, /event\.currentTarget\.blur\(\)/);
+  assert.match(panelSource, /cancelArmed \? "Confirm stop" : "Stop run"/);
+});
+
 test("the live automation panel exposes a read-only demo contract for Cloud marketing", () => {
   assert.match(panelSource, /export type TikTokAutomationPanelDemo/);
   assert.match(panelSource, /demo\?: TikTokAutomationPanelDemo/);
@@ -162,6 +171,21 @@ test("automation canvas owns an isolated React Flow store and cannot replace the
   assert.doesNotMatch(workflowEditorSource, /automation-editor-active/);
   assert.doesNotMatch(themeSource, /automation-editor-active[^}]*canvas-stage[^}]*visibility\s*:\s*hidden/);
   assert.match(themeSource, /\.automation-editor-overlay[^}]*background:\s*transparent/);
+});
+
+test("automation canvas owns a bottom run dock with safe state-specific controls", () => {
+  assert.match(workflowEditorSource, /automation-run-dock is-\$\{runDockState\}/);
+  assert.match(workflowEditorSource, /key="automation-dock-run"/);
+  assert.match(workflowEditorSource, /key="automation-dock-stop"/);
+  assert.match(workflowEditorSource, /key="automation-dock-resume"/);
+  assert.match(workflowEditorSource, /runDockStopArmed \? "Confirm stop automation" : "Stop automation"/);
+  assert.match(workflowEditorSource, /runDockMissingInput \? "input"/);
+  assert.match(workflowEditorSource, /Complete required run inputs in the Automation panel/);
+  assert.match(workflowEditorSource, /event\.currentTarget\.blur\(\)/);
+  assert.match(canvasSource, /onRun=\{\(runtimeInputs, mode\) => void runAutomationWorkflow\(runtimeInputs, mode\)\}/);
+  assert.match(canvasSource, /onCancel=\{\(\) => void cancelAutomationWorkflow\(\)\}/);
+  assert.match(themeSource, /\.automation-run-dock\s*\{[^}]*bottom:16px[^}]*min-height:42px[^}]*border-radius:21px/s);
+  assert.match(themeSource, /\.automation-run-dock > button \{ width:32px; height:32px/);
 });
 
 test("automation canvas presents one readable numbered workflow without nested stage modes", () => {

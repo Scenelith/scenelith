@@ -3730,32 +3730,39 @@ function CanvasWorkspace({ initialProject, projects: initialProjects, initialWor
     setNotice(`Remake branch created from ${scene.data.title}`);
   }
 
-  async function runAutomationWorkflow(runtimeOverrides: Record<string, unknown> = {}, mode: "production" | "test" = "production") {
+  async function runAutomationWorkflow(
+    runtimeOverrides: Record<string, unknown> = {},
+    mode: "production" | "test" = "production",
+    replay?: { runId: string; nodeId: string },
+  ) {
     if (!automationWorkflowId) {
       setNotice("Choose a workflow");
       return;
     }
     setAutomationStatus("planning");
-    setAutomationStageLabel("Waiting for the workflow worker");
+    setAutomationStageLabel(replay ? "Preparing to resume from this step" : "Waiting for the workflow worker");
     setAutomationPlanningProgress(1);
     setAutomationSlideStates([]);
     setAutomationChoiceConfirmation(null);
     const requestedWorkflowId = automationWorkflowId;
     setAutomationExecution({ workflowId: requestedWorkflowId, runId: null, status: "queued", nodeRuns: [] });
     try {
-      const response = await fetch("/api/automation-runs", {
+      const response = await fetch(replay ? `/api/automation-runs/${encodeURIComponent(replay.runId)}/retry` : "/api/automation-runs", {
         method: "POST",
         headers: { "content-type": "application/json" },
-        body: JSON.stringify({ projectId: project.id, workflowId: automationWorkflowId, inputs: runtimeOverrides, mode }),
+        body: JSON.stringify(replay
+          ? { nodeId: replay.nodeId }
+          : { projectId: project.id, workflowId: automationWorkflowId, inputs: runtimeOverrides, mode }),
       });
       const queued = await response.json().catch(() => ({})) as { runId?: string; error?: string };
       if (!response.ok || !queued.runId) {
         if (response.status === 402) setAccountView("access");
-        throw new Error(queued.error || "Could not start the workflow");
+        throw new Error(queued.error || (replay ? "Could not resume the workflow" : "Could not start the workflow"));
       }
       setAutomationRunId(queued.runId);
       setAutomationExecution({ workflowId: requestedWorkflowId, runId: queued.runId, status: "queued", nodeRuns: [] });
       window.dispatchEvent(new Event("scenelith:tasks-changed"));
+      let cancellationSettlePolls = 0;
       for (let pollIndex = 0; pollIndex < 7_200; pollIndex += 1) {
         if (pollIndex > 0) await new Promise((resolve) => window.setTimeout(resolve, 1_000));
         const poll = await fetch(`/api/automation-runs/${encodeURIComponent(queued.runId)}`, { cache: "no-store" });
@@ -3785,6 +3792,11 @@ function CanvasWorkspace({ initialProject, projects: initialProjects, initialWor
         if (activeNodeType.startsWith("generation.")) setAutomationStatus("generating");
         else if (activeNodeType.startsWith("output.")) setAutomationStatus("building");
         else if (run.status === "running") setAutomationStatus("planning");
+        if (run.status === "cancelled" && (run.nodeRuns || []).some((nodeRun) => nodeRun.status === "running") && cancellationSettlePolls < 3) {
+          cancellationSettlePolls += 1;
+          setAutomationStageLabel("Saving the stopped step");
+          continue;
+        }
         if (run.status === "failed" || run.status === "cancelled") {
           const proposalNode = [...(run.nodeRuns || [])].reverse().find((nodeRun) => nodeRun.status === "completed" && nodeRun.outputPorts?.includes("conflict"));
           if (run.status === "failed" && proposalNode) {
@@ -3836,6 +3848,10 @@ function CanvasWorkspace({ initialProject, projects: initialProjects, initialWor
       setAutomationStageLabel(error instanceof Error ? error.message : "Workflow failed");
       setNotice(error instanceof Error ? error.message : "Workflow failed");
     }
+  }
+
+  async function resumeAutomationWorkflowFromNode(runId: string, nodeId: string) {
+    await runAutomationWorkflow({}, "production", { runId, nodeId });
   }
 
   async function cancelAutomationWorkflow() {
@@ -4670,6 +4686,7 @@ function CanvasWorkspace({ initialProject, projects: initialProjects, initialWor
         stageLabel={automationStageLabel}
         planningProgress={automationPlanningProgress}
         slideStates={automationSlideStates}
+        execution={automationExecution}
         onSourceSelected={(value) => { setAutomationSourceId(value); setAutomationStatus("idle"); setAutomationChoiceConfirmation(null); focusAutomationSource(value); }}
         onRuntimeValuesChange={(workflowId, values) => setAutomationRuntimePreview((current) => ({
           workflowId,
@@ -4686,6 +4703,7 @@ function CanvasWorkspace({ initialProject, projects: initialProjects, initialWor
           ...(automationRuntimePreview?.workflowId === automationWorkflowId ? automationRuntimePreview.values : {}),
         }, mode)}
         onCancel={() => void cancelAutomationWorkflow()}
+        onResume={(runId, nodeId) => void resumeAutomationWorkflowFromNode(runId, nodeId)}
         onClose={() => { setTikTokAutomationOpen(false); setAutomationEditorWorkflowId(null); }}
       />}
       {automationEditorWorkflowId && <AutomationWorkflowEditorOverlay
@@ -4699,6 +4717,9 @@ function CanvasWorkspace({ initialProject, projects: initialProjects, initialWor
         models={models}
         canvasReferences={automationCanvasReferences}
         execution={automationExecution}
+        onRun={(runtimeInputs, mode) => void runAutomationWorkflow(runtimeInputs, mode)}
+        onCancel={() => void cancelAutomationWorkflow()}
+        onRetryFromNode={(runId, nodeId) => resumeAutomationWorkflowFromNode(runId, nodeId)}
         runtimeValues={automationRuntimePreview?.workflowId === automationEditorWorkflowId ? automationRuntimePreview.values : {}}
         onRuntimeValueChange={(workflowId, key, value) => setAutomationRuntimePreview((current) => ({
           workflowId,

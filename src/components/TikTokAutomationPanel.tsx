@@ -1,6 +1,6 @@
 "use client";
 
-import { ArrowRight, Check, Settings2, Workflow, X } from "lucide-react";
+import { ArrowRight, Check, RotateCcw, Settings2, Square, Workflow, X } from "lucide-react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { generatorRatiosFor, generatorResolutionsFor, type GeneratorModelOption } from "@/components/FrameNode";
 import { InspectorSelect } from "@/components/InspectorSelect";
@@ -75,8 +75,10 @@ export function TikTokAutomationPanel({
   stageLabel,
   planningProgress,
   slideStates,
+  execution,
   onRun,
   onCancel,
+  onResume,
   onClose,
   onSourceSelected,
   onRuntimeValuesChange,
@@ -99,8 +101,14 @@ export function TikTokAutomationPanel({
   stageLabel: string;
   planningProgress: number;
   slideStates: TikTokAutomationSlideState[];
+  execution?: {
+    runId: string | null;
+    status: "queued" | "running" | "completed" | "completed_with_warnings" | "failed" | "cancelled";
+    nodeRuns: Array<{ nodeId: string; status: string; errorCode?: string | null }>;
+  } | null;
   onRun: (runtimeInputs: Record<string, unknown>, mode: "production" | "test") => void;
   onCancel: () => void;
+  onResume?: (runId: string, nodeId: string) => void;
   onClose: () => void;
   onSourceSelected?: (sourceId: string) => void;
   onRuntimeValuesChange?: (workflowId: string, values: Record<string, unknown>) => void;
@@ -113,12 +121,21 @@ export function TikTokAutomationPanel({
   const [capabilities, setCapabilities] = useState<AutomationCapabilities>(() => demo?.capabilities || { run: false, edit: false, publish: false, manageTriggers: false, manageCredentials: false });
   const [openTriggerAlerts, setOpenTriggerAlerts] = useState<Record<string, number>>(() => demo?.openTriggerAlerts || {});
   const [workflowError, setWorkflowError] = useState("");
+  const [cancelArmed, setCancelArmed] = useState(false);
   const [runInputs, setRunInputs] = useState<AutomationRunInputField[]>(() => initialDemoInputs);
   const [productionRunInputs, setProductionRunInputs] = useState<AutomationRunInputField[]>(() => demo?.productionRunInputs || []);
   const [runtimeValuesByWorkflow, setRuntimeValuesByWorkflow] = useState<Record<string, Record<string, unknown>>>(() => demo ? { [demo.detail.workflow.id]: demo.runtimeValues || {} } : {});
   const workflowIdRef = useRef(workflowId);
   const setWorkflowIdRef = useRef(setWorkflowId);
   const busy = status === "planning" || status === "building" || status === "generating";
+  const stoppedNodeRun = [...(execution?.nodeRuns || [])].reverse().find((nodeRun) => nodeRun.status === "failed");
+  const canResume = Boolean(
+    capabilities.run
+    && onResume
+    && execution?.runId
+    && (execution.status === "failed" || execution.status === "cancelled")
+    && stoppedNodeRun,
+  );
   const selectedWorkflow = workflows.find((workflow) => workflow.id === workflowId);
   const visibleWorkflows = useMemo(() => workflows.filter((workflow) => workflow.status !== "archived"), [workflows]);
   const selectedAlertCount = openTriggerAlerts[workflowId] || 0;
@@ -132,6 +149,12 @@ export function TikTokAutomationPanel({
 
   useEffect(() => { workflowIdRef.current = workflowId; }, [workflowId]);
   useEffect(() => { setWorkflowIdRef.current = setWorkflowId; }, [setWorkflowId]);
+
+  useEffect(() => {
+    if (!cancelArmed) return;
+    const timer = window.setTimeout(() => setCancelArmed(false), 5_000);
+    return () => window.clearTimeout(timer);
+  }, [cancelArmed]);
 
   useEffect(() => {
     if (demo) return;
@@ -295,7 +318,7 @@ export function TikTokAutomationPanel({
     </div>
 
     {status !== "idle" && <section className={`tiktok-automation-run is-${status}`} aria-live="polite">
-      <div className="tiktok-automation-run-head"><span><strong>{status === "complete" ? "Automation complete" : status === "failed" ? "Automation stopped" : "Running workflow"}</strong><small>{stageLabel}</small></span><b>{status === "complete" ? "DONE" : status === "failed" ? "CHECK" : `${Math.floor(visibleProgress)}%`}</b></div>
+      <div className="tiktok-automation-run-head"><span><strong>{status === "complete" ? "Automation complete" : status === "failed" ? execution?.status === "cancelled" ? "Automation cancelled" : "Automation stopped" : "Running workflow"}</strong><small>{status === "failed" && execution?.status === "cancelled" ? "Stopped by request · completed steps are saved" : stageLabel}</small></span><b>{status === "complete" ? "DONE" : status === "failed" ? execution?.status === "cancelled" ? "CANCELLED" : "CHECK" : `${Math.floor(visibleProgress)}%`}</b></div>
       <div className={`tiktok-automation-progress ${busy ? "is-active" : ""}`} role="progressbar" aria-label={`${Math.floor(visibleProgress)}% complete`} aria-valuemin={0} aria-valuemax={100} aria-valuenow={Math.floor(visibleProgress)}><i style={{ width: `${visibleProgress}%` }} /></div>
     </section>}
 
@@ -313,8 +336,27 @@ export function TikTokAutomationPanel({
       <p>{!capabilities.run ? "Your workspace role can view this automation but cannot run it" : !runnable ? "Finish the required workflow setup before running" : selectedSource ? `${selectedSource.assetIds.length} source ${selectedSource.assetIds.length === 1 ? "slide" : "slides"} · ready to run` : `${visibleRunInputs.length} run ${visibleRunInputs.length === 1 ? "input" : "inputs"} · ready to run`}</p>
       <div className="tiktok-automation-run-control">
         {busy
-          ? capabilities.run && <button type="button" className="is-cancel" onClick={onCancel} title="Cancel workflow run">Cancel run</button>
-          : capabilities.run && <button type="button" disabled={!runnable || requiredMissing(visibleProductionRunInputs)} onClick={() => onRun(inputsFor(visibleProductionRunInputs), "production")} title="Run selected workflow"><Workflow size={15} />Run automation</button>}
+          ? capabilities.run && <button key="stop-run" type="button" className={`is-cancel ${cancelArmed ? "is-armed" : ""}`} onClick={(event) => {
+            event.currentTarget.blur();
+            if (!cancelArmed) {
+              setCancelArmed(true);
+              return;
+            }
+            setCancelArmed(false);
+            onCancel();
+          }} title={cancelArmed ? "Confirm stopping this workflow run" : "Stop workflow run"}><Square size={13} />{cancelArmed ? "Confirm stop" : "Stop run"}</button>
+          : canResume && execution?.runId && stoppedNodeRun
+            ? <><button key="resume-run" type="button" className="is-resume" onClick={(event) => {
+              event.currentTarget.blur();
+              onResume?.(execution.runId!, stoppedNodeRun.nodeId);
+            }} title="Reuse completed steps and continue from the stopped step"><RotateCcw size={14} />Resume from stopped step</button><button key="start-over" type="button" className="is-start-over" disabled={!runnable || requiredMissing(visibleProductionRunInputs)} onClick={(event) => {
+              event.currentTarget.blur();
+              onRun(inputsFor(visibleProductionRunInputs), "production");
+            }} title="Discard this route and start a completely new run"><Workflow size={14} />Start over</button></>
+            : capabilities.run && <button key="run-new" type="button" disabled={!runnable || requiredMissing(visibleProductionRunInputs)} onClick={(event) => {
+              event.currentTarget.blur();
+              onRun(inputsFor(visibleProductionRunInputs), "production");
+            }} title="Run selected workflow"><Workflow size={15} />Run automation</button>}
       </div>
     </footer>
   </aside>;
