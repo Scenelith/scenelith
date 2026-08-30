@@ -178,7 +178,7 @@ export async function enqueueAutomationWorkflowRun(input: {
     return { status: 403, error: "This workspace role cannot run automations" } as const;
   }
   const detail = await getAutomationWorkflow(input.userId, input.workflowId);
-  if (!detail || detail.workflow.workspaceId !== workspaceId || (detail.workflow.projectId && detail.workflow.projectId !== input.projectId)) {
+  if (!detail || detail.workflow.status === "archived" || detail.workflow.workspaceId !== workspaceId || (detail.workflow.projectId && detail.workflow.projectId !== input.projectId)) {
     return { status: 404, error: "Workflow not found" } as const;
   }
   const runKind: RunKind = input.trigger ? "trigger" : input.mode === "test" || input.useDraft ? "test" : "production";

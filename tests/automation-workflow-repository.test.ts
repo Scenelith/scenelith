@@ -295,6 +295,27 @@ test("a canvas can store and switch between multiple independently published wor
   assert.notEqual(firstDetail?.published?.id, secondDetail?.published?.id);
 });
 
+test("custom workflows can be removed without exposing deletion for the system workflow", async () => {
+  const owner = await seedOwner();
+  const [system] = (await repository.listAutomationWorkflows(owner.userId, owner.projectId))!;
+  const custom = await repository.createAutomationWorkflow({
+    userId: owner.userId,
+    projectId: owner.projectId,
+    name: "Temporary campaign",
+    sourceWorkflowId: system.id,
+  });
+  const protectedResult = await repository.archiveAutomationWorkflow(owner.userId, system.id);
+  assert.equal(protectedResult?.protected, true);
+  assert.equal((await repository.getAutomationWorkflow(owner.userId, system.id))?.workflow.status, "system");
+
+  const removed = await repository.archiveAutomationWorkflow(owner.userId, custom!.workflow.id);
+  assert.equal(removed?.protected, false);
+  assert.equal(removed?.workflow.status, "archived");
+  assert.equal((await repository.getAutomationWorkflow(owner.userId, custom!.workflow.id))?.workflow.status, "archived");
+  const listed = (await repository.listAutomationWorkflows(owner.userId, owner.projectId))!;
+  assert.deepEqual(listed.map((workflow) => workflow.id), [system.id]);
+});
+
 test("invalid drafts save but cannot publish", async () => {
   const owner = await seedOwner();
   const custom = await repository.createAutomationWorkflow({ userId: owner.userId, projectId: owner.projectId, name: "Blank" });

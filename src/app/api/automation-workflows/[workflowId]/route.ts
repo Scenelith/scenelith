@@ -1,11 +1,12 @@
 import { z } from "zod";
 import { requireApiUser, sameOriginRequest } from "@/lib/auth";
-import { AutomationWorkflowDraftConflictError, getAutomationWorkflow, publishAutomationWorkflow, saveAutomationWorkflowDraft, systemAutomationModelDefaults } from "@/lib/automation-workflows/repository";
+import { AutomationWorkflowDraftConflictError, archiveAutomationWorkflow, getAutomationWorkflow, publishAutomationWorkflow, saveAutomationWorkflowDraft, systemAutomationModelDefaults } from "@/lib/automation-workflows/repository";
 import { automationWorkflowGraphSchema } from "@/lib/automation-workflows/types";
 import { automationRunInputFields } from "@/lib/automation-workflows/validation";
 import { enforceDistributedRateLimit } from "@/lib/distributed-rate-limit";
 import { automationApiErrorResponse } from "@/lib/automation-workflows/api-errors";
 import { automationCapabilitiesForWorkspace } from "@/lib/automation-workflows/permissions";
+import { appendAuditEvent } from "@/lib/audit-log";
 
 export const runtime = "nodejs";
 
@@ -65,4 +66,27 @@ export async function PUT(request: Request, context: RouteContext<"/api/automati
   }
   if (!detail) return Response.json({ error: "Workflow is read-only or unavailable" }, { status: 404 });
   return Response.json(detail);
+}
+
+export async function DELETE(request: Request, context: RouteContext<"/api/automation-workflows/[workflowId]">) {
+  const auth = await requireApiUser();
+  if (auth.response) return auth.response;
+  if (!sameOriginRequest(request)) return Response.json({ error: "Invalid request origin" }, { status: 403 });
+  const limited = await enforceDistributedRateLimit({ scope: "automation-workflow-delete", identity: auth.user.id, limit: 20, windowSeconds: 600 });
+  if (limited) return limited;
+  const { workflowId } = await context.params;
+  let result;
+  try { result = await archiveAutomationWorkflow(auth.user.id, workflowId); }
+  catch (error) { return automationApiErrorResponse(error, "Workflow could not be deleted"); }
+  if (!result) return Response.json({ error: "Workflow not found" }, { status: 404 });
+  if (result.protected) return Response.json({ error: "The default workflow cannot be deleted", code: "SYSTEM_WORKFLOW_PROTECTED" }, { status: 409 });
+  await appendAuditEvent({
+    workspaceId: result.workflow.workspaceId,
+    actorUserId: auth.user.id,
+    action: "automation.workflow.deleted",
+    targetType: "automation_workflow",
+    targetId: workflowId,
+    metadata: { name: result.workflow.name, disconnectedWorkflowIds: result.disconnectedWorkflowIds },
+  });
+  return Response.json({ workflow: result.workflow, disconnectedWorkflowIds: result.disconnectedWorkflowIds });
 }

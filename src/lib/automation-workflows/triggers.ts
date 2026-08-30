@@ -54,7 +54,7 @@ export async function createAutomationWorkflowTrigger(input: { userId: string; w
     throw Object.assign(new Error("Trigger configuration and inputs must be JSON objects"), { code: "TRIGGER_CONFIGURATION_INVALID" });
   }
   const detail = await getAutomationWorkflow(input.userId, input.workflowId);
-  if (!detail || !detail.published || !await userCanAccessProject(input.userId, input.projectId)) return null;
+  if (!detail || detail.workflow.status === "archived" || !detail.published || !await userCanAccessProject(input.userId, input.projectId)) return null;
   if (detail.workflow.workspaceId !== await workspaceIdForProject(input.projectId)) return null;
   await requireAutomationPermission(input.userId, detail.workflow.workspaceId, "automation.triggers.manage");
   const inputValidation = validateAutomationRunInputs(detail.published.graph, input.inputs);
@@ -94,7 +94,8 @@ export async function createAutomationWorkflowTrigger(input: { userId: string; w
 
 export async function setAutomationWorkflowTriggerStatus(userId: string, triggerId: string, status: "active" | "paused") {
   const owner = await db.prepare("SELECT workflow_id, workspace_id FROM automation_workflow_triggers WHERE id = ?").get(triggerId) as { workflow_id: string; workspace_id: string } | undefined;
-  if (!owner || !await getAutomationWorkflow(userId, owner.workflow_id)) return null;
+  const detail = owner ? await getAutomationWorkflow(userId, owner.workflow_id) : null;
+  if (!owner || !detail || detail.workflow.status === "archived") return null;
   await requireAutomationPermission(userId, owner.workspace_id, "automation.triggers.manage");
   return await db.transaction(async () => {
     await db.prepare("SELECT pg_advisory_xact_lock(hashtextextended(?, 0))").get(`automation-workflow:${owner.workflow_id}`);

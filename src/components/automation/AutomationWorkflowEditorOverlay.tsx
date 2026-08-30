@@ -1094,6 +1094,7 @@ export const AutomationWorkflowEditorOverlay = forwardRef<AutomationWorkflowEdit
   const [savedRevision, setSavedRevision] = useState(0);
   const [availableWorkflows, setAvailableWorkflows] = useState<AutomationWorkflowRecord[]>([]);
   const [manageOpen, setManageOpen] = useState(false);
+  const [deleteConfirmOpen, setDeleteConfirmOpen] = useState(false);
   const [validationOpen, setValidationOpen] = useState(false);
   const [mobileInspectorOpen, setMobileInspectorOpen] = useState(false);
   const [runHistoryOpen, setRunHistoryOpen] = useState(false);
@@ -1113,16 +1114,12 @@ export const AutomationWorkflowEditorOverlay = forwardRef<AutomationWorkflowEdit
   const systemReadOnly = detail?.workflow.status === "system";
   const readOnly = systemReadOnly || !capabilities.edit;
   const workflowSwitchOptions = useMemo(() => {
-    const customWorkflows = availableWorkflows.filter((workflow) => workflow.status !== "system" && workflow.status !== "archived");
-    const visibleWorkflows = availableWorkflows.filter((workflow) => workflow.status !== "archived" && (
-      workflow.status !== "system" || workflow.id === workflowId || customWorkflows.length === 0
-    ));
-    return visibleWorkflows.map((workflow) => ({
+    return availableWorkflows.filter((workflow) => workflow.status !== "archived").map((workflow) => ({
       value: workflow.id,
       label: workflow.name,
       ...workflowSwitcherPresentation(workflow),
     }));
-  }, [availableWorkflows, workflowId]);
+  }, [availableWorkflows]);
   useEffect(() => {
     const playingVideos = Array.from(document.querySelectorAll<HTMLVideoElement>(".canvas-stage video")).filter((video) => !video.paused);
     playingVideos.forEach((video) => video.pause());
@@ -1696,6 +1693,28 @@ export const AutomationWorkflowEditorOverlay = forwardRef<AutomationWorkflowEdit
     }
   }
 
+  async function deleteWorkflow() {
+    if (!detail || detail.workflow.status === "system" || !capabilities.edit || saving) return;
+    setSaving(true);
+    setError("");
+    try {
+      const response = await fetch(`/api/automation-workflows/${encodeURIComponent(detail.workflow.id)}`, { method: "DELETE" });
+      const body = await response.json() as { workflow?: AutomationWorkflowRecord; error?: string };
+      if (!response.ok || !body.workflow) throw new Error(body.error || "Could not delete this workflow");
+      const remaining = availableWorkflows.filter((workflow) => workflow.id !== body.workflow!.id && workflow.status !== "archived");
+      setAvailableWorkflows(remaining);
+      setDeleteConfirmOpen(false);
+      setManageOpen(false);
+      const nextWorkflow = remaining.find((workflow) => workflow.status === "system") || remaining[0];
+      if (nextWorkflow) onWorkflowChanged?.(nextWorkflow.id);
+      else onClose();
+    } catch (deleteError) {
+      setError(deleteError instanceof Error ? deleteError.message : "Could not delete this workflow");
+    } finally {
+      setSaving(false);
+    }
+  }
+
   const requestWorkflowSwitch = useCallback(async (nextWorkflowId: string) => {
     if (nextWorkflowId === workflowId || !onWorkflowChanged || saving) return false;
     if (dirty && !await saveDraft()) return false;
@@ -1864,25 +1883,38 @@ export const AutomationWorkflowEditorOverlay = forwardRef<AutomationWorkflowEdit
           </div>
           <div className="automation-manage-menu" ref={manageMenuRef}>
             <input ref={importInputRef} type="file" accept="application/json,.json,.scenelith-automation.json" hidden onChange={(event) => void importWorkflow(event.target.files?.[0])} />
-            <button type="button" className={manageOpen ? "is-open" : ""} aria-haspopup="menu" aria-expanded={manageOpen} onClick={() => setManageOpen((open) => !open)}>Manage <ChevronDown size={13} /></button>
-            {manageOpen && <div role="menu">
-              {capabilities.edit && <>
-                <button type="button" role="menuitem" disabled={saving} onClick={() => { setManageOpen(false); void createWorkflow(); }}><Plus size={14} /><span><b>New workflow</b><small>Start with a clean automation canvas</small></span></button>
-                <button type="button" role="menuitem" disabled={saving} onClick={() => { setManageOpen(false); importInputRef.current?.click(); }}><ArrowDownToLine size={14} /><span><b>Import workflow</b><small>Open a Scenelith automation JSON file</small></span></button>
-                <span className="automation-manage-separator" role="separator" />
+            <button type="button" className={manageOpen ? "is-open" : ""} aria-haspopup="menu" aria-expanded={manageOpen} onClick={() => { setDeleteConfirmOpen(false); setManageOpen((open) => !open); }}>Manage <ChevronDown size={13} /></button>
+            {manageOpen && <div role={deleteConfirmOpen ? "alertdialog" : "menu"} aria-label={deleteConfirmOpen ? "Confirm workflow deletion" : "Manage workflow"}>
+              {deleteConfirmOpen ? <section className="automation-manage-delete-confirm">
+                <span className="automation-manage-delete-icon"><Trash2 size={15} /></span>
+                <span><b>Delete this workflow?</b><small>It will disappear from this canvas. Existing run history stays available.</small></span>
+                <div>
+                  <button type="button" disabled={saving} onClick={() => setDeleteConfirmOpen(false)}>Cancel</button>
+                  <button type="button" className="is-danger" disabled={saving} onClick={() => void deleteWorkflow()}>{saving ? "Deleting…" : "Delete workflow"}</button>
+                </div>
+              </section> : <>
+                {capabilities.edit && <>
+                  <button type="button" role="menuitem" disabled={saving} onClick={() => { setManageOpen(false); void createWorkflow(); }}><Plus size={14} /><span><b>New workflow</b><small>Start with a clean automation canvas</small></span></button>
+                  <button type="button" role="menuitem" disabled={saving} onClick={() => { setManageOpen(false); importInputRef.current?.click(); }}><ArrowDownToLine size={14} /><span><b>Import workflow</b><small>Open a Scenelith automation JSON file</small></span></button>
+                  <span className="automation-manage-separator" role="separator" />
+                </>}
+                {validation && !validation.valid && <button type="button" role="menuitem" onClick={() => {
+                  setManageOpen(false);
+                  const nextValidation = validateAutomationWorkflowGraph(graph);
+                  setValidation(nextValidation);
+                  if (!nextValidation.valid) {
+                    setError(nextValidation.issues.slice(0, 4).map((entry) => entry.message).join(" · "));
+                    const firstNodeId = nextValidation.issues.find((entry) => entry.nodeId)?.nodeId;
+                    if (firstNodeId) setSelectedId(firstNodeId);
+                  }
+                }}><CircleAlert size={14} /><span><b>Review issues</b><small>{validation.issues.length} item{validation.issues.length === 1 ? "" : "s"} need attention</small></span></button>}
+                <button type="button" role="menuitem" onClick={() => { setManageOpen(false); setRunHistoryOpen(true); }}><Activity size={14} /><span><b>Run history</b><small>See routes, errors and output</small></span></button>
+                <button type="button" role="menuitem" disabled={saving} onClick={() => { setManageOpen(false); void exportWorkflow(); }}><Download size={14} /><span><b>Export JSON</b><small>Portable workflow file</small></span></button>
+                {capabilities.edit && <>
+                  <span className="automation-manage-separator" role="separator" />
+                  <button type="button" role="menuitem" className="is-danger" disabled={saving || systemReadOnly} onClick={() => setDeleteConfirmOpen(true)}><Trash2 size={14} /><span><b>Delete workflow</b><small>{systemReadOnly ? "The default workflow is protected" : "Remove it from this canvas"}</small></span></button>
+                </>}
               </>}
-              {validation && !validation.valid && <button type="button" role="menuitem" onClick={() => {
-                setManageOpen(false);
-                const nextValidation = validateAutomationWorkflowGraph(graph);
-                setValidation(nextValidation);
-                if (!nextValidation.valid) {
-                  setError(nextValidation.issues.slice(0, 4).map((entry) => entry.message).join(" · "));
-                  const firstNodeId = nextValidation.issues.find((entry) => entry.nodeId)?.nodeId;
-                  if (firstNodeId) setSelectedId(firstNodeId);
-                }
-              }}><CircleAlert size={14} /><span><b>Review issues</b><small>{validation.issues.length} item{validation.issues.length === 1 ? "" : "s"} need attention</small></span></button>}
-              <button type="button" role="menuitem" onClick={() => { setManageOpen(false); setRunHistoryOpen(true); }}><Activity size={14} /><span><b>Run history</b><small>See routes, errors and output</small></span></button>
-              <button type="button" role="menuitem" disabled={saving} onClick={() => { setManageOpen(false); void exportWorkflow(); }}><Download size={14} /><span><b>Export JSON</b><small>Portable workflow file</small></span></button>
             </div>}
           </div>
           {systemReadOnly && capabilities.edit && <button type="button" className="is-primary" disabled={saving} onClick={() => void duplicateSystem()}><Copy size={14} /> Duplicate to customize</button>}
