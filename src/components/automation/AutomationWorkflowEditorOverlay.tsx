@@ -45,6 +45,7 @@ import {
   Layers3,
   ListTree,
   ListFilter,
+  LoaderCircle,
   Merge,
   Play,
   Plus,
@@ -160,11 +161,9 @@ type AutomationWorkflowClientDetail = AutomationWorkflowDetail & {
 type AutomationNodeDefinitionRecord = ReturnType<typeof automationNodeDefinitions>[number];
 
 function workflowSwitcherPresentation(workflow: AutomationWorkflowRecord) {
-  if (workflow.status === "system") return { group: "Scenelith", badge: "System", description: "Read-only default workflow" };
-  if (workflow.status === "archived") return { group: "My workflows", badge: "Archived", description: "Archived workflow" };
-  if (workflow.status === "published") return { group: "My workflows", badge: "Live", description: "Live and ready to run" };
-  if (workflow.publishedVersionId) return { group: "My workflows", badge: "Draft", description: "Auto-saved changes · the live version still runs" };
-  return { group: "My workflows", badge: "Draft", description: "Auto-saved draft · take it live before running" };
+  if (workflow.status === "system") return { description: "Default workflow" };
+  if (workflow.status === "archived") return { description: "Archived workflow" };
+  return { description: "Saved automatically" };
 }
 
 const categoryLabels = {
@@ -1096,11 +1095,17 @@ export function AutomationWorkflowEditorOverlay({ workspaceId, projectId, workfl
   const capabilities = detail?.capabilities || { run: false, edit: false, publish: false, manageTriggers: false, manageCredentials: false };
   const systemReadOnly = detail?.workflow.status === "system";
   const readOnly = systemReadOnly || !capabilities.edit;
-  const workflowSwitchOptions = useMemo(() => availableWorkflows.map((workflow) => ({
-    value: workflow.id,
-    label: workflow.name,
-    ...workflowSwitcherPresentation(workflow),
-  })), [availableWorkflows]);
+  const workflowSwitchOptions = useMemo(() => {
+    const customWorkflows = availableWorkflows.filter((workflow) => workflow.status !== "system" && workflow.status !== "archived");
+    const visibleWorkflows = availableWorkflows.filter((workflow) => workflow.status !== "archived" && (
+      workflow.status !== "system" || workflow.id === workflowId || customWorkflows.length === 0
+    ));
+    return visibleWorkflows.map((workflow) => ({
+      value: workflow.id,
+      label: workflow.name,
+      ...workflowSwitcherPresentation(workflow),
+    }));
+  }, [availableWorkflows, workflowId]);
   useEffect(() => {
     const playingVideos = Array.from(document.querySelectorAll<HTMLVideoElement>(".canvas-stage video")).filter((video) => !video.paused);
     playingVideos.forEach((video) => video.pause());
@@ -1520,12 +1525,20 @@ export function AutomationWorkflowEditorOverlay({ workspaceId, projectId, workfl
     try {
       const nextValidation = validateAutomationWorkflowGraph(graph);
       const response = await fetch(`/api/automation-workflows/${encodeURIComponent(detail!.workflow.id)}`, {
-        method: "PUT", headers: { "content-type": "application/json" }, body: JSON.stringify({ name, graph, baseDraftVersionId: detail!.workflow.draftVersionId }),
+        method: "PUT", headers: { "content-type": "application/json" }, body: JSON.stringify({
+          name,
+          graph,
+          baseDraftVersionId: detail!.workflow.draftVersionId,
+          activate: capabilities.publish && nextValidation.valid,
+        }),
       });
-      const body = await response.json() as AutomationWorkflowDetail & { error?: string };
+      const body = await response.json() as AutomationWorkflowDetail & { error?: string; activationValidation?: AutomationValidationResult };
       if (!response.ok) throw new Error(body.error || "Could not save the workflow");
       setDetail({ ...body, capabilities: detail!.capabilities });
-      setValidation(nextValidation);
+      setValidation(body.activationValidation || nextValidation);
+      setAvailableWorkflows((current) => current.some((workflow) => workflow.id === body.workflow.id)
+        ? current.map((workflow) => workflow.id === body.workflow.id ? body.workflow : workflow)
+        : [...current, body.workflow]);
       setSavedRevision((current) => Math.max(current, revisionToSave));
       onWorkflowChanged?.(body.workflow.id);
       return body;
@@ -1535,7 +1548,7 @@ export function AutomationWorkflowEditorOverlay({ workspaceId, projectId, workfl
     } finally {
       setSaving(false);
     }
-  }, [detail, editRevision, graph, name, onWorkflowChanged, readOnly]);
+  }, [capabilities.publish, detail, editRevision, graph, name, onWorkflowChanged, readOnly]);
 
   useEffect(() => {
     if (!dirty || saving || readOnly || !detail || !graph) return;
@@ -1556,41 +1569,13 @@ export function AutomationWorkflowEditorOverlay({ workspaceId, projectId, workfl
       const body = await response.json() as AutomationWorkflowDetail & { error?: string };
       if (!response.ok) throw new Error(body.error || "Could not save the model");
       const nextVersion = body.published;
-      if (!nextVersion) throw new Error("The system workflow has no live version");
+      if (!nextVersion) throw new Error("The default workflow has no current version");
       setDetail({ ...body, capabilities: detail.capabilities, systemModelDefaults: detail.systemModelDefaults });
       setGraph(structuredClone(nextVersion.graph));
       setValidation(nextVersion.validation);
       onWorkflowChanged?.(body.workflow.id);
     } catch (modelError) {
       setError(modelError instanceof Error ? modelError.message : "Could not save the model");
-    } finally {
-      setSaving(false);
-    }
-  }
-
-  async function takeLive() {
-    const saved = dirty ? await saveDraft() : detail;
-    if (!saved) return;
-    const currentGraph = graph!;
-    const nextValidation = validateAutomationWorkflowGraph(currentGraph);
-    setValidation(nextValidation);
-    if (!nextValidation.valid) {
-      setError(nextValidation.issues.slice(0, 4).map((entry) => entry.message).join(" · "));
-      const firstNodeId = nextValidation.issues.find((entry) => entry.nodeId)?.nodeId;
-      if (firstNodeId) setSelectedId(firstNodeId);
-      return;
-    }
-    setSaving(true);
-    try {
-      const response = await fetch(`/api/automation-workflows/${encodeURIComponent(saved.workflow.id)}/publish`, { method: "POST" });
-      const body = await response.json() as AutomationWorkflowDetail & { error?: string; validation?: AutomationValidationResult };
-      if (!response.ok) throw new Error(body.error || "Could not take the workflow live");
-      setDetail({ ...body, capabilities: detail!.capabilities });
-      setGraph(structuredClone((body.draft || body.published)!.graph));
-      setValidation((body.draft || body.published)!.validation);
-      onWorkflowChanged?.(body.workflow.id);
-    } catch (liveError) {
-      setError(liveError instanceof Error ? liveError.message : "Could not take the workflow live");
     } finally {
       setSaving(false);
     }
@@ -1723,16 +1708,16 @@ export function AutomationWorkflowEditorOverlay({ workspaceId, projectId, workfl
     />;
   };
 
-  const currentVersionIsPublished = Boolean(detail && detail.workflow.status === "published" && !detail.workflow.draftVersionId && !dirty);
-  const publishLabel = currentVersionIsPublished ? "Live" : detail?.workflow.publishedVersionId ? "Update live" : "Go live";
-
   return <div className="automation-editor-overlay" role="dialog" aria-modal="false" aria-label="Automation workflow editor" onPointerDown={(event) => event.stopPropagation()}>
     <div className="automation-editor-shell">
       <header className="automation-editor-topbar">
         <div className="automation-editor-title">
           <button type="button" className="automation-editor-collapse" disabled={saving} onClick={() => void closeEditor()} aria-label="Collapse workflow editor" title="Collapse workflow editor"><ChevronLeft size={19} /></button>
           <span><small>AUTOMATION CANVAS</small><input aria-label="Workflow name" value={name} disabled={Boolean(readOnly)} onChange={(event) => { setName(event.target.value); markDirty(); }} /></span>
-          <i className={detail?.workflow.status === "published" || detail?.workflow.status === "system" ? "is-published" : ""}>{detail?.workflow.status === "system" ? "System template" : saving ? "Saving…" : dirty ? "Auto-save pending" : detail?.workflow.status === "published" ? "Live" : "Draft auto-saved"}</i>
+          {!systemReadOnly && <span className={`automation-editor-save-state ${saving || dirty ? "is-saving" : validation?.valid ? "is-saved" : "is-attention"}`}>
+            {saving || dirty ? <LoaderCircle size={12} /> : validation?.valid ? <Check size={12} /> : <CircleAlert size={12} />}
+            {saving || dirty ? "Saving" : validation?.valid ? "Saved" : "Saved · needs attention"}
+          </span>}
         </div>
         <div className="automation-editor-actions">
           <div className="automation-workflow-switcher">
@@ -1740,6 +1725,8 @@ export function AutomationWorkflowEditorOverlay({ workspaceId, projectId, workfl
               label="Switch workflow"
               value={workflowId}
               options={workflowSwitchOptions}
+              showSelectedIcon={false}
+              variant="workflow"
               disabled={saving || !onWorkflowChanged || workflowSwitchOptions.length < 2}
               onChange={(nextWorkflowId) => void requestWorkflowSwitch(nextWorkflowId)}
             />
@@ -1760,9 +1747,7 @@ export function AutomationWorkflowEditorOverlay({ workspaceId, projectId, workfl
               <button type="button" role="menuitem" disabled={saving} onClick={() => { setManageOpen(false); void exportWorkflow(); }}><Download size={14} /><span><b>Export JSON</b><small>Portable, without credentials</small></span></button>
             </div>}
           </div>
-          {systemReadOnly ? capabilities.edit && <button type="button" className="is-primary" disabled={saving} onClick={() => void duplicateSystem()}><Copy size={14} /> Duplicate to customize</button> : <>
-            {capabilities.publish && <button type="button" className={`is-primary ${currentVersionIsPublished ? "is-published" : ""}`} disabled={saving || currentVersionIsPublished || (dirty && !capabilities.edit)} onClick={() => void takeLive()}>{publishLabel}</button>}
-          </>}
+          {systemReadOnly && capabilities.edit && <button type="button" className="is-primary" disabled={saving} onClick={() => void duplicateSystem()}><Copy size={14} /> Duplicate to customize</button>}
         </div>
       </header>
 
@@ -1893,7 +1878,7 @@ export function AutomationWorkflowEditorOverlay({ workspaceId, projectId, workfl
                   {selectedSlotType && <section className="automation-deployment-binding"><small>DEPLOYMENT BINDING</small><h3>{selectedSlotType === "credential" ? "Connect credential" : "Connect child workflow"}</h3><p>The portable workflow stores only <b>{selectedSlotKey || "a slot name"}</b>. This local connection is never exported.</p>{!selectedSlotKey ? <i>Set the slot name above first.</i> : selectedSlotType === "credential" ? capabilities.manageCredentials ? <>
                   <label><span>Saved credential</span><InspectorSelect label="Saved credential" disabled={Boolean(readOnly || saving)} value={selectedDeploymentBinding?.credentialId || ""} options={[{ value: "", label: "Choose saved credential…" }, ...bindingOptions.credentials.map((credential) => ({ value: credential.id, label: `${credential.name} · ${credential.kind} · ${credential.fingerprint}` }))]} onChange={(value) => void saveDeploymentBinding("credential", selectedSlotKey, value)} /></label>
                   {!readOnly && <details><summary>Create a new credential</summary><div><label><span>Name</span><input value={newCredentialName} onChange={(event) => setNewCredentialName(event.target.value)} placeholder="Production API key…" /></label>{selectedCredentialKind === "basic" && <label><span>Username</span><input value={newCredentialUsername} onChange={(event) => setNewCredentialUsername(event.target.value)} placeholder="Username…" autoComplete="username" /></label>}{selectedCredentialKind === "header" && <label><span>Header name</span><input value={newCredentialHeaderName} onChange={(event) => setNewCredentialHeaderName(event.target.value)} placeholder="X-API-Key…" /></label>}<label><span>{selectedCredentialKind === "basic" ? "Password" : "Secret value"}</span><input type="password" value={newCredentialValue} onChange={(event) => setNewCredentialValue(event.target.value)} placeholder={selectedCredentialKind === "basic" ? "Password…" : "Secret value…"} autoComplete="new-password" /></label><button type="button" disabled={saving || !credentialFormReady} onClick={() => void createAndBindCredential(selectedSlotKey, selectedCredentialKind)}>Save & connect</button></div></details>}
-                  </> : <i>Your workspace role cannot manage credentials.</i> : <InspectorSelect label="Child workflow" disabled={Boolean(readOnly || saving)} value={selectedDeploymentBinding?.targetWorkflowId || ""} options={[{ value: "", label: "Choose live workflow" }, ...bindingOptions.workflows.filter((workflow) => workflow.id !== detail?.workflow.id && workflow.publishedVersionId).map((workflow) => ({ value: workflow.id, label: workflow.name }))]} onChange={(value) => void saveDeploymentBinding("subworkflow", selectedSlotKey, value)} />}</section>}
+                  </> : <i>Your workspace role cannot manage credentials.</i> : <InspectorSelect label="Child workflow" disabled={Boolean(readOnly || saving)} value={selectedDeploymentBinding?.targetWorkflowId || ""} options={[{ value: "", label: "Choose workflow" }, ...bindingOptions.workflows.filter((workflow) => workflow.id !== detail?.workflow.id && workflow.publishedVersionId).map((workflow) => ({ value: workflow.id, label: workflow.name }))]} onChange={(value) => void saveDeploymentBinding("subworkflow", selectedSlotKey, value)} />}</section>}
                   {!readOnly && <div className="automation-inspector-danger"><button type="button" onClick={removeSelectedNode}><Trash2 size={13} /> Remove step</button></div>}
                 </> : <section className="automation-node-execution">
                   <div className="automation-inspector-section-label"><b>Step execution</b><span>{execution?.runId ? `Run ${execution.runId.slice(0, 8)}` : "Run the workflow to capture exact data"}</span></div>

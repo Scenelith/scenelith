@@ -1,6 +1,6 @@
 import { z } from "zod";
 import { requireApiUser, sameOriginRequest } from "@/lib/auth";
-import { AutomationWorkflowDraftConflictError, getAutomationWorkflow, saveAutomationWorkflowDraft, systemAutomationModelDefaults } from "@/lib/automation-workflows/repository";
+import { AutomationWorkflowDraftConflictError, getAutomationWorkflow, publishAutomationWorkflow, saveAutomationWorkflowDraft, systemAutomationModelDefaults } from "@/lib/automation-workflows/repository";
 import { automationWorkflowGraphSchema } from "@/lib/automation-workflows/types";
 import { automationRunInputFields } from "@/lib/automation-workflows/validation";
 import { enforceDistributedRateLimit } from "@/lib/distributed-rate-limit";
@@ -14,6 +14,7 @@ const saveSchema = z.object({
   description: z.string().trim().max(500).optional(),
   changeNote: z.string().trim().max(500).optional(),
   baseDraftVersionId: z.string().min(1).nullable(),
+  activate: z.boolean().optional(),
   graph: automationWorkflowGraphSchema,
 });
 
@@ -49,7 +50,15 @@ export async function PUT(request: Request, context: RouteContext<"/api/automati
   const { workflowId } = await context.params;
   let detail;
   try {
-    detail = await saveAutomationWorkflowDraft({ userId: auth.user.id, workflowId, ...parsed.data });
+    const { activate, ...draft } = parsed.data;
+    detail = await saveAutomationWorkflowDraft({ userId: auth.user.id, workflowId, ...draft });
+    if (detail && activate) {
+      const activation = await publishAutomationWorkflow(auth.user.id, workflowId);
+      if (activation?.detail) detail = activation.detail;
+      if (activation && !activation.validation.valid) {
+        return Response.json({ ...detail, activationValidation: activation.validation });
+      }
+    }
   } catch (error) {
     if (error instanceof AutomationWorkflowDraftConflictError) return Response.json({ error: error.message, code: "DRAFT_CONFLICT" }, { status: 409 });
     return automationApiErrorResponse(error, "Workflow could not be saved");

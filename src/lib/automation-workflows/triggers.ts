@@ -108,7 +108,7 @@ export async function setAutomationWorkflowTriggerStatus(userId: string, trigger
       const inputs = jsonValue<Record<string, unknown>>(row.input_json);
       const graph = automationWorkflowGraphSchema.parse(jsonValue(row.graph_json));
       const validation = validateAutomationRunInputs(graph, inputs);
-      if (!validation.valid) throw new Error(`Trigger inputs no longer match the live workflow: ${validation.issues.map((entry) => entry.message).join(" ")}`);
+      if (!validation.valid) throw new Error(`Trigger inputs no longer match the workflow: ${validation.issues.map((entry) => entry.message).join(" ")}`);
       const deployment = await validateAutomationDeploymentBindings({ workflowId: row.workflow_id, workspaceId: row.workspace_id, graph });
       if (!deployment.valid) throw new Error(`Connect this workflow before activating the trigger: ${deployment.issues.map((entry) => entry.message).join(" ")}`);
     }

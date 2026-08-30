@@ -1,6 +1,6 @@
 "use client";
 
-import { AlertTriangle, Check, Clock3, GitBranch, RotateCcw, X } from "lucide-react";
+import { AlertTriangle, Check, ChevronDown, Clock3, GitBranch, RotateCcw, X } from "lucide-react";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import type { AutomationCapabilities } from "@/editions/contracts/access";
 
@@ -42,6 +42,19 @@ type RunSummary = {
 
 type WorkflowNodeOption = { id: string; name: string };
 
+type NodeAttempt = {
+  id: string;
+  attempt: number;
+  status: string;
+  input: unknown;
+  output: unknown;
+  error: string | null;
+  errorCode: string | null;
+  chargedCredits: number;
+  startedAt: string | null;
+  completedAt: string | null;
+};
+
 function when(value: string | null) {
   if (!value) return "—";
   return new Intl.DateTimeFormat(undefined, { month: "short", day: "numeric", hour: "2-digit", minute: "2-digit" }).format(new Date(value));
@@ -64,7 +77,7 @@ function statusLabel(status: RunSummary["status"] | string) {
 }
 
 function runKindLabel(kind: RunSummary["runKind"]) {
-  if (kind === "production") return "Live run";
+  if (kind === "production") return "Run";
   if (kind === "replay") return "Retry";
   if (kind === "trigger") return "Automatic run";
   if (kind === "subworkflow") return "Child workflow";
@@ -97,6 +110,8 @@ export function AutomationWorkflowOperations({ projectId, workflowId, capabiliti
   const [loading, setLoading] = useState(true);
   const [busyId, setBusyId] = useState("");
   const [error, setError] = useState("");
+  const [expandedStepKey, setExpandedStepKey] = useState("");
+  const [stepDetails, setStepDetails] = useState<Record<string, { loading: boolean; error: string; attempts: NodeAttempt[] }>>({});
   const workflowNodeNames = useMemo(() => new Map(workflowNodes.map((node) => [node.id, node.name])), [workflowNodes]);
 
   useEffect(() => {
@@ -162,6 +177,25 @@ export function AutomationWorkflowOperations({ projectId, workflowId, capabiliti
     }
   }
 
+  async function inspectStep(runId: string, nodeId: string, nodeRunId: string) {
+    const key = `${runId}:${nodeRunId}`;
+    if (expandedStepKey === key) {
+      setExpandedStepKey("");
+      return;
+    }
+    setExpandedStepKey(key);
+    if (stepDetails[key]) return;
+    setStepDetails((current) => ({ ...current, [key]: { loading: true, error: "", attempts: [] } }));
+    try {
+      const response = await fetch(`/api/automation-runs/${encodeURIComponent(runId)}/nodes/${encodeURIComponent(nodeId)}`, { cache: "no-store" });
+      const body = await response.json() as { attempts?: NodeAttempt[]; error?: string };
+      if (!response.ok) throw new Error(body.error || "Could not load this step");
+      setStepDetails((current) => ({ ...current, [key]: { loading: false, error: "", attempts: body.attempts || [] } }));
+    } catch (inspectError) {
+      setStepDetails((current) => ({ ...current, [key]: { loading: false, error: inspectError instanceof Error ? inspectError.message : "Could not load this step", attempts: [] } }));
+    }
+  }
+
   return <div className="automation-operations-backdrop" onPointerDown={(event) => event.target === event.currentTarget && onClose()}>
     <section className="automation-operations" role="dialog" aria-modal="true" aria-label="Run history">
       <header>
@@ -198,11 +232,31 @@ export function AutomationWorkflowOperations({ projectId, workflowId, capabiliti
                 const stepName = workflowNodeNames.get(nodeRun.nodeId) || nodeRun.nodeId.replaceAll("-", " ");
                 const meaningfulPorts = nodeRun.outputPorts.filter((port) => !routineOutputPorts.has(port.toLowerCase()));
                 const canRetry = capabilities.run && (selectedRun.status === "failed" || selectedRun.status === "completed_with_warnings") && nodeRun.status === "failed";
-                return <article key={nodeRun.id} className={`is-${nodeRun.status}`}>
-                  <span><StatusIcon status={nodeRun.status} size={12} /></span>
-                  <em>{String(index + 1).padStart(2, "0")}</em>
-                  <div><b>{stepName}</b><small>{statusLabel(nodeRun.status)}{nodeRun.attempt > 1 ? ` · attempt ${nodeRun.attempt}` : ""}{nodeRun.reusedFromNodeRunId ? " · reused previous output" : ""}</small>{meaningfulPorts.length > 0 && <p>Route: {meaningfulPorts.map(readablePort).join(" · ")}</p>}{nodeRun.error && <p className="is-error">{nodeRun.error}</p>}</div>
-                  <aside>{nodeRun.chargedCredits > 0 && <small>{nodeRun.chargedCredits} units</small>}<small>{duration(nodeRun.startedAt, nodeRun.completedAt)}</small>{canRetry && <button type="button" disabled={Boolean(busyId)} onClick={() => void retryRun(selectedRun.id, nodeRun.nodeId)}><RotateCcw size={12} /> Retry</button>}</aside>
+                const stepKey = `${selectedRun.id}:${nodeRun.id}`;
+                const expanded = expandedStepKey === stepKey;
+                const details = stepDetails[stepKey];
+                const attempt = details?.attempts.find((entry) => entry.id === nodeRun.id)
+                  || details?.attempts.find((entry) => entry.attempt === nodeRun.attempt)
+                  || details?.attempts.at(-1);
+                const skipped = nodeRun.status === "skipped";
+                return <article key={nodeRun.id} className={`automation-run-step is-${nodeRun.status} ${expanded ? "is-expanded" : ""}`}>
+                  <button type="button" className="automation-run-step-summary" aria-expanded={expanded} aria-controls={`run-step-${nodeRun.id}`} onClick={() => void inspectStep(selectedRun.id, nodeRun.nodeId, nodeRun.id)}>
+                    <span><StatusIcon status={nodeRun.status} size={12} /></span>
+                    <em>{String(index + 1).padStart(2, "0")}</em>
+                    <div><b>{stepName}</b><small>{statusLabel(nodeRun.status)}{nodeRun.attempt > 1 ? ` · attempt ${nodeRun.attempt}` : ""}{nodeRun.reusedFromNodeRunId ? " · reused previous output" : ""}</small>{meaningfulPorts.length > 0 && <p>Route: {meaningfulPorts.map(readablePort).join(" · ")}</p>}{skipped && <p className="automation-run-step-reason">Not used on this route</p>}{nodeRun.status === "failed" && nodeRun.error && <p className="is-error">{nodeRun.error}</p>}</div>
+                    <aside>{nodeRun.chargedCredits > 0 && <small>{nodeRun.chargedCredits} units</small>}<small>{duration(nodeRun.startedAt, nodeRun.completedAt)}</small><ChevronDown size={13} /></aside>
+                  </button>
+                  {expanded && <div className="automation-run-step-detail" id={`run-step-${nodeRun.id}`}>
+                    {details?.loading ? <p>Loading step details…</p> : details?.error ? <p className="is-error">{details.error}</p> : <>
+                      <p>{skipped ? "This step belongs to a route that was not selected. No input reached it, so it was skipped while the rest of the run completed normally." : nodeRun.status === "failed" ? attempt?.error || nodeRun.error || "This step failed before it produced an output." : "This step completed normally."}</p>
+                      {attempt?.errorCode && nodeRun.status === "failed" && <small>{attempt.errorCode}</small>}
+                      {canRetry && <button type="button" className="automation-run-retry" disabled={Boolean(busyId)} onClick={() => void retryRun(selectedRun.id, nodeRun.nodeId)}><RotateCcw size={12} /> Retry from this step</button>}
+                      {attempt && !skipped && <div className="automation-run-step-payloads">
+                        <details><summary>Captured input</summary><pre>{JSON.stringify(attempt.input ?? {}, null, 2)}</pre></details>
+                        <details><summary>Produced output</summary><pre>{JSON.stringify(attempt.output ?? null, null, 2)}</pre></details>
+                      </div>}
+                    </>}
+                  </div>}
                 </article>;
               })}</div>
             </>}

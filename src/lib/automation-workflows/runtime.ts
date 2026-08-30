@@ -474,7 +474,7 @@ export async function executeAutomationGraph(input: {
         skipped.add(node.id);
         const observerAttempt = (observerAttempts.get(node.id) || 0) + 1;
         observerAttempts.set(node.id, observerAttempt);
-        await input.observer?.nodeSkipped?.(node, `Required input “${missing.label}” produced no value`, observerAttempt);
+        await input.observer?.nodeSkipped?.(node, `Not used on this route because “${missing.label}” did not receive a value`, observerAttempt);
         continue;
       }
       validatedNodeInputs(node, inputs);

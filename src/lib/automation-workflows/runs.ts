@@ -631,7 +631,7 @@ async function executeBoundSubworkflow(parent: RunRow, input: { parentNodeId: st
         JOIN automation_workflow_versions version ON version.id = workflow.published_version_id
         WHERE binding.workflow_id = ? AND binding.workspace_id = ? AND binding.slot_key = ? AND binding.binding_type = 'subworkflow'`)
       .get(parent.workflow_id, parent.workspace_id, input.slotKey) as { workflow_id: string; published_version_id: string; graph_json: unknown } | undefined;
-  if (!target) throw Object.assign(new Error(`Workflow slot “${input.slotKey}” is not connected to a live workflow`), { code: "SUBWORKFLOW_BINDING_MISSING" });
+  if (!target) throw Object.assign(new Error(`Workflow slot “${input.slotKey}” is not connected to a runnable workflow`), { code: "SUBWORKFLOW_BINDING_MISSING" });
   const runtimeInputs = input.runtimeInputs || {};
   const inputJson = JSON.stringify(runtimeInputs);
   const payloadJson = JSON.stringify(subworkflowTriggerEnvelope(input.payload));
