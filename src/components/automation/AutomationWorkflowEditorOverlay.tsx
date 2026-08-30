@@ -69,7 +69,7 @@ import { forwardRef, useCallback, useEffect, useImperativeHandle, useMemo, useRe
 import { generatorRatiosFor, generatorResolutionsFor, type GeneratorModelOption } from "@/components/FrameNode";
 import { InspectorSelect } from "@/components/InspectorSelect";
 import { assistantModels } from "@/lib/assistant-models";
-import { automationMergeInputs, automationNodeDefinition, automationNodeDefinitions, automationNodeInputPorts, type AutomationMergeInput } from "@/lib/automation-workflows/registry";
+import { automationMergeInputs, automationNodeCategoryDefinitions, automationNodeDefinition, automationNodeDefinitions, automationNodeInputPorts, type AutomationMergeInput } from "@/lib/automation-workflows/registry";
 import { automationCreativeControls, type AutomationCreativeControl } from "@/lib/automation-workflows/creative-direction-contract";
 import type { PersonaRecord } from "@/lib/types";
 import type { TikTokSlideshowSource } from "@/lib/tiktok-slideshow-sources";
@@ -168,25 +168,9 @@ function workflowSwitcherPresentation(workflow: AutomationWorkflowRecord) {
   return { description: "Saved automatically" };
 }
 
-const categoryLabels = {
-  trigger: "Triggers",
-  input: "Inputs",
-  ai: "AI",
-  logic: "Logic",
-  integration: "Integrations",
-  generation: "Generation",
-  output: "Outputs",
-} as const;
-
-const categoryNodeLabels = {
-  trigger: "Trigger",
-  input: "Input",
-  ai: "AI",
-  logic: "Logic",
-  integration: "Integration",
-  generation: "Generation",
-  output: "Output",
-} as const;
+const categoryNodeLabels = Object.fromEntries(
+  automationNodeCategoryDefinitions.map((category) => [category.id, category.nodeLabel]),
+) as Record<AutomationNodeDefinitionRecord["category"], string>;
 
 const automationNodeIcons = {
   play: Play,
@@ -1932,10 +1916,10 @@ export const AutomationWorkflowEditorOverlay = forwardRef<AutomationWorkflowEdit
         <aside className="automation-node-library">
           <div className="automation-library-head"><span><Plus size={13} /> Node library</span><small>Every item below is a reusable node type. Add it, then give that step its own name.</small><label><Search size={13} /><input aria-label="Search node types" value={search} onChange={(event) => setSearch(event.target.value)} placeholder="Search node types…" /></label></div>
           <div className="automation-library-list">
-            {(Object.keys(categoryLabels) as Array<keyof typeof categoryLabels>).map((category) => {
-              const categoryNodes = filteredDefinitions.filter((definition) => definition.category === category);
+            {automationNodeCategoryDefinitions.map((category) => {
+              const categoryNodes = filteredDefinitions.filter((definition) => definition.category === category.id);
               if (!categoryNodes.length) return null;
-              return <section key={category}><h3>{categoryLabels[category]}</h3>{categoryNodes.map((definition) => {
+              return <section key={category.id}><h3>{category.label}</h3>{categoryNodes.map((definition) => {
                 const definitionKey = `${definition.type}@${definition.version}`;
                 return <article key={definitionKey} className={previewDefinitionKey === definitionKey ? "is-selected" : ""}>
                   <button type="button" className="automation-library-info" onClick={() => { setPreviewDefinitionKey(definitionKey); setSelectedId(null); setInspectorView("guide"); setMobileInspectorOpen(true); }}>

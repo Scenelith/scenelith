@@ -768,6 +768,20 @@ const latestDefinitions = [...definitions.reduce((byType, definition) => {
   return byType;
 }, new Map<string, AutomationNodeDefinition>()).values()];
 
+export const automationNodeCategoryDefinitions: ReadonlyArray<{
+  id: AutomationNodeDefinition["category"];
+  label: string;
+  nodeLabel: string;
+}> = [
+  { id: "trigger", label: "Triggers", nodeLabel: "Trigger" },
+  { id: "input", label: "Inputs", nodeLabel: "Input" },
+  { id: "ai", label: "AI", nodeLabel: "AI" },
+  { id: "logic", label: "Logic", nodeLabel: "Logic" },
+  { id: "integration", label: "Integrations", nodeLabel: "Integration" },
+  { id: "generation", label: "Generation", nodeLabel: "Generation" },
+  { id: "output", label: "Outputs", nodeLabel: "Output" },
+];
+
 export function automationNodeDefinitions() {
   return latestDefinitions;
 }

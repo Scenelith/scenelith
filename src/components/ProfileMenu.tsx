@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
-import { CircleAlert, CircleCheck, PlugZap, UserRound } from "lucide-react";
+import { Bot, Check, CircleAlert, CircleCheck, Copy, ExternalLink, PlugZap, UserRound } from "lucide-react";
 import { editionClient, type EditionView, type ProductPanelKind } from "@/editions/current/client";
 import type { UsageSummary } from "@/modules/usage/contracts";
 import type { UserRecord, WorkspaceRole } from "@/lib/types";
@@ -16,6 +16,139 @@ type ProviderConnection = {
   configured: boolean;
 };
 
+type McpSetup = {
+  endpoint: string;
+  mode: "local" | "https" | "insecure_remote";
+};
+
+type McpClient = "codex" | "claude" | "claude-code" | "chatgpt" | "other";
+
+const MCP_CLIENTS: Array<{ id: McpClient; label: string }> = [
+  { id: "codex", label: "Codex" },
+  { id: "claude", label: "Claude" },
+  { id: "claude-code", label: "Claude Code" },
+  { id: "chatgpt", label: "ChatGPT" },
+  { id: "other", label: "Other" },
+];
+
+async function copyText(value: string) {
+  if (navigator.clipboard?.writeText) {
+    await navigator.clipboard.writeText(value);
+    return;
+  }
+  const field = document.createElement("textarea");
+  field.value = value;
+  field.style.position = "fixed";
+  field.style.opacity = "0";
+  document.body.appendChild(field);
+  field.select();
+  document.execCommand("copy");
+  field.remove();
+}
+
+function McpConnectionSection({ onBack }: { onBack: () => void }) {
+  const [setup, setSetup] = useState<McpSetup | null>(null);
+  const [error, setError] = useState("");
+  const [client, setClient] = useState<McpClient>("codex");
+  const [copied, setCopied] = useState<"endpoint" | "snippet" | null>(null);
+
+  useEffect(() => {
+    let active = true;
+    void fetch("/api/mcp/setup", { cache: "no-store" })
+      .then(async (response) => {
+        const body = await response.json() as McpSetup & { error?: string };
+        if (!response.ok || !body.endpoint) throw new Error(body.error || "MCP setup is unavailable");
+        if (active) setSetup(body);
+      })
+      .catch(() => { if (active) setError("Could not read this instance's MCP address"); });
+    return () => { active = false; };
+  }, []);
+
+  useEffect(() => {
+    if (!copied) return;
+    const timeout = window.setTimeout(() => setCopied(null), 1600);
+    return () => window.clearTimeout(timeout);
+  }, [copied]);
+
+  const copyValue = async (value: string, target: "endpoint" | "snippet") => {
+    await copyText(value);
+    setCopied(target);
+  };
+
+  const endpoint = setup?.endpoint || "Reading this instance…";
+  const snippets: Record<McpClient, string> = {
+    codex: endpoint,
+    claude: endpoint,
+    "claude-code": `claude mcp add --transport http scenelith ${endpoint}`,
+    chatgpt: endpoint,
+    other: JSON.stringify({ mcpServers: { scenelith: { type: "http", url: endpoint } } }, null, 2),
+  };
+  const instructions: Record<McpClient, { title: string; body: string }> = {
+    codex: {
+      title: "Add a Streamable HTTP server",
+      body: "Open MCP settings in Codex, add a server, paste this URL and authenticate in the browser.",
+    },
+    claude: {
+      title: "Add a custom connector",
+      body: "In Claude connector settings, add a remote MCP server with this URL, then approve Scenelith access.",
+    },
+    "claude-code": {
+      title: "Run one command",
+      body: "Add Scenelith as an HTTP MCP server. Claude Code opens OAuth the first time it connects.",
+    },
+    chatgpt: {
+      title: "Create an MCP app",
+      body: "Enable Developer mode, open Settings → Apps → Create, choose OAuth and use this MCP URL.",
+    },
+    other: {
+      title: "Use any MCP client",
+      body: "Choose Streamable HTTP, paste the URL or add this block to the client's MCP configuration.",
+    },
+  };
+  const activeInstruction = instructions[client];
+
+  return <div className="profile-section profile-mcp-section">
+    <button type="button" className="profile-section-back" onClick={onBack}><i aria-hidden="true" />Profile</button>
+    <span className="profile-mcp-eyebrow"><Bot size={12} />Scenelith MCP</span>
+    <h3>Connect an AI agent</h3>
+    <p>Use this instance&apos;s OAuth connection. No API key or manual token is needed.</p>
+
+    <div className={`profile-mcp-endpoint ${error ? "has-error" : ""}`}>
+      <span><small>Server URL</small><code>{error || endpoint}</code></span>
+      <button type="button" aria-label="Copy MCP server URL" disabled={!setup} onClick={() => setup && void copyValue(setup.endpoint, "endpoint")}>
+        {copied === "endpoint" ? <Check size={14} /> : <Copy size={14} />}
+      </button>
+    </div>
+
+    <div className="profile-mcp-tabs" role="tablist" aria-label="MCP client">
+      {MCP_CLIENTS.map((item) => <button key={item.id} type="button" role="tab" aria-selected={client === item.id} className={client === item.id ? "is-active" : ""} onClick={() => setClient(item.id)}>{item.label}</button>)}
+    </div>
+
+    <section className="profile-mcp-client" role="tabpanel">
+      <strong>{activeInstruction.title}</strong>
+      <p>{activeInstruction.body}</p>
+      <div className="profile-mcp-snippet">
+        <pre>{snippets[client]}</pre>
+        <button type="button" aria-label="Copy MCP setup value" disabled={!setup} onClick={() => setup && void copyValue(snippets[client], "snippet")}>
+          {copied === "snippet" ? <Check size={13} /> : <Copy size={13} />}
+        </button>
+      </div>
+      {client === "chatgpt" && setup?.mode === "local" && <span className="profile-mcp-client-warning">ChatGPT cannot reach localhost directly. Use a secure tunnel or a public HTTPS Scenelith URL.</span>}
+    </section>
+
+    {setup && <span className={`profile-mcp-instance is-${setup.mode}`}>
+      {setup.mode === "local" && "Local instance · desktop agents on this machine can connect. Remote web agents need a secure tunnel or public HTTPS."}
+      {setup.mode === "https" && "Public HTTPS endpoint · ready for desktop and remote agents."}
+      {setup.mode === "insecure_remote" && "Remote HTTP address · set PUBLIC_URL to the public HTTPS origin before using OAuth outside this network."}
+    </span>}
+
+    <div className="profile-mcp-links">
+      <a href="/settings/mcp">Manage connected agents</a>
+      <a href="/mcp">Full setup guide <ExternalLink size={11} /></a>
+    </div>
+  </div>;
+}
+
 export function ProfileMenu({ user, workspaceId, workspaceName, workspaceRole, usage, onRequestAccountView, onOpenProductPanel }: {
   user: UserRecord;
   workspaceId: string;
@@ -26,7 +159,7 @@ export function ProfileMenu({ user, workspaceId, workspaceName, workspaceRole, u
   onOpenProductPanel: (kind: ProductPanelKind) => void;
 }) {
   const [open, setOpen] = useState(false);
-  const [section, setSection] = useState<"main" | "providers">("main");
+  const [section, setSection] = useState<"main" | "providers" | "mcp">("main");
   const [providers, setProviders] = useState<ProviderConnection[] | null>(null);
   const [providersError, setProvidersError] = useState("");
   const rootRef = useRef<HTMLDivElement>(null);
@@ -83,7 +216,7 @@ export function ProfileMenu({ user, workspaceId, workspaceName, workspaceRole, u
       <span className="profile-chevron" aria-hidden="true" />
     </button>
 
-    {open && <div className="profile-popover" role="menu" aria-label="Profile settings">
+    {open && <div className={`profile-popover ${section === "mcp" ? "has-mcp-section" : ""}`} role={section === "main" ? "menu" : "dialog"} aria-label={section === "mcp" ? "Connect an AI agent" : "Profile settings"}>
       {section === "main" ? <>
         <div className="profile-identity"><span className="profile-avatar is-large"><UserRound aria-hidden="true" /></span><span><strong>{user.name || "Scenelith creator"}</strong><small>{user.email}</small></span></div>
         <div className="profile-plan"><span><small>{account.summaryLabel}</small><strong>{account.summaryValue}</strong></span></div>
@@ -91,10 +224,11 @@ export function ProfileMenu({ user, workspaceId, workspaceName, workspaceRole, u
           {ProductAccountMenuExtension && <ProductAccountMenuExtension user={user} workspaceName={workspaceName} workspaceRole={workspaceRole} onOpen={(kind) => { dismiss(); onOpenProductPanel(kind); }} />}
           {usage.usageMode === "unmetered" && <button type="button" role="menuitem" onClick={() => setSection("providers")}><span><strong><PlugZap size={13} />Providers</strong><small>Kie · OpenRouter · Tikwm</small></span><i aria-hidden="true" /></button>}
           {AccountMenuExtension && <AccountMenuExtension usage={usage} workspaceId={workspaceId} workspaceOwner={workspaceRole === "owner"} onDismiss={dismiss} onRequestView={onRequestAccountView} />}
+          <button type="button" role="menuitem" onClick={() => setSection("mcp")}><span><strong><Bot size={13} />MCP</strong><small>Connect an AI agent · no API key</small></span><i aria-hidden="true" /></button>
           <a role="menuitem" href="https://docs.scenelith.com" target="_blank" rel="noreferrer"><span><strong>Docs</strong><small>Workflows, nodes and generation</small></span><i aria-hidden="true" /></a>
         </div>
         <button type="button" className="profile-sign-out" role="menuitem" onClick={() => void signOut()}>Sign out</button>
-      </> : <div className="profile-section">
+      </> : section === "providers" ? <div className="profile-section">
         <button type="button" className="profile-section-back" onClick={() => setSection("main")}><i aria-hidden="true" />Profile</button>
         <h3>Provider connections</h3>
         <p>Your instance calls these providers directly. Scenelith does not proxy or meter their usage.</p>
@@ -104,7 +238,7 @@ export function ProfileMenu({ user, workspaceId, workspaceName, workspaceRole, u
           {providersError && <span className="profile-provider-loading is-error">{providersError}</span>}
         </div>
         <span className="profile-section-note">Keys are configured on the server in <b>deploy/selfhost/.env</b>. Set <b>KIE_API_KEY</b> and <b>OPENROUTER_API_KEY</b>, then restart the instance.</span>
-      </div>}
+      </div> : <McpConnectionSection onBack={() => setSection("main")} />}
     </div>}
   </div>;
 }
