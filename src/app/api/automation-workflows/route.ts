@@ -1,6 +1,6 @@
 import { z } from "zod";
 import { requireApiUser, sameOriginRequest } from "@/lib/auth";
-import { createAutomationWorkflow, listAutomationWorkflows } from "@/lib/automation-workflows/repository";
+import { createAutomationWorkflow, listAutomationWorkflows, publishAutomationWorkflow } from "@/lib/automation-workflows/repository";
 import { enforceDistributedRateLimit } from "@/lib/distributed-rate-limit";
 import { automationApiErrorResponse } from "@/lib/automation-workflows/api-errors";
 import { automationCapabilitiesForWorkspace } from "@/lib/automation-workflows/permissions";
@@ -44,7 +44,13 @@ export async function POST(request: Request) {
   const parsed = createSchema.safeParse(await request.json().catch(() => null));
   if (!parsed.success) return Response.json({ error: "Name and canvas are required" }, { status: 400 });
   let detail;
-  try { detail = await createAutomationWorkflow({ userId: auth.user.id, ...parsed.data }); }
+  try {
+    detail = await createAutomationWorkflow({ userId: auth.user.id, ...parsed.data });
+    if (detail?.draft?.validation.valid) {
+      const capabilities = await automationCapabilitiesForWorkspace(auth.user.id, detail.workflow.workspaceId);
+      if (capabilities.publish) detail = (await publishAutomationWorkflow(auth.user.id, detail.workflow.id))?.detail || detail;
+    }
+  }
   catch (error) { return automationApiErrorResponse(error, "Workflow could not be created"); }
   if (!detail) return Response.json({ error: "Workflow source or canvas not found" }, { status: 404 });
   return Response.json(detail, { status: 201 });

@@ -433,8 +433,8 @@ export function validateAutomationWorkflowGraph(value: unknown): AutomationValid
 
   const triggers = graph.nodes.filter((node) => !node.disabled && automationNodeDefinition(node.type, node.version)?.category === "trigger");
   const terminals = graph.nodes.filter((node) => !node.disabled && automationNodeDefinition(node.type, node.version)?.terminal);
-  if (triggers.length !== 1) issues.push(issue("TRIGGER_COUNT", `A live workflow needs exactly one trigger; found ${triggers.length}.`));
-  if (!terminals.length) issues.push(issue("MISSING_TERMINAL", "A live workflow needs at least one output step."));
+  if (triggers.length !== 1) issues.push(issue("TRIGGER_COUNT", `A workflow needs exactly one trigger; found ${triggers.length}.`));
+  if (!terminals.length) issues.push(issue("MISSING_TERMINAL", "A workflow needs at least one output step."));
 
   const groupIds = new Set<string>();
   const groupedNodeIds = new Set<string>();
@@ -563,7 +563,7 @@ export function validateAutomationRunInputs(graph: AutomationWorkflowGraph, valu
     issues.push(issue("INVALID_RUN_INPUT", "Run inputs must be serializable."));
   }
   for (const key of Object.keys(values)) {
-    if (!byKey.has(key)) issues.push(issue("UNEXPECTED_RUN_INPUT", `Run input “${key}” is not used by this live workflow.`));
+    if (!byKey.has(key)) issues.push(issue("UNEXPECTED_RUN_INPUT", `Run input “${key}” is not used by this workflow.`));
   }
   for (const field of fields) {
     const value = values[field.key];

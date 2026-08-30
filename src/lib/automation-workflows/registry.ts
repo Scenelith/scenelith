@@ -47,10 +47,10 @@ const optionalAssistantModelOptions = [{ value: "", label: "No backup model" }, 
 
 const helpByType: Record<string, AutomationNodeHelp> = {
   "core.manual-trigger": {
-    whenToUse: "Use this as the start of a workflow. A person can press Run, and a configured schedule, event or webhook can start the same live workflow automatically.",
+    whenToUse: "Use this as the start of a workflow. A person can press Run, and a configured schedule, event or webhook can start the same saved workflow automatically.",
     setup: ["Place it at the start of the workflow.", "Connect its Run output to every input step that must prepare a value before the work begins.", "Mark changeable fields on later steps as Ask on run so they appear in the Automation panel."],
     exampleFlow: { before: "Automation panel", after: "Source and creative inputs", explanation: "The person presses Run once. This step creates the run context that wakes the connected input steps." },
-    tips: ["A workflow needs exactly one start card.", "Schedules, events and webhooks are configured for the live workflow in Manage → Automatic starts."],
+    tips: ["A workflow needs exactly one start card.", "Schedules, events and webhooks use the current saved workflow."],
     technicalNotes: ["Emits one run-context object containing run metadata and the trigger payload when one exists.", "It does not transform creative data or call an external provider."],
   },
   "input.tiktok-source": {
@@ -166,11 +166,11 @@ const helpByType: Record<string, AutomationNodeHelp> = {
     technicalNotes: ["Requires at least two configured inputs. Every input is a stable single-connection port, so removing a connected input is blocked until its edge is disconnected.", "List mode flattens connected lists by one level in configured input order. Named object mode uses the input names as keys and keeps every value intact.", "Branches are not claimed to execute simultaneously; the runtime may schedule them in a deterministic order before the merge."],
   },
   "logic.run-subworkflow": {
-    whenToUse: "Use this to reuse one live workflow as a single step, for example publishing, moderation or asset processing.",
+    whenToUse: "Use this to reuse one runnable workflow as a single step, for example publishing, moderation or asset processing.",
     setup: ["Connect the information to send.", "Give the connection a stable name.", "In Settings, connect that name to a live child workflow.", "Confirm the child has a compatible Workflow input step.", "Connect its result or error path."],
     exampleFlow: { before: "Finished image and caption", after: "Publishing result", explanation: "This workflow pauses while the child workflow completes, then continues with the child result." },
     tips: ["Use a child workflow for genuinely reusable behavior, not to hide a confusing local graph.", "Take the child live and test it before connecting it."],
-    technicalNotes: ["Invokes a pinned live workflow through a deployment binding.", "The connected value becomes the child workflow payload; the child Workflow input reads it without depending on either card's node ID.", "The output is an envelope with the child run id, its final output and warning count."],
+    technicalNotes: ["Invokes a pinned workflow version through a deployment binding.", "The connected value becomes the child workflow payload; the child Workflow input reads it without depending on either card's node ID.", "The output is an envelope with the child run id, its final output and warning count."],
   },
   "logic.map-subworkflow": {
     whenToUse: "Use this as an explicit bounded loop when every item in a list must go through the same reusable workflow.",
@@ -290,7 +290,7 @@ function withHelp(definition: Omit<AutomationNodeDefinition, "help">): Automatio
 
 const rawDefinitions: Array<Omit<AutomationNodeDefinition, "help">> = [
   {
-    type: "core.manual-trigger", version: 1, title: "Start workflow", description: "Starts one workflow run from the Automation panel or a configured trigger.", example: "Use this once at the beginning. A person, schedule, event or webhook can start the live workflow.", category: "trigger", icon: "play", accent: "mint",
+    type: "core.manual-trigger", version: 1, title: "Start workflow", description: "Starts one workflow run from the Automation panel or a configured trigger.", example: "Use this once at the beginning. A person, schedule, event or webhook can start the workflow.", category: "trigger", icon: "play", accent: "mint",
     inputs: [], outputs: [{ id: "run", label: "Run", type: "run-context" }], fields: [],
   },
   {
@@ -616,7 +616,7 @@ const rawDefinitions: Array<Omit<AutomationNodeDefinition, "help">> = [
     ],
   },
   {
-    type: "logic.run-subworkflow", version: 1, title: "Run another workflow", description: "Hands information to another live workflow, waits for it, then continues with its result.", example: "Send a finished image to a separate workflow that writes and schedules the social post.", category: "logic", icon: "workflow", accent: "mint",
+    type: "logic.run-subworkflow", version: 1, title: "Run another workflow", description: "Hands information to another runnable workflow, waits for it, then continues with its result.", example: "Send a finished image to a separate workflow that writes and schedules the social post.", category: "logic", icon: "workflow", accent: "mint",
     inputs: [{ id: "data", label: "Information to send", type: "data", required: true }], outputs: [{ id: "result", label: "Workflow result", type: "data" }, { id: "error", label: "Error path", type: "error" }], fields: [
       { id: "subworkflowSlot", label: "Connection name", description: "A safe name for the workflow you will connect below. The connected workflow can be changed after import.", placeholder: "Example: publish-content", kind: "text", required: true, defaultValue: "child-workflow" },
       { id: "childInputs", label: "Extra fixed information", description: "Advanced. Values that should be sent on every run in addition to the connected input.", kind: "json", defaultValue: {}, advanced: true },

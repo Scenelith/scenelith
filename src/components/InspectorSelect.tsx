@@ -12,12 +12,14 @@ export type InspectorSelectOption = {
   badge?: string;
 };
 
-export function InspectorSelect({ value, options, label, onChange, disabled = false }: {
+export function InspectorSelect({ value, options, label, onChange, disabled = false, showSelectedIcon = true, variant = "default" }: {
   value: string;
   options: InspectorSelectOption[];
   label: string;
   onChange: (value: string) => void;
   disabled?: boolean;
+  showSelectedIcon?: boolean;
+  variant?: "default" | "workflow";
 }) {
   const [open, setOpen] = useState(false);
   const rootRef = useRef<HTMLDivElement>(null);
@@ -74,7 +76,7 @@ export function InspectorSelect({ value, options, label, onChange, disabled = fa
   }, [open]);
 
   return (
-    <div ref={rootRef} className={`inspector-select ${open ? "is-open" : ""}`}>
+    <div ref={rootRef} className={`inspector-select is-${variant} ${open ? "is-open" : ""}`}>
       <button type="button" className="inspector-select-trigger" aria-label={label} aria-expanded={open} disabled={disabled} onClick={() => setOpen((current) => !current)}>
         <span><span>{selected?.label || value}</span>{selected?.badge && <b className="inspector-select-badge">{selected.badge}</b>}</span>
         <ChevronDown size={14} />
@@ -82,7 +84,7 @@ export function InspectorSelect({ value, options, label, onChange, disabled = fa
       {open && menuPosition && createPortal(
         <div
           ref={menuRef}
-          className={`inspector-select-menu is-portal is-${menuPosition.placement}`}
+          className={`inspector-select-menu is-portal is-${variant} is-${menuPosition.placement}`}
           role="listbox"
           aria-label={label}
           style={{ left: menuPosition.left, top: menuPosition.top, width: menuPosition.width, maxHeight: menuPosition.maxHeight }}
@@ -94,7 +96,7 @@ export function InspectorSelect({ value, options, label, onChange, disabled = fa
               {options.filter((option) => (option.group || "") === group).map((option) => (
                 <button key={option.value} type="button" role="option" aria-selected={option.value === value} className={option.value === value ? "is-selected" : ""} onClick={() => { onChange(option.value); setOpen(false); }}>
                   <span><strong>{option.label}</strong>{option.description && <small>{option.description}</small>}</span>
-                  <span className="inspector-select-option-state">{option.badge && <b className="inspector-select-badge">{option.badge}</b>}{option.value === value && <Check size={13} />}</span>
+                  <span className="inspector-select-option-state">{option.badge && <b className="inspector-select-badge">{option.badge}</b>}{showSelectedIcon && option.value === value && <Check size={13} />}</span>
                 </button>
               ))}
             </div>

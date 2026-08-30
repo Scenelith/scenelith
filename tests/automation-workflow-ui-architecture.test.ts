@@ -386,23 +386,29 @@ test("the default workflow teaches first-time users with a non-executable Markdo
   assert.match(themeSource, /\.automation-markdown-sections/);
 });
 
-test("the editor keeps system, draft, and published workflows switchable", () => {
+test("the editor keeps one clean workflow choice without lifecycle badges", () => {
   assert.match(workflowEditorSource, /InspectorSelect/);
   assert.match(workflowEditorSource, /Switch workflow/);
-  assert.match(workflowEditorSource, /group: "Scenelith"/);
-  assert.match(workflowEditorSource, /group: "My workflows"/);
-  assert.match(workflowEditorSource, /Auto-saved draft · take it live before running/);
+  assert.match(workflowEditorSource, /customWorkflows\.length === 0/);
+  assert.match(workflowEditorSource, /description: "Default workflow"/);
+  assert.match(workflowEditorSource, /showSelectedIcon=\{false\}/);
+  assert.match(workflowEditorSource, /variant="workflow"/);
+  assert.doesNotMatch(workflowEditorSource, /badge: "System"|badge: "Live"|badge: "Draft"/);
   assert.match(workflowEditorSource, /if \(dirty && !await saveDraft\(\)\) return/);
   assert.doesNotMatch(workflowEditorSource, /UNSAVED CHANGES|Save & switch|Discard &amp; switch/);
   assert.match(themeSource, /\.automation-workflow-switcher/);
 });
 
-test("workflow editing auto-saves while the live version changes only through an explicit action", () => {
+test("valid workflow edits auto-save and become runnable without a publish action", () => {
   assert.match(workflowEditorSource, /window\.setTimeout\(\(\) => void saveDraft\(\), 850\)/);
   assert.doesNotMatch(workflowEditorSource, />Save draft</);
-  assert.match(workflowEditorSource, /"Go live"/);
-  assert.match(workflowEditorSource, /"Update live"/);
-  assert.match(workflowEditorSource, /"Live"/);
+  assert.match(workflowEditorSource, /activate: capabilities\.publish && nextValidation\.valid/);
+  assert.match(workflowDetailRouteSource, /activate: z\.boolean\(\)\.optional\(\)/);
+  assert.match(workflowDetailRouteSource, /publishAutomationWorkflow\(auth\.user\.id, workflowId\)/);
+  assert.match(workflowDetailRouteSource, /activationValidation/);
+  assert.doesNotMatch(workflowEditorSource, /"Go live"|"Update live"|publishLabel|takeLive/);
+  assert.match(workflowEditorSource, /automation-editor-save-state/);
+  assert.match(workflowEditorSource, /"Saved"/);
   assert.match(workflowEditorSource, /const dirty = editRevision !== savedRevision/);
   assert.match(workflowEditorSource, /setSavedRevision\(\(current\) => Math\.max\(current, revisionToSave\)\)/);
   assert.match(workflowEditorSource, /const closeEditor = useCallback/);
@@ -422,6 +428,10 @@ test("automation toolbar keeps management focused on run history", () => {
   assert.match(workflowOperationsSource, /Opening the latest run/);
   assert.match(workflowOperationsSource, /inspectRun\(runList\[0\]\.id, true\)/);
   assert.match(workflowOperationsSource, /workflowNodeNames\.get\(nodeRun\.nodeId\)/);
+  assert.match(workflowOperationsSource, /inspectStep\(selectedRun\.id, nodeRun\.nodeId, nodeRun\.id\)/);
+  assert.match(workflowOperationsSource, /Not used on this route/);
+  assert.match(workflowOperationsSource, /rest of the run completed normally/);
+  assert.match(workflowOperationsSource, /nodeRun\.status === "failed" && nodeRun\.error && <p className="is-error"/);
 });
 
 test("automation dropdown fields reuse the unclipped InspectorSelect", () => {

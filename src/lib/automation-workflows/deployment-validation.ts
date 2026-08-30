@@ -100,7 +100,7 @@ export async function validateAutomationDeploymentBindings(input: {
         continue;
       }
       if (!binding.published_version_id || !binding.graph_json) {
-        issues.push({ code: "SUBWORKFLOW_NOT_PUBLISHED", message: `The workflow connected to “${slot}” must have a live version.`, nodeId: requirement.nodes[0]?.id });
+        issues.push({ code: "SUBWORKFLOW_NOT_PUBLISHED", message: `The workflow connected to “${slot}” must be ready to run.`, nodeId: requirement.nodes[0]?.id });
         continue;
       }
       const childGraph = automationWorkflowGraphSchema.parse(jsonValue(binding.graph_json));

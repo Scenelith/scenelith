@@ -1,9 +1,10 @@
 import { z } from "zod";
 import { requireApiUser, sameOriginRequest } from "@/lib/auth";
 import { AutomationPackageError } from "@/lib/automation-workflows/portable";
-import { importAutomationWorkflowPackage } from "@/lib/automation-workflows/repository";
+import { importAutomationWorkflowPackage, publishAutomationWorkflow } from "@/lib/automation-workflows/repository";
 import { enforceDistributedRateLimit } from "@/lib/distributed-rate-limit";
 import { automationApiErrorResponse } from "@/lib/automation-workflows/api-errors";
+import { automationCapabilitiesForWorkspace } from "@/lib/automation-workflows/permissions";
 
 export const runtime = "nodejs";
 
@@ -23,6 +24,10 @@ export async function POST(request: Request) {
   try {
     const imported = await importAutomationWorkflowPackage({ userId: auth.user.id, ...parsed.data });
     if (!imported) return Response.json({ error: "Canvas not found" }, { status: 404 });
+    if (imported.validation.valid && imported.detail) {
+      const capabilities = await automationCapabilitiesForWorkspace(auth.user.id, imported.detail.workflow.workspaceId);
+      if (capabilities.publish) imported.detail = (await publishAutomationWorkflow(auth.user.id, imported.detail.workflow.id))?.detail || imported.detail;
+    }
     return Response.json(imported, { status: 201 });
   } catch (error) {
     if (error instanceof AutomationPackageError) return Response.json({ error: error.message, code: error.code }, { status: 422 });
