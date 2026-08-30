@@ -37,6 +37,8 @@ test("automation panel renders the selected workflow input contract", () => {
   assert.match(panelSource, /visibleRunInputs\.map/);
   assert.match(panelSource, /runtimeValuesByWorkflow/);
   assert.match(panelSource, /selectedWorkflow\?\.publishedVersionId/);
+  assert.match(panelSource, /No run inputs yet/);
+  assert.match(panelSource, /Add to run inputs/);
 });
 
 test("automation AI settings reuse the complete Canvas Assistant model catalogue", () => {
@@ -83,7 +85,7 @@ test("protected system templates expose only primary AI and image model controls
   assert.match(workflowDetailRouteSource, /systemModelDefaults/);
 });
 
-test("visual references are configured on their node from canvas, Library or Identities", () => {
+test("visual references are configured from canvas, Library or Identities wherever the workflow asks for them", () => {
   assert.match(referencePickerSource, />Canvas</);
   assert.match(referencePickerSource, /Library/);
   assert.match(referencePickerSource, /Identities/);
@@ -98,9 +100,10 @@ test("visual references are configured on their node from canvas, Library or Ide
   assert.match(referencePickerSource, /\["reference", "before", "after"\]/);
   assert.match(referencePickerSource, /Clear/);
   assert.doesNotMatch(referencePickerSource, /storagePath|storage_path|apiKey|secret/i);
-  assert.doesNotMatch(panelSource, /<AutomationReferencePicker/);
-  assert.match(panelSource, /field\.valueType !== "visual-references"/);
-  assert.match(panelSource, /nodeManagedInputKeys/);
+  assert.match(panelSource, /<AutomationReferencePicker/);
+  assert.match(panelSource, /placement="run-panel"/);
+  assert.doesNotMatch(panelSource, /field\.valueType !== "visual-references"/);
+  assert.doesNotMatch(panelSource, /nodeManagedInputKeys/);
   assert.match(workflowEditorSource, /<AutomationReferencePicker/);
   assert.match(workflowEditorSource, /placement="node"/);
   assert.match(referencePickerSource, /<ReferenceMenuShell/);
@@ -133,7 +136,7 @@ test("the live automation panel exposes a read-only demo contract for Cloud mark
   assert.match(panelSource, /demo\?: TikTokAutomationPanelDemo/);
   assert.match(panelSource, /workspaceId\?: string/);
   assert.match(panelSource, /canvasReferences\?: AutomationReferenceCandidate\[\]/);
-  assert.doesNotMatch(panelSource, /export function TikTokAutomationPanel\(\{[^}]*canvasReferences/s);
+  assert.match(panelSource, /export function TikTokAutomationPanel\(\{[^}]*workspaceId,[^}]*canvasReferences = \[\]/s);
   assert.match(panelSource, /if \(demo\) return;/);
 });
 
@@ -143,9 +146,9 @@ test("legacy TikTok API adapts into the versioned workflow runtime instead of cr
 });
 
 test("run-only roles cannot see or execute drafts and each version keeps its own input contract", () => {
-  assert.match(panelSource, /capabilities\.edit/);
   assert.match(panelSource, /draftRunInputs/);
-  assert.match(panelSource, /inputsFor\(productionRunInputs\)/);
+  assert.match(panelSource, /const fields = publishedFields\.length \? publishedFields : draftFields/);
+  assert.match(panelSource, /inputsFor\(visibleProductionRunInputs\)/);
   assert.match(workflowDetailRouteSource, /canViewDraft = capabilities\.edit \|\| capabilities\.publish/);
   assert.match(workflowDetailRouteSource, /draftRunInputs/);
   assert.match(workflowRunsSource, /runKind === "test".*automation\.edit/s);
@@ -409,6 +412,12 @@ test("valid workflow edits auto-save and become runnable without a publish actio
   assert.doesNotMatch(workflowEditorSource, /"Go live"|"Update live"|publishLabel|takeLive/);
   assert.match(workflowEditorSource, /automation-editor-save-state/);
   assert.match(workflowEditorSource, /"Saved"/);
+  assert.match(workflowEditorSource, /automation-editor-validation-state is-ready/);
+  assert.match(workflowEditorSource, /Needs attention/);
+  assert.match(workflowEditorSource, /Workflow can&apos;t run yet/);
+  assert.match(workflowEditorSource, /Open an issue to go to the affected step/);
+  assert.match(workflowEditorSource, /focusValidationIssue\(issue\)/);
+  assert.doesNotMatch(workflowEditorSource, /Saved · needs attention/);
   assert.match(workflowEditorSource, /const dirty = editRevision !== savedRevision/);
   assert.match(workflowEditorSource, /setSavedRevision\(\(current\) => Math\.max\(current, revisionToSave\)\)/);
   assert.match(workflowEditorSource, /const closeEditor = useCallback/);
@@ -422,6 +431,8 @@ test("automation toolbar keeps workflow actions in a clear Manage menu without s
   assert.match(workflowEditorSource, /Manage <ChevronDown/);
   assert.match(workflowEditorSource, /<b>Run history<\/b>/);
   assert.match(workflowEditorSource, /<b>Export JSON<\/b>/);
+  assert.match(workflowEditorSource, /<b>New workflow<\/b>/);
+  assert.match(workflowEditorSource, /<b>Import workflow<\/b>/);
   assert.match(workflowEditorSource, /validation && !validation\.valid/);
   assert.match(workflowEditorSource, /<b>Review issues<\/b>/);
   assert.doesNotMatch(workflowEditorSource, /<b>Versions<\/b>|<b>Automatic starts<\/b>|<b>Test a step<\/b>|<b>Workflow settings<\/b>/);
@@ -430,14 +441,34 @@ test("automation toolbar keeps workflow actions in a clear Manage menu without s
   assert.match(workflowOperationsSource, /inspectRun\(runList\[0\]\.id, true\)/);
   assert.match(workflowOperationsSource, /workflowNodeNames\.get\(nodeRun\.nodeId\)/);
   assert.match(workflowOperationsSource, /inspectStep\(selectedRun\.id, nodeRun\.nodeId, nodeRun\.id\)/);
-  assert.match(panelSource, /ArrowDownToLine/);
-  assert.match(panelSource, /> Import<\/button>/);
-  assert.match(panelSource, /> New workflow<\/button>/);
+  assert.doesNotMatch(panelSource, /ArrowDownToLine|> Import<\/button>|> New workflow<\/button>/);
+  assert.match(workflowEditorSource, /defaultRunBindings/);
+  assert.match(workflowEditorSource, /field\.defaultRunInput/);
+  assert.match(workflowEditorSource, /mode: "ask-on-run" as const/);
+  assert.match(canvasSource, /automationWorkflowEditorRef\.current/);
+  assert.match(workflowEditorSource, /useImperativeHandle\(ref/);
   assert.doesNotMatch(panelSource, /FileUp/);
   assert.match(workflowOperationsSource, /Not used on this route/);
   assert.match(workflowOperationsSource, /This path was not selected for this run/);
   assert.doesNotMatch(workflowOperationsSource, /This step completed normally/);
   assert.match(workflowOperationsSource, /nodeRun\.status === "failed" && nodeRun\.error && <p className="is-error"/);
+});
+
+test("run-input settings reuse the existing select language instead of one-off badges, checkboxes or toggles", () => {
+  assert.match(workflowEditorSource, /type RunInputMode = "fixed" \| "optional" \| "required"/);
+  assert.match(workflowEditorSource, /Saved in step/);
+  assert.match(workflowEditorSource, /Optional run input/);
+  assert.match(workflowEditorSource, /Required run input/);
+  assert.match(workflowEditorSource, /<InspectorSelect label=\{`\$\{field\.label\} value source`\}/);
+  assert.doesNotMatch(workflowEditorSource, /Add to run inputs|automation-runtime-required|automation-boolean/);
+  assert.doesNotMatch(panelSource, /tiktok-automation-runtime-toggle/);
+});
+
+test("new steps land in the visible canvas and removal immediately updates the flow", () => {
+  assert.match(workflowEditorSource, /screenToFlowPosition/);
+  assert.match(workflowEditorSource, /instance\.setCenter\(position\.x \+ 140, position\.y \+ 82/);
+  assert.match(workflowEditorSource, /setFlowNodes\(\(current\) => current\.filter\(\(node\) => node\.id !== nodeId\)\)/);
+  assert.match(workflowEditorSource, /removeSelectedNode\(selectedNode\.id\)/);
 });
 
 test("collaboration status stays a quiet dot without helper or peer avatars", () => {

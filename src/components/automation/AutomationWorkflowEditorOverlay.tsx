@@ -22,6 +22,7 @@ import {
 } from "@xyflow/react";
 import {
   Activity,
+  ArrowDownToLine,
   ArrowRight,
   ArrowDown,
   ArrowUp,
@@ -64,7 +65,7 @@ import {
   Workflow,
   X,
 } from "lucide-react";
-import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
+import { forwardRef, useCallback, useEffect, useImperativeHandle, useMemo, useRef, useState, type ReactNode } from "react";
 import { generatorRatiosFor, generatorResolutionsFor, type GeneratorModelOption } from "@/components/FrameNode";
 import { InspectorSelect } from "@/components/InspectorSelect";
 import { assistantModels } from "@/lib/assistant-models";
@@ -942,21 +943,23 @@ function CreativeControlsEditor({ value, disabled, onChange }: { value: unknown;
   </section>;
 }
 
-function FieldEditor({ field, node, disabled, options, referencePicker, onConfig, onBinding, onRequired }: {
+type RunInputMode = "fixed" | "optional" | "required";
+
+function FieldEditor({ field, node, disabled, options, referencePicker, onConfig, onRunInputMode }: {
   field: AutomationNodeFieldDefinition;
   node: AutomationNode;
   disabled: boolean;
   options: Array<{ value: string; label: string }>;
   referencePicker?: ReactNode;
   onConfig: (value: unknown) => void;
-  onBinding: (askOnRun: boolean) => void;
-  onRequired: (required: boolean) => void;
+  onRunInputMode: (mode: RunInputMode) => void;
 }) {
   const value = node.bindings[field.id]?.mode === "fixed" && node.bindings[field.id]?.value !== undefined
     ? node.bindings[field.id].value
     : node.config[field.id] ?? field.defaultValue ?? "";
   const askOnRun = node.bindings[field.id]?.mode === "ask-on-run";
-  const required = Boolean(field.required || node.bindings[field.id]?.required);
+  const required = Boolean(field.required || field.requiredWhenVisible || node.bindings[field.id]?.required);
+  const runInputMode: RunInputMode = askOnRun ? required ? "required" : "optional" : "fixed";
   const readableValue = readableFieldValue(value, options);
   const fullValue = fullFieldValue(value, options);
   const showFullValue = fullValue !== "Not set" && (
@@ -990,12 +993,18 @@ function FieldEditor({ field, node, disabled, options, referencePicker, onConfig
     {!askOnRun && field.description && <small>{field.description}</small>}
   </div>;
   return <label className={`automation-inspector-field is-${field.kind}`}>
-    <span><b>{field.label}</b>{field.runtimeBindable && <button type="button" disabled={disabled} className={askOnRun ? "is-on" : ""} aria-pressed={askOnRun} title={askOnRun ? "This value is chosen before every run" : "Move this setting to the Automation run panel"} onClick={() => onBinding(!askOnRun)}>{askOnRun ? "Asked on run" : "Ask on run"}</button>}</span>
-    {askOnRun && <small className="automation-runtime-help">Shown in the Automation panel before every run.</small>}
-    {askOnRun && <button type="button" className={`automation-runtime-required ${required ? "is-on" : ""}`} disabled={disabled || field.required} onClick={() => onRequired(!required)}><i /> {field.required ? "Required by this step" : "Required before run"}</button>}
+    <span><b>{field.label}</b></span>
+    {field.runtimeBindable && <div className="automation-run-input-source">
+      <span><b>Value source</b><small>{askOnRun ? "Chosen in Automation before the workflow starts" : "Saved in this step"}</small></span>
+      <InspectorSelect label={`${field.label} value source`} disabled={disabled} value={runInputMode} options={[
+        { value: "fixed", label: "Saved in step" },
+        ...(!field.required && !field.requiredWhenVisible ? [{ value: "optional", label: "Optional run input" }] : []),
+        { value: "required", label: field.requiredWhenVisible ? "Required when shown" : "Required run input" },
+      ]} onChange={(next) => onRunInputMode(next as RunInputMode)} />
+    </div>}
     {field.description && <small>{field.description}</small>}
-    {field.kind === "references" ? referencePicker
-      : field.kind === "boolean" ? <button type="button" className={`automation-boolean ${value ? "is-on" : ""}`} disabled={disabled || askOnRun} onClick={() => onConfig(!value)}><i />{value ? "Enabled" : "Disabled"}</button>
+    {field.kind === "references" ? askOnRun ? <small className="automation-run-input-note">Reference images are selected from the Automation panel before the run.</small> : referencePicker
+      : field.kind === "boolean" ? <InspectorSelect label={field.label} disabled={disabled || askOnRun} value={value ? "true" : "false"} options={[{ value: "true", label: "Enabled" }, { value: "false", label: "Disabled" }]} onChange={(next) => onConfig(next === "true")} />
       : field.kind === "model" && options.length ? <InspectorSelect label={field.label} disabled={disabled || askOnRun} value={String(value)} options={options} onChange={onConfig} />
       : field.kind === "select" && options.length ? <InspectorSelect label={field.label} disabled={disabled || askOnRun} value={String(value)} options={options} onChange={onConfig} />
         : field.kind === "json" ? <JsonEditor key={JSON.stringify(value ?? {})} disabled={disabled || askOnRun} value={value} onChange={onConfig} />
@@ -1052,7 +1061,11 @@ function MergeInputsEditor({ node, graph, disabled, onChange }: {
   </section>;
 }
 
-export function AutomationWorkflowEditorOverlay({ workspaceId, projectId, workflowId, sources, personas, models, canvasReferences, execution = null, runtimeValues = {}, onRuntimeValueChange, onClose, onWorkflowChanged }: {
+export type AutomationWorkflowEditorHandle = {
+  requestWorkflowSwitch: (workflowId: string) => Promise<boolean>;
+};
+
+export const AutomationWorkflowEditorOverlay = forwardRef<AutomationWorkflowEditorHandle, {
   workspaceId: string;
   projectId: string;
   workflowId: string;
@@ -1065,7 +1078,7 @@ export function AutomationWorkflowEditorOverlay({ workspaceId, projectId, workfl
   onRuntimeValueChange?: (workflowId: string, key: string, value: unknown) => void;
   onClose: () => void;
   onWorkflowChanged?: (workflowId: string) => void;
-}) {
+}>(function AutomationWorkflowEditorOverlay({ workspaceId, projectId, workflowId, sources, personas, models, canvasReferences, execution = null, runtimeValues = {}, onRuntimeValueChange, onClose, onWorkflowChanged }, ref) {
   const [detail, setDetail] = useState<AutomationWorkflowClientDetail | null>(null);
   const [graph, setGraph] = useState<AutomationWorkflowGraph | null>(null);
   const [name, setName] = useState("");
@@ -1081,6 +1094,7 @@ export function AutomationWorkflowEditorOverlay({ workspaceId, projectId, workfl
   const [savedRevision, setSavedRevision] = useState(0);
   const [availableWorkflows, setAvailableWorkflows] = useState<AutomationWorkflowRecord[]>([]);
   const [manageOpen, setManageOpen] = useState(false);
+  const [validationOpen, setValidationOpen] = useState(false);
   const [mobileInspectorOpen, setMobileInspectorOpen] = useState(false);
   const [runHistoryOpen, setRunHistoryOpen] = useState(false);
   const [validation, setValidation] = useState<AutomationValidationResult | null>(null);
@@ -1090,6 +1104,8 @@ export function AutomationWorkflowEditorOverlay({ workspaceId, projectId, workfl
   const [newCredentialUsername, setNewCredentialUsername] = useState("");
   const [newCredentialHeaderName, setNewCredentialHeaderName] = useState("");
   const manageMenuRef = useRef<HTMLDivElement>(null);
+  const validationMenuRef = useRef<HTMLDivElement>(null);
+  const importInputRef = useRef<HTMLInputElement>(null);
   const flowStageRef = useRef<HTMLElement>(null);
   const dirty = editRevision !== savedRevision;
 
@@ -1145,6 +1161,14 @@ export function AutomationWorkflowEditorOverlay({ workspaceId, projectId, workfl
     return () => document.removeEventListener("pointerdown", onPointerDown);
   }, [manageOpen]);
   useEffect(() => {
+    if (!validationOpen) return;
+    const onPointerDown = (event: PointerEvent) => {
+      if (event.target instanceof globalThis.Node && !validationMenuRef.current?.contains(event.target)) setValidationOpen(false);
+    };
+    document.addEventListener("pointerdown", onPointerDown);
+    return () => document.removeEventListener("pointerdown", onPointerDown);
+  }, [validationOpen]);
+  useEffect(() => {
     let cancelled = false;
     void fetch(`/api/automation-workflows?projectId=${encodeURIComponent(projectId)}`, { cache: "no-store" })
       .then(async (response) => {
@@ -1176,6 +1200,7 @@ export function AutomationWorkflowEditorOverlay({ workspaceId, projectId, workfl
         setGraph(loadedGraph);
         setName(body.workflow.name);
         setValidation(version.validation);
+        setValidationOpen(false);
         setEditRevision(0);
         setSavedRevision(0);
         setLoading(false);
@@ -1245,7 +1270,7 @@ export function AutomationWorkflowEditorOverlay({ workspaceId, projectId, workfl
     annotations: (graph.annotations || []).map((annotation) => [annotation.id, annotation.position.x, annotation.position.y, annotation.size.width, annotation.size.height]),
   }) : "empty", [graph]);
   const [flowNodes, setFlowNodes, onFlowNodesChange] = useNodesState<Node<AutomationFlowData>>([]);
-  const flowInstanceRef = useRef<Pick<ReactFlowInstance<Node<AutomationFlowData>>, "fitView"> | null>(null);
+  const flowInstanceRef = useRef<Pick<ReactFlowInstance<Node<AutomationFlowData>>, "fitView" | "getZoom" | "screenToFlowPosition" | "setCenter"> | null>(null);
   const appliedLayoutKeyRef = useRef("");
   useEffect(() => {
     const layoutChanged = appliedLayoutKeyRef.current !== automationLayoutKey;
@@ -1386,12 +1411,33 @@ export function AutomationWorkflowEditorOverlay({ workspaceId, projectId, workfl
     const definition = automationNodeDefinition(type, version);
     if (!definition || readOnly) return;
     const id = `${type.replace(/[^a-z0-9]+/gi, "-")}-${crypto.randomUUID().slice(0, 8)}`;
-    const existing = graph?.nodes.length || 0;
+    const existingNodes = graph?.nodes || [];
+    const stageBounds = flowStageRef.current?.getBoundingClientRect();
+    const flowInstance = flowInstanceRef.current;
+    const visibleCenter = stageBounds && flowInstance
+      ? flowInstance.screenToFlowPosition({ x: stageBounds.left + stageBounds.width / 2, y: stageBounds.top + stageBounds.height / 2 })
+      : { x: 260 + (existingNodes.length % 4) * 300, y: 220 + (existingNodes.length % 3) * 190 };
+    const candidates = [
+      { x: 0, y: 0 }, { x: 0, y: 190 }, { x: 0, y: -190 }, { x: 300, y: 0 }, { x: -300, y: 0 },
+      { x: 300, y: 190 }, { x: -300, y: 190 }, { x: 300, y: -190 }, { x: -300, y: -190 },
+    ];
+    const position = candidates
+      .map((offset) => ({ x: visibleCenter.x - 140 + offset.x, y: visibleCenter.y - 82 + offset.y }))
+      .find((candidate) => existingNodes.every((node) => Math.abs(node.position.x - candidate.x) > 245 || Math.abs(node.position.y - candidate.y) > 135))
+      || { x: visibleCenter.x - 140, y: visibleCenter.y - 82 };
+    const defaultRunBindings = Object.fromEntries(definition.fields
+      .filter((field) => field.runtimeBindable && field.defaultRunInput)
+      .map((field) => [field.id, {
+        mode: "ask-on-run" as const,
+        label: field.label,
+        required: Boolean(field.required || field.requiredWhenVisible),
+        ...(field.defaultValue !== undefined ? { value: field.defaultValue } : {}),
+      }]));
     const newNode: AutomationNode = {
       id, type, version, name: definition.title, description: definition.description,
-      position: { x: 180 + (existing % 5) * 300, y: 160 + (existing % 3) * 190 }, groupId: null,
+      position, groupId: null,
       config: Object.fromEntries(definition.fields.filter((field) => field.defaultValue !== undefined).map((field) => [field.id, field.defaultValue])),
-      bindings: {}, disabled: false,
+      bindings: defaultRunBindings, disabled: false,
     };
     mutateGraph((current) => ({
       ...current,
@@ -1400,17 +1446,26 @@ export function AutomationWorkflowEditorOverlay({ workspaceId, projectId, workfl
     setSelectedId(id);
     setInspectorView("guide");
     setMobileInspectorOpen(true);
-  }, [graph?.nodes.length, mutateGraph, readOnly]);
+    window.requestAnimationFrame(() => window.requestAnimationFrame(() => {
+      const instance = flowInstanceRef.current;
+      if (!instance) return;
+      void instance.setCenter(position.x + 140, position.y + 82, {
+        zoom: Math.max(0.58, instance.getZoom()),
+        duration: 220,
+      });
+    }));
+  }, [graph?.nodes, mutateGraph, readOnly]);
 
-  function removeSelectedNode() {
-    if (!selectedNode || readOnly) return;
+  function removeSelectedNode(nodeId: string) {
+    if (readOnly) return;
     mutateGraph((current) => ({
       ...current,
-      nodes: current.nodes.filter((node) => node.id !== selectedNode.id),
-      edges: current.edges.filter((edge) => edge.source !== selectedNode.id && edge.target !== selectedNode.id),
-      groups: current.groups.map((group) => ({ ...group, nodeIds: group.nodeIds.filter((id) => id !== selectedNode.id) })).filter((group) => group.nodeIds.length),
+      nodes: current.nodes.filter((node) => node.id !== nodeId),
+      edges: current.edges.filter((edge) => edge.source !== nodeId && edge.target !== nodeId),
+      groups: current.groups.map((group) => ({ ...group, nodeIds: group.nodeIds.filter((id) => id !== nodeId) })).filter((group) => group.nodeIds.length),
     }));
-    setSelectedId(null);
+    setFlowNodes((current) => current.filter((node) => node.id !== nodeId));
+    setSelectedId((current) => current === nodeId ? null : current);
   }
 
   function removeSelectedEdge() {
@@ -1457,7 +1512,7 @@ export function AutomationWorkflowEditorOverlay({ workspaceId, projectId, workfl
     }));
   }
 
-  function updateSelectedFieldBinding(field: AutomationNodeFieldDefinition, askOnRun: boolean) {
+  function updateSelectedRunInputMode(field: AutomationNodeFieldDefinition, mode: RunInputMode) {
     if (!selectedNode) return;
     mutateGraph((current) => ({
       ...current,
@@ -1465,23 +1520,15 @@ export function AutomationWorkflowEditorOverlay({ workspaceId, projectId, workfl
         if (node.id !== selectedNode.id) return node;
         const currentBinding = node.bindings[field.id];
         const fixedValue = currentBinding?.value ?? node.config[field.id] ?? field.defaultValue;
-        if (askOnRun) return {
+        if (mode !== "fixed") return {
           ...node,
-          bindings: { ...node.bindings, [field.id]: { mode: "ask-on-run", value: fixedValue, label: field.label, required: Boolean(field.required || currentBinding?.required) } },
+          bindings: { ...node.bindings, [field.id]: { mode: "ask-on-run", value: fixedValue, label: field.label, required: Boolean(field.required || field.requiredWhenVisible || mode === "required") } },
         };
         const bindings = { ...node.bindings };
         delete bindings[field.id];
         return { ...node, config: { ...node.config, [field.id]: fixedValue }, bindings };
       }),
     }));
-  }
-
-  function updateSelectedFieldRequired(field: AutomationNodeFieldDefinition, required: boolean) {
-    if (!selectedNode) return;
-    mutateGraph((current) => ({ ...current, nodes: current.nodes.map((node) => node.id === selectedNode.id ? {
-      ...node,
-      bindings: { ...node.bindings, [field.id]: { ...(node.bindings[field.id] || { mode: "ask-on-run", label: field.label }), required } },
-    } : node) }));
   }
 
   async function saveDeploymentBinding(type: "credential" | "subworkflow", slotKey: string, targetId: string) {
@@ -1601,12 +1648,62 @@ export function AutomationWorkflowEditorOverlay({ workspaceId, projectId, workfl
     }
   }
 
-  async function requestWorkflowSwitch(nextWorkflowId: string) {
-    if (nextWorkflowId === workflowId || !onWorkflowChanged) return;
-    if (saving) return;
+  async function createWorkflow() {
+    if (!capabilities.edit || saving) return;
     if (dirty && !await saveDraft()) return;
-    onWorkflowChanged(nextWorkflowId);
+    setSaving(true);
+    setError("");
+    try {
+      const response = await fetch("/api/automation-workflows", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ projectId, name: "Untitled automation" }),
+      });
+      const body = await response.json() as AutomationWorkflowDetail & { error?: string };
+      if (!response.ok || !body.workflow?.id) throw new Error(body.error || "Could not create a workflow");
+      setAvailableWorkflows((current) => [...current.filter((workflow) => workflow.id !== body.workflow.id), body.workflow]);
+      onWorkflowChanged?.(body.workflow.id);
+    } catch (createError) {
+      setError(createError instanceof Error ? createError.message : "Could not create a workflow");
+    } finally {
+      setSaving(false);
+    }
   }
+
+  async function importWorkflow(file: File | undefined) {
+    if (!file || !capabilities.edit || saving) return;
+    if (dirty && !await saveDraft()) return;
+    setSaving(true);
+    setError("");
+    try {
+      if (file.size > 3_000_000) throw new Error("Automation packages must be smaller than 3 MB");
+      const portable = JSON.parse(await file.text()) as unknown;
+      const response = await fetch("/api/automation-workflows/import", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ projectId, package: portable }),
+      });
+      const body = await response.json() as { detail?: AutomationWorkflowDetail; error?: string };
+      if (!response.ok || !body.detail?.workflow) throw new Error(body.error || "Could not import this automation");
+      const imported = body.detail.workflow;
+      setAvailableWorkflows((current) => [...current.filter((workflow) => workflow.id !== imported.id), imported]);
+      onWorkflowChanged?.(imported.id);
+    } catch (importError) {
+      setError(importError instanceof SyntaxError ? "Choose a valid Scenelith automation JSON file" : importError instanceof Error ? importError.message : "Could not import this automation");
+    } finally {
+      setSaving(false);
+      if (importInputRef.current) importInputRef.current.value = "";
+    }
+  }
+
+  const requestWorkflowSwitch = useCallback(async (nextWorkflowId: string) => {
+    if (nextWorkflowId === workflowId || !onWorkflowChanged || saving) return false;
+    if (dirty && !await saveDraft()) return false;
+    onWorkflowChanged(nextWorkflowId);
+    return true;
+  }, [dirty, onWorkflowChanged, saveDraft, saving, workflowId]);
+
+  useImperativeHandle(ref, () => ({ requestWorkflowSwitch }), [requestWorkflowSwitch]);
 
   const closeEditor = useCallback(async () => {
     if (saving) return;
@@ -1704,9 +1801,19 @@ export function AutomationWorkflowEditorOverlay({ workspaceId, projectId, workfl
         onChange={(assetIds) => updateSelectedFieldConfig(field, assetIds)}
       /> : undefined}
       onConfig={(value) => updateSelectedFieldConfig(field, value)}
-      onBinding={(askOnRun) => updateSelectedFieldBinding(field, askOnRun)}
-      onRequired={(required) => updateSelectedFieldRequired(field, required)}
+      onRunInputMode={(mode) => updateSelectedRunInputMode(field, mode)}
     />;
+  };
+
+  const focusValidationIssue = (issue: AutomationValidationResult["issues"][number]) => {
+    setValidationOpen(false);
+    if (issue.nodeId) {
+      setSelectedId(issue.nodeId);
+      setInspectorView("settings");
+      setMobileInspectorOpen(true);
+    } else if (issue.edgeId) {
+      setSelectedId(issue.edgeId);
+    }
   };
 
   return <div className="automation-editor-overlay" role="dialog" aria-modal="false" aria-label="Automation workflow editor" onPointerDown={(event) => event.stopPropagation()}>
@@ -1714,16 +1821,34 @@ export function AutomationWorkflowEditorOverlay({ workspaceId, projectId, workfl
       <header className="automation-editor-topbar">
         <div className="automation-editor-title">
           <button type="button" className="automation-editor-collapse" disabled={saving} onClick={() => void closeEditor()} aria-label="Collapse workflow editor" title="Collapse workflow editor"><ChevronLeft size={19} /></button>
-          <span className="automation-editor-heading">
+          <div className="automation-editor-heading">
             <small>AUTOMATION CANVAS</small>
-            <span className="automation-editor-name-row">
+            <div className="automation-editor-name-row">
               <input aria-label="Workflow name" value={name} disabled={Boolean(readOnly)} onChange={(event) => { setName(event.target.value); markDirty(); }} />
-              {!systemReadOnly && <span className={`automation-editor-save-state ${saving || dirty ? "is-saving" : validation?.valid ? "is-saved" : "is-attention"}`}>
-                {saving || dirty ? <LoaderCircle size={11} /> : validation?.valid ? <Check size={11} /> : <CircleAlert size={11} />}
-                {saving || dirty ? "Saving" : validation?.valid ? "Saved" : "Saved · needs attention"}
+            </div>
+            <div className="automation-editor-status-row">
+              {!systemReadOnly && <span className={`automation-editor-save-state ${saving || dirty ? "is-saving" : "is-saved"}`}>
+                {saving || dirty ? <LoaderCircle size={10} /> : <Check size={10} />}
+                {saving || dirty ? "Saving" : "Saved"}
               </span>}
-            </span>
-          </span>
+              {!systemReadOnly && validation && <i aria-hidden="true" />}
+              {validation?.valid ? <span className="automation-editor-validation-state is-ready"><Check size={10} /> Ready</span>
+                : validation && <span className="automation-editor-validation-menu" ref={validationMenuRef}>
+                  <button type="button" className="automation-editor-validation-state is-attention" aria-haspopup="dialog" aria-expanded={validationOpen} onClick={() => setValidationOpen((open) => !open)}>
+                    <CircleAlert size={10} /> Needs attention <b>{validation.issues.length}</b>
+                  </button>
+                  {validationOpen && <span className="automation-editor-validation-popover" role="dialog" aria-label="Workflow issues">
+                    <span className="automation-editor-validation-head"><strong>Workflow can&apos;t run yet</strong><small>Open an issue to go to the affected step.</small></span>
+                    <span className="automation-editor-validation-list">
+                      {validation.issues.slice(0, 6).map((issue, index) => <button type="button" key={`${issue.code}:${issue.nodeId || issue.edgeId || index}`} onClick={() => focusValidationIssue(issue)}>
+                        <CircleAlert size={12} /><span><b>{issue.nodeId ? "Step needs attention" : issue.edgeId ? "Connection needs attention" : "Workflow needs attention"}</b><small>{issue.message}</small></span>
+                      </button>)}
+                    </span>
+                    {validation.issues.length > 6 && <small className="automation-editor-validation-more">+{validation.issues.length - 6} more issues</small>}
+                  </span>}
+                </span>}
+            </div>
+          </div>
         </div>
         <div className="automation-editor-actions">
           <div className="automation-workflow-switcher">
@@ -1738,8 +1863,14 @@ export function AutomationWorkflowEditorOverlay({ workspaceId, projectId, workfl
             />
           </div>
           <div className="automation-manage-menu" ref={manageMenuRef}>
+            <input ref={importInputRef} type="file" accept="application/json,.json,.scenelith-automation.json" hidden onChange={(event) => void importWorkflow(event.target.files?.[0])} />
             <button type="button" className={manageOpen ? "is-open" : ""} aria-haspopup="menu" aria-expanded={manageOpen} onClick={() => setManageOpen((open) => !open)}>Manage <ChevronDown size={13} /></button>
             {manageOpen && <div role="menu">
+              {capabilities.edit && <>
+                <button type="button" role="menuitem" disabled={saving} onClick={() => { setManageOpen(false); void createWorkflow(); }}><Plus size={14} /><span><b>New workflow</b><small>Start with a clean automation canvas</small></span></button>
+                <button type="button" role="menuitem" disabled={saving} onClick={() => { setManageOpen(false); importInputRef.current?.click(); }}><ArrowDownToLine size={14} /><span><b>Import workflow</b><small>Open a Scenelith automation JSON file</small></span></button>
+                <span className="automation-manage-separator" role="separator" />
+              </>}
               {validation && !validation.valid && <button type="button" role="menuitem" onClick={() => {
                 setManageOpen(false);
                 const nextValidation = validateAutomationWorkflowGraph(graph);
@@ -1886,7 +2017,7 @@ export function AutomationWorkflowEditorOverlay({ workspaceId, projectId, workfl
                   <label><span>Saved credential</span><InspectorSelect label="Saved credential" disabled={Boolean(readOnly || saving)} value={selectedDeploymentBinding?.credentialId || ""} options={[{ value: "", label: "Choose saved credential…" }, ...bindingOptions.credentials.map((credential) => ({ value: credential.id, label: `${credential.name} · ${credential.kind} · ${credential.fingerprint}` }))]} onChange={(value) => void saveDeploymentBinding("credential", selectedSlotKey, value)} /></label>
                   {!readOnly && <details><summary>Create a new credential</summary><div><label><span>Name</span><input value={newCredentialName} onChange={(event) => setNewCredentialName(event.target.value)} placeholder="Production API key…" /></label>{selectedCredentialKind === "basic" && <label><span>Username</span><input value={newCredentialUsername} onChange={(event) => setNewCredentialUsername(event.target.value)} placeholder="Username…" autoComplete="username" /></label>}{selectedCredentialKind === "header" && <label><span>Header name</span><input value={newCredentialHeaderName} onChange={(event) => setNewCredentialHeaderName(event.target.value)} placeholder="X-API-Key…" /></label>}<label><span>{selectedCredentialKind === "basic" ? "Password" : "Secret value"}</span><input type="password" value={newCredentialValue} onChange={(event) => setNewCredentialValue(event.target.value)} placeholder={selectedCredentialKind === "basic" ? "Password…" : "Secret value…"} autoComplete="new-password" /></label><button type="button" disabled={saving || !credentialFormReady} onClick={() => void createAndBindCredential(selectedSlotKey, selectedCredentialKind)}>Save & connect</button></div></details>}
                   </> : <i>Your workspace role cannot manage credentials.</i> : <InspectorSelect label="Child workflow" disabled={Boolean(readOnly || saving)} value={selectedDeploymentBinding?.targetWorkflowId || ""} options={[{ value: "", label: "Choose workflow" }, ...bindingOptions.workflows.filter((workflow) => workflow.id !== detail?.workflow.id && workflow.publishedVersionId).map((workflow) => ({ value: workflow.id, label: workflow.name }))]} onChange={(value) => void saveDeploymentBinding("subworkflow", selectedSlotKey, value)} />}</section>}
-                  {!readOnly && <div className="automation-inspector-danger"><button type="button" onClick={removeSelectedNode}><Trash2 size={13} /> Remove step</button></div>}
+                  {!readOnly && <div className="automation-inspector-danger"><button type="button" onClick={(event) => { event.preventDefault(); event.stopPropagation(); removeSelectedNode(selectedNode.id); }}><Trash2 size={13} /> Remove step</button></div>}
                 </> : <section className="automation-node-execution">
                   <div className="automation-inspector-section-label"><b>Step execution</b><span>{execution?.runId ? `Run ${execution.runId.slice(0, 8)}` : "Run the workflow to capture exact data"}</span></div>
                   {!execution?.runId ? <div className="automation-execution-empty"><Activity size={18} /><b>No execution selected</b><p>After a run starts, this panel shows every attempt, the exact captured input, output and any error returned by this step.</p></div>
@@ -1913,4 +2044,4 @@ export function AutomationWorkflowEditorOverlay({ workspaceId, projectId, workfl
       onClose={() => setRunHistoryOpen(false)}
     />}
   </div>;
-}
+});

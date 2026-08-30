@@ -531,6 +531,12 @@ export function automationRunInputFields(graph: AutomationWorkflowGraph): Automa
     for (const [bindingId, binding] of Object.entries(node.bindings)) {
       if (binding.mode !== "ask-on-run") continue;
       const field = definition.fields.find((item) => item.id === bindingId);
+      const visibilityFieldId = field?.visibleWhen?.fieldId;
+      const visibilityField = visibilityFieldId ? definition.fields.find((item) => item.id === visibilityFieldId) : undefined;
+      const visibilityBinding = visibilityFieldId ? node.bindings[visibilityFieldId] : undefined;
+      const visibilityValue = visibilityBinding?.mode === "fixed" && visibilityBinding.value !== undefined
+        ? visibilityBinding.value
+        : visibilityFieldId ? node.config[visibilityFieldId] ?? visibilityField?.defaultValue : undefined;
       fields.push({
         key: `${node.id}.${bindingId}`,
         nodeId: node.id,
@@ -541,6 +547,12 @@ export function automationRunInputFields(graph: AutomationWorkflowGraph): Automa
         fieldKind: field?.kind || "text",
         modelCapability: field?.modelCapability,
         options: field?.options,
+        visibleWhen: field?.visibleWhen ? {
+          key: `${node.id}.${field.visibleWhen.fieldId}`,
+          values: field.visibleWhen.values,
+          value: visibilityValue,
+        } : undefined,
+        requiredWhenVisible: field?.requiredWhenVisible,
         min: field?.min,
         max: field?.max,
         selectionLimit: field?.kind === "references"
@@ -566,9 +578,11 @@ export function validateAutomationRunInputs(graph: AutomationWorkflowGraph, valu
     if (!byKey.has(key)) issues.push(issue("UNEXPECTED_RUN_INPUT", `Run input “${key}” is not used by this workflow.`));
   }
   for (const field of fields) {
+    const visible = !field.visibleWhen || field.visibleWhen.values.some((value) => Object.is(value, values[field.visibleWhen!.key] ?? field.visibleWhen!.value));
+    if (!visible) continue;
     const value = values[field.key];
     if (emptySetting(value)) {
-      if (field.required) issues.push(issue("MISSING_RUN_INPUT", `Complete ${field.label}.`, { nodeId: field.nodeId }));
+      if (field.required || field.requiredWhenVisible) issues.push(issue("MISSING_RUN_INPUT", `Complete ${field.label}.`, { nodeId: field.nodeId }));
       continue;
     }
     if (field.valueType === "boolean" && typeof value !== "boolean") issues.push(issue("INVALID_RUN_INPUT", `${field.label} must be enabled or disabled.`, { nodeId: field.nodeId }));

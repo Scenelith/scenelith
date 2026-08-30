@@ -296,24 +296,24 @@ const rawDefinitions: Array<Omit<AutomationNodeDefinition, "help">> = [
   {
     type: "input.tiktok-source", version: 1, title: "TikTok source", description: "Brings the chosen TikTok slideshow and its caption into the workflow.", example: "Choose a viral slideshow. Later steps can study its hook, wording and every source image.", category: "input", icon: "source", accent: "amber",
     inputs: [{ id: "run", label: "Run", type: "run-context", required: true }], outputs: [{ id: "source", label: "Source", type: "tiktok-source" }], fields: [
-      { id: "source", label: "Source slideshow", description: "Choose it now, or ask for a different slideshow whenever this workflow runs.", kind: "select", runtimeBindable: true, runtimeValueType: "tiktok-source", required: true },
+      { id: "source", label: "Source slideshow", description: "Choose it now, or ask for a different slideshow whenever this workflow runs.", kind: "select", runtimeBindable: true, defaultRunInput: true, runtimeValueType: "tiktok-source", required: true },
       { id: "caption", label: "Use different caption", description: "Optional. Leave empty to use the original TikTok caption.", placeholder: "Write a replacement caption only when you need one…", kind: "textarea", runtimeBindable: true, runtimeValueType: "string" },
     ],
   },
   {
     type: "input.tiktok-source", version: 2, title: "TikTok source", description: "Brings the chosen TikTok slideshow and an explicitly selected caption mode into the workflow.", example: "Choose a viral slideshow, then preserve, replace or intentionally clear its caption.", category: "input", icon: "source", accent: "amber",
     inputs: [{ id: "run", label: "Run", type: "run-context", required: true }], outputs: [{ id: "source", label: "Source", type: "tiktok-source" }], fields: [
-      { id: "source", label: "Source slideshow", description: "Choose it now, or ask for a different slideshow whenever this workflow runs.", kind: "select", runtimeBindable: true, runtimeValueType: "tiktok-source", required: true },
+      { id: "source", label: "Source slideshow", description: "Choose it now, or ask for a different slideshow whenever this workflow runs.", kind: "select", runtimeBindable: true, defaultRunInput: true, runtimeValueType: "tiktok-source", required: true },
       { id: "captionMode", label: "Caption", description: "Choose explicitly whether to preserve, replace or remove the original caption.", kind: "select", defaultValue: "original", runtimeBindable: true, runtimeValueType: "string", options: [
         { value: "original", label: "Use original caption" }, { value: "replacement", label: "Use replacement caption" }, { value: "empty", label: "Use no caption" },
       ] },
-      { id: "caption", label: "Replacement caption", description: "Used only when Caption is set to Use replacement caption.", placeholder: "Write the replacement caption…", kind: "textarea", defaultValue: "", runtimeBindable: true, runtimeValueType: "string", visibleWhen: { fieldId: "captionMode", values: ["replacement"] } },
+      { id: "caption", label: "Replacement caption", description: "Used only when Caption is set to Use replacement caption.", placeholder: "Write the replacement caption…", kind: "textarea", defaultValue: "", runtimeBindable: true, runtimeValueType: "string", visibleWhen: { fieldId: "captionMode", values: ["replacement"] }, requiredWhenVisible: true },
     ],
   },
   {
     type: "input.identity", version: 1, title: "Identity", description: "Gives later steps the saved person or character they should keep consistent.", example: "If you added a person or character in the Identities section, choose them here so later steps can use the right visual references.", category: "input", icon: "identity", accent: "blue",
     inputs: [{ id: "run", label: "Run", type: "run-context", required: true }], outputs: [{ id: "identity", label: "Identity", type: "identity" }], fields: [
-      { id: "identity", label: "Person or character", description: "If you have added a person or character in the Identities section, choose them here or ask for one before every run.", kind: "select", runtimeBindable: true, runtimeValueType: "identity" },
+      { id: "identity", label: "Person or character", description: "If you have added a person or character in the Identities section, choose them here or ask for one before every run.", kind: "select", runtimeBindable: true, defaultRunInput: true, runtimeValueType: "identity" },
       { id: "referenceGroup", label: "Which references to use", description: "All available passes every saved reference. Choose one group only when Before, After or Reference has a specific meaning.", kind: "select", defaultValue: "auto", options: [
         { value: "auto", label: "All available" }, { value: "reference", label: "Reference only" }, { value: "before", label: "Before only" }, { value: "after", label: "After only" },
       ] },
@@ -323,7 +323,7 @@ const rawDefinitions: Array<Omit<AutomationNodeDefinition, "help">> = [
   {
     type: "input.identity", version: 2, title: "Identity", description: "Gives later steps the selected saved person or character and requires usable images when one is chosen.", example: "Choose a person or character when this run must preserve them; leave the choice empty only when the workflow may run without a person.", category: "input", icon: "identity", accent: "blue",
     inputs: [{ id: "run", label: "Run", type: "run-context", required: true }], outputs: [{ id: "identity", label: "Identity", type: "identity" }], fields: [
-      { id: "identity", label: "Person or character", description: "If you have added a person or character in the Identities section, choose them here or ask for one before every run.", kind: "select", runtimeBindable: true, runtimeValueType: "identity" },
+      { id: "identity", label: "Person or character", description: "If you have added a person or character in the Identities section, choose them here or ask for one before every run.", kind: "select", runtimeBindable: true, defaultRunInput: true, runtimeValueType: "identity" },
       { id: "referenceGroup", label: "Which references to use", description: "All available passes every saved reference. A chosen group must contain at least one usable image.", kind: "select", defaultValue: "auto", options: [
         { value: "auto", label: "All available" }, { value: "reference", label: "Reference only" }, { value: "before", label: "Before only" }, { value: "after", label: "After only" },
       ] },
@@ -335,7 +335,7 @@ const rawDefinitions: Array<Omit<AutomationNodeDefinition, "help">> = [
     inputs: [{ id: "run", label: "Run", type: "run-context", required: true }],
     outputs: [{ id: "references", label: "References", type: "visual-references" }],
     fields: [
-      { id: "references", label: "Reference images", description: "Choose images from this canvas or the workspace Library, or ask for them before every run.", kind: "references", runtimeBindable: true, runtimeValueType: "visual-references", defaultValue: [], max: 32 },
+      { id: "references", label: "Reference images", description: "Choose images from this canvas or the workspace Library, or ask for them before every run.", kind: "references", runtimeBindable: true, defaultRunInput: true, runtimeValueType: "visual-references", defaultValue: [], max: 32 },
       { id: "maxItems", label: "Maximum references per run", description: "Limits how many images this step may resolve and pass to later steps.", kind: "number", defaultValue: 8, min: 1, max: 32 },
       { id: "optional", label: "Can run without references", description: "Keep enabled when references improve the result but are not required for the workflow to continue.", kind: "boolean", defaultValue: true },
     ],
@@ -343,18 +343,18 @@ const rawDefinitions: Array<Omit<AutomationNodeDefinition, "help">> = [
   {
     type: "input.creative-settings", version: 1, title: "TikTok recreation choices", description: "Collects the six explicit decisions used by the Recreate TikTok workflow.", example: "Keep the original idea, replace the person and location, then rewrite the on-screen text for your campaign.", category: "input", icon: "choices", accent: "neutral",
     inputs: [{ id: "run", label: "Run", type: "run-context", required: true }], outputs: [{ id: "settings", label: "Settings", type: "creative-settings" }], fields: [
-      { id: "mode", label: "What should change", description: "Adapt concept rebuilds the idea for a new campaign. Cast identity keeps the idea and mainly replaces the person.", kind: "select", defaultValue: "concept", runtimeBindable: true, runtimeValueType: "string", options: [{ value: "concept", label: "Rebuild for a new concept" }, { value: "identity", label: "Keep concept, change the person" }] },
-      { id: "newOutfit", label: "Allow new clothes or subjects", description: "Disable this when clothing and visible objects must stay close to the source.", kind: "boolean", defaultValue: true, runtimeBindable: true, runtimeValueType: "boolean" },
-      { id: "newLocation", label: "Allow a new location", description: "Disable this when the setting and background must stay close to the source.", kind: "boolean", defaultValue: true, runtimeBindable: true, runtimeValueType: "boolean" },
-      { id: "textStrategy", label: "What to do with on-screen text", description: "Keep the original wording, rewrite it for the new concept, or remove it.", kind: "select", defaultValue: "rewrite", runtimeBindable: true, runtimeValueType: "string", options: [{ value: "keep", label: "Keep the original text" }, { value: "rewrite", label: "Rewrite for the new version" }, { value: "remove", label: "Remove on-screen text" }] },
-      { id: "creativeBrief", label: "Extra creative direction", description: "Optional. Add the audience, offer, tone or anything the new version must include.", placeholder: "Example: Make it feel like a casual home transformation for women 25–35…", kind: "textarea", defaultValue: "", runtimeBindable: true, runtimeValueType: "string" },
-      { id: "creativeDirectionPolicy", label: "How comments affect the choices", description: "Choose whether a verified written request proposes a visible change, must already agree, or may update the choice automatically.", kind: "select", defaultValue: "propose", runtimeBindable: true, runtimeValueType: "string", options: [{ value: "propose", label: "Show changes for confirmation" }, { value: "strict", label: "Comments must agree with choices" }, { value: "auto-explicit", label: "Apply verified explicit changes" }] },
+      { id: "mode", label: "What should change", description: "Adapt concept rebuilds the idea for a new campaign. Cast identity keeps the idea and mainly replaces the person.", kind: "select", defaultValue: "concept", runtimeBindable: true, defaultRunInput: true, runtimeValueType: "string", options: [{ value: "concept", label: "Rebuild for a new concept" }, { value: "identity", label: "Keep concept, change the person" }] },
+      { id: "newOutfit", label: "Allow new clothes or subjects", description: "Disable this when clothing and visible objects must stay close to the source.", kind: "boolean", defaultValue: true, runtimeBindable: true, defaultRunInput: true, runtimeValueType: "boolean" },
+      { id: "newLocation", label: "Allow a new location", description: "Disable this when the setting and background must stay close to the source.", kind: "boolean", defaultValue: true, runtimeBindable: true, defaultRunInput: true, runtimeValueType: "boolean" },
+      { id: "textStrategy", label: "What to do with on-screen text", description: "Keep the original wording, rewrite it for the new concept, or remove it.", kind: "select", defaultValue: "rewrite", runtimeBindable: true, defaultRunInput: true, runtimeValueType: "string", options: [{ value: "keep", label: "Keep the original text" }, { value: "rewrite", label: "Rewrite for the new version" }, { value: "remove", label: "Remove on-screen text" }] },
+      { id: "creativeBrief", label: "Extra creative direction", description: "Optional. Add the audience, offer, tone or anything the new version must include.", placeholder: "Example: Make it feel like a casual home transformation for women 25–35…", kind: "textarea", defaultValue: "", runtimeBindable: true, defaultRunInput: true, runtimeValueType: "string" },
+      { id: "creativeDirectionPolicy", label: "How comments affect the choices", description: "Choose whether a verified written request proposes a visible change, must already agree, or may update the choice automatically.", kind: "select", defaultValue: "propose", runtimeBindable: true, defaultRunInput: true, runtimeValueType: "string", options: [{ value: "propose", label: "Show changes for confirmation" }, { value: "strict", label: "Comments must agree with choices" }, { value: "auto-explicit", label: "Apply verified explicit changes" }] },
     ],
   },
   {
     type: "input.workflow-data", version: 1, title: "Input from another workflow", description: "Receives information from a trigger or another workflow.", example: "A scheduled workflow can pass a campaign brief into this workflow without asking a person to type it again.", category: "input", icon: "inbox", accent: "amber",
     inputs: [{ id: "run", label: "Run", type: "run-context", required: true }], outputs: [{ id: "data", label: "Received information", type: "data" }], fields: [
-      { id: "value", label: "Manual value", description: "Used only for a manual run. Automatic triggers and parent workflows supply their own payload instead. Choose Ask on run when a person should enter it.", kind: "json", runtimeBindable: true, runtimeValueType: "json", defaultValue: {} },
+      { id: "value", label: "Manual value", description: "Used only for a manual run. Automatic triggers and parent workflows supply their own payload instead. Choose Ask on run when a person should enter it.", kind: "json", runtimeBindable: true, defaultRunInput: true, runtimeValueType: "json", defaultValue: {} },
       { id: "payloadPath", label: "Read one field from the payload", description: "Optional. Example: campaign.brief returns only that nested value. Leave empty to receive the whole payload.", placeholder: "campaign.brief", kind: "text", defaultValue: "", advanced: true },
     ],
   },
