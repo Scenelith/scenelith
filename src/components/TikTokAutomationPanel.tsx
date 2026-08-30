@@ -120,12 +120,7 @@ export function TikTokAutomationPanel({
   const setWorkflowIdRef = useRef(setWorkflowId);
   const busy = status === "planning" || status === "building" || status === "generating";
   const selectedWorkflow = workflows.find((workflow) => workflow.id === workflowId);
-  const visibleWorkflows = useMemo(() => {
-    const customWorkflows = workflows.filter((workflow) => workflow.status !== "system" && workflow.status !== "archived");
-    return workflows.filter((workflow) => workflow.status !== "archived" && (
-      workflow.status !== "system" || workflow.id === workflowId || customWorkflows.length === 0
-    ));
-  }, [workflowId, workflows]);
+  const visibleWorkflows = useMemo(() => workflows.filter((workflow) => workflow.status !== "archived"), [workflows]);
   const selectedAlertCount = openTriggerAlerts[workflowId] || 0;
   const runtimeValues = useMemo(() => runtimeValuesByWorkflow[workflowId] || {}, [runtimeValuesByWorkflow, workflowId]);
   const runInputVisible = useCallback((field: AutomationRunInputField) => !field.visibleWhen || field.visibleWhen.values.some((value) => Object.is(value, runtimeValues[field.visibleWhen!.key] ?? field.visibleWhen!.value)), [runtimeValues]);

@@ -1458,7 +1458,21 @@ body,
 .automation-manage-menu > div > button > span { min-width: 0; display: grid; gap: 3px; }
 .automation-manage-menu > div b { color: var(--color-text-soft); font-size: 10px; }
 .automation-manage-menu > div small { color: var(--color-text-dim); font-size: 8px; font-weight: 500; }
+.automation-manage-menu > div > button.is-danger { color:color-mix(in srgb,var(--color-rose) 78%,var(--color-text-dim)); }
+.automation-manage-menu > div > button.is-danger:not(:disabled):hover { background:color-mix(in srgb,var(--color-rose) 8%,var(--color-ink-5)); color:var(--color-rose); }
+.automation-manage-menu > div > button.is-danger b { color:inherit; }
 .automation-manage-separator { display:block; height:1px; margin:5px 7px; background:var(--color-border-faint); }
+.automation-manage-delete-confirm { display:grid; grid-template-columns:28px minmax(0,1fr); gap:8px; padding:9px; }
+.automation-manage-delete-confirm > span:nth-child(2) { min-width:0; display:grid; gap:5px; }
+.automation-manage-delete-confirm > span:nth-child(2) b { color:var(--color-text); font-size:10px; }
+.automation-manage-delete-confirm > span:nth-child(2) small { color:var(--color-text-muted); font-size:8px; line-height:1.4; }
+.automation-manage-delete-icon { width:28px; height:28px; display:grid; place-items:center; border-radius:7px; background:color-mix(in srgb,var(--color-rose) 10%,transparent); color:var(--color-rose); }
+.automation-manage-delete-confirm > div { grid-column:1/-1; display:grid; grid-template-columns:1fr 1.25fr; gap:6px; margin-top:3px; }
+.automation-manage-delete-confirm > div > button { min-height:32px; border:1px solid var(--color-border-faint); border-radius:7px; background:transparent; color:var(--color-text-muted); font-size:8px; font-weight:700; cursor:pointer; }
+.automation-manage-delete-confirm > div > button:hover { border-color:var(--color-border); background:var(--color-ink-5); color:var(--color-text); }
+.automation-manage-delete-confirm > div > button.is-danger { border-color:color-mix(in srgb,var(--color-rose) 34%,transparent); background:color-mix(in srgb,var(--color-rose) 9%,var(--color-ink-4)); color:var(--color-rose); }
+.automation-manage-delete-confirm > div > button.is-danger:hover { border-color:color-mix(in srgb,var(--color-rose) 54%,transparent); background:color-mix(in srgb,var(--color-rose) 14%,var(--color-ink-4)); }
+.automation-manage-delete-confirm > div > button:disabled { opacity:.48; cursor:default; }
 .automation-editor-heading { position:relative; min-width:180px; display:grid; gap:3px; }
 .automation-editor-heading > small { color: var(--color-mint); font: 720 7px/1 ui-monospace, monospace; letter-spacing: .12em; }
 .automation-editor-name-row { min-width: 0; display: flex; align-items: center; gap: 10px; }
@@ -3383,6 +3397,12 @@ button.automation-editor-validation-state.is-attention[aria-expanded="true"] { b
 .automation-reference-trigger b { overflow:hidden; color:var(--color-text-soft); font-size:10px; font-weight:720; text-overflow:ellipsis; white-space:nowrap; }
 .automation-reference-trigger small { overflow:hidden; color:var(--color-text-dim); font-size:8px; text-overflow:ellipsis; white-space:nowrap; }
 .automation-reference-trigger em { color:var(--color-mint); font:700 8px/1 ui-monospace,monospace; font-style:normal; }
+.automation-reference-field.is-run-panel .automation-reference-trigger { min-height:42px; display:flex; justify-content:space-between; gap:10px; padding:0 12px; border-color:var(--color-border-faint); border-radius:10px; background:var(--color-ink-4); }
+.automation-reference-field.is-run-panel .automation-reference-trigger:hover:not(:disabled) { border-color:var(--color-border); background:var(--color-ink-3); }
+.automation-reference-field.is-run-panel .automation-reference-trigger > span { display:block; min-width:0; }
+.automation-reference-field.is-run-panel .automation-reference-trigger b { color:var(--color-text-soft); font-size:11px; font-weight:500; }
+.automation-reference-field.is-run-panel .automation-reference-trigger > .automation-reference-chevron { width:16px; height:16px; flex:0 0 auto; padding:0; border-radius:0; background:transparent; color:var(--color-text-dim); transition:transform .14s ease,color .14s ease; }
+.automation-reference-field.is-run-panel .automation-reference-trigger[aria-expanded="true"] > .automation-reference-chevron { color:var(--color-mint); transform:rotate(180deg); }
 .automation-reference-field.is-node .automation-reference-trigger { min-height:38px; grid-template-columns:24px minmax(0,1fr) auto; gap:7px; padding:5px 7px; border-color:var(--color-border-faint); border-radius:8px; background:color-mix(in srgb,var(--color-mint) 3%,var(--color-ink-2)); }
 .automation-reference-field.is-node .automation-reference-trigger > svg { width:23px; height:23px; padding:5px; border-radius:7px; }
 .automation-reference-field.is-node .automation-reference-trigger b { font-size:8.5px; }

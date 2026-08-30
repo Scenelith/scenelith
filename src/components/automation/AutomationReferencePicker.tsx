@@ -2,7 +2,7 @@
 
 /* eslint-disable @next/next/no-img-element */
 
-import { Check, Images, Library, LoaderCircle, Search, UserRound, X } from "lucide-react";
+import { Check, ChevronDown, Images, Library, LoaderCircle, Search, UserRound, X } from "lucide-react";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { ReferenceMenuShell } from "@/components/ReferenceMenuShell";
@@ -205,7 +205,7 @@ export function AutomationReferencePicker({
   </>;
   const footer = <footer className="automation-reference-footer"><span>{error || `${Math.max(0, limit - selectedIds.length)} slots available · selections apply immediately`}</span>{selectedIds.length > 0 && <button type="button" className="is-clear" onClick={() => { onChange([]); setError(""); }}>Clear</button>}</footer>;
 
-  return <div ref={fieldRef} className={`automation-reference-field ${compact ? "is-node" : ""}`} onPointerDown={(event) => event.stopPropagation()} onClick={(event) => event.stopPropagation()} onWheel={(event) => event.stopPropagation()}>
+  return <div ref={fieldRef} className={`automation-reference-field is-${placement}`} onPointerDown={(event) => event.stopPropagation()} onClick={(event) => event.stopPropagation()} onWheel={(event) => event.stopPropagation()}>
     <button
       type="button"
       className="automation-reference-trigger"
@@ -214,9 +214,14 @@ export function AutomationReferencePicker({
       onPointerDown={compact ? (event) => { event.preventDefault(); event.stopPropagation(); togglePicker(); } : undefined}
       onClick={(event) => { event.preventDefault(); event.stopPropagation(); if (!compact || event.detail === 0) togglePicker(); }}
     >
-      <Images size={15} />
-      <span><b>{selectedIds.length ? `${selectedIds.length} reference${selectedIds.length === 1 ? "" : "s"}` : compact ? "Add references" : "Choose reference images"}</b><small>{compact ? "Canvas · Library · Identities" : "From the canvas, Library or Identities"}</small></span>
-      <em>{selectedIds.length}/{limit}</em>
+      {placement === "run-panel" ? <>
+        <span><b>{selectedIds.length ? `${selectedIds.length} reference image${selectedIds.length === 1 ? "" : "s"}` : "No reference images"}</b></span>
+        <ChevronDown className="automation-reference-chevron" size={16} />
+      </> : <>
+        <Images size={15} />
+        <span><b>{selectedIds.length ? `${selectedIds.length} reference${selectedIds.length === 1 ? "" : "s"}` : compact ? "Add references" : "Choose reference images"}</b><small>{compact ? "Canvas · Library · Identities" : "From the canvas, Library or Identities"}</small></span>
+        <em>{selectedIds.length}/{limit}</em>
+      </>}
     </button>
     {open && compact && <ReferenceMenuShell
       attachedLabel={`${selectedIds.length} ATTACHED`}

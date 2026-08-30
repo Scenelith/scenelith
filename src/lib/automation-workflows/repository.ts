@@ -306,6 +306,32 @@ export async function listAutomationWorkflows(userId: string, projectId: string)
   return rows.map(workflowRecord);
 }
 
+export async function archiveAutomationWorkflow(userId: string, workflowId: string) {
+  const row = await workflowRowById(workflowId);
+  if (!row || !await userCanAccessWorkspace(userId, row.workspace_id)) return null;
+  if (row.project_id && !await userCanAccessProject(userId, row.project_id)) return null;
+  await requireAutomationPermission(userId, row.workspace_id, "automation.edit");
+  if (row.status === "system" || row.system_key) return { protected: true as const, workflow: workflowRecord(row), disconnectedWorkflowIds: [] as string[] };
+  if (row.status === "archived") return null;
+  return await db.transaction(async () => {
+    await db.prepare("SELECT pg_advisory_xact_lock(hashtextextended(?, 0))").get(`automation-workflow:${workflowId}`);
+    const current = await db.prepare("SELECT * FROM automation_workflows WHERE id = ? FOR UPDATE").get(workflowId) as WorkflowRow | undefined;
+    if (!current || current.status === "archived") return null;
+    if (current.status === "system" || current.system_key) return { protected: true as const, workflow: workflowRecord(current), disconnectedWorkflowIds: [] as string[] };
+    const now = new Date().toISOString();
+    const parents = await db.prepare("SELECT DISTINCT workflow_id FROM automation_workflow_bindings WHERE target_workflow_id = ?").all(workflowId) as Array<{ workflow_id: string }>;
+    await db.prepare("DELETE FROM automation_workflow_bindings WHERE target_workflow_id = ?").run(workflowId);
+    await db.prepare(`UPDATE automation_workflow_triggers SET status = 'paused', active_version_id = NULL,
+      next_fire_at = NULL, locked_at = NULL, worker_id = NULL, updated_at = ? WHERE workflow_id = ?`).run(now, workflowId);
+    await db.prepare(`UPDATE automation_trigger_deliveries SET status = 'cancelled', locked_at = NULL, worker_id = NULL,
+      error_code = 'WORKFLOW_DELETED', error = 'Workflow was deleted before delivery', updated_at = ?
+      WHERE workflow_id = ? AND status IN ('queued', 'retry_wait')`).run(now, workflowId);
+    await db.prepare("UPDATE automation_workflows SET status = 'archived', updated_at = ? WHERE id = ?").run(now, workflowId);
+    const archived = await workflowRowById(workflowId);
+    return archived ? { protected: false as const, workflow: workflowRecord(archived), disconnectedWorkflowIds: parents.map((parent) => parent.workflow_id) } : null;
+  })();
+}
+
 export async function getAutomationWorkflow(userId: string, workflowId: string): Promise<AutomationWorkflowDetail | null> {
   const row = await workflowRowById(workflowId);
   if (!row || !await userCanAccessWorkspace(userId, row.workspace_id)) return null;

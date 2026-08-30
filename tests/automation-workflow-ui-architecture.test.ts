@@ -102,6 +102,8 @@ test("visual references are configured from canvas, Library or Identities wherev
   assert.doesNotMatch(referencePickerSource, /storagePath|storage_path|apiKey|secret/i);
   assert.match(panelSource, /<AutomationReferencePicker/);
   assert.match(panelSource, /placement="run-panel"/);
+  assert.match(referencePickerSource, /placement === "run-panel"/);
+  assert.match(themeSource, /\.automation-reference-field\.is-run-panel \.automation-reference-trigger/);
   assert.doesNotMatch(panelSource, /field\.valueType !== "visual-references"/);
   assert.doesNotMatch(panelSource, /nodeManagedInputKeys/);
   assert.match(workflowEditorSource, /<AutomationReferencePicker/);
@@ -392,7 +394,8 @@ test("the default workflow teaches first-time users with a non-executable Markdo
 test("the editor keeps one clean workflow choice without lifecycle badges", () => {
   assert.match(workflowEditorSource, /InspectorSelect/);
   assert.match(workflowEditorSource, /Switch workflow/);
-  assert.match(workflowEditorSource, /customWorkflows\.length === 0/);
+  assert.doesNotMatch(workflowEditorSource, /customWorkflows\.length === 0/);
+  assert.match(workflowEditorSource, /filter\(\(workflow\) => workflow\.status !== "archived"\)/);
   assert.match(workflowEditorSource, /description: "Default workflow"/);
   assert.match(workflowEditorSource, /showSelectedIcon=\{false\}/);
   assert.match(workflowEditorSource, /variant="workflow"/);
@@ -433,6 +436,11 @@ test("automation toolbar keeps workflow actions in a clear Manage menu without s
   assert.match(workflowEditorSource, /<b>Export JSON<\/b>/);
   assert.match(workflowEditorSource, /<b>New workflow<\/b>/);
   assert.match(workflowEditorSource, /<b>Import workflow<\/b>/);
+  assert.match(workflowEditorSource, /Delete workflow/);
+  assert.match(workflowEditorSource, /deleteConfirmOpen/);
+  assert.match(workflowEditorSource, /The default workflow is protected/);
+  assert.match(workflowDetailRouteSource, /export async function DELETE/);
+  assert.match(workflowDetailRouteSource, /SYSTEM_WORKFLOW_PROTECTED/);
   assert.match(workflowEditorSource, /validation && !validation\.valid/);
   assert.match(workflowEditorSource, /<b>Review issues<\/b>/);
   assert.doesNotMatch(workflowEditorSource, /<b>Versions<\/b>|<b>Automatic starts<\/b>|<b>Test a step<\/b>|<b>Workflow settings<\/b>/);
