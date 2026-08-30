@@ -410,22 +410,26 @@ test("workflow editing auto-saves while the live version changes only through an
   assert.match(canvasSource, /setAutomationEditorWorkflowId\(\(current\) => current === workflowId \? null : workflowId\)/);
 });
 
-test("automation toolbar and management UI use plain labels and explain non-obvious sections", () => {
+test("automation toolbar keeps management focused on run history", () => {
   assert.match(workflowEditorSource, /className=\{`automation-validation-pill/);
   assert.doesNotMatch(workflowEditorSource, /automation-validation-pill[\s\S]{0,500}<Check/);
   assert.match(workflowEditorSource, /aria-expanded=\{manageOpen\}/);
   assert.match(workflowEditorSource, />Manage<\/button>/);
-  assert.match(workflowOperationsSource, /Automatic starts/);
-  assert.match(workflowOperationsSource, /Test a step/);
+  assert.match(workflowEditorSource, /<b>Run history<\/b><small>See routes, failures and usage<\/small>/);
+  assert.match(workflowEditorSource, /<b>Export JSON<\/b>/);
+  assert.doesNotMatch(workflowEditorSource, /<b>Versions<\/b>|<b>Automatic starts<\/b>|<b>Test a step<\/b>|<b>Workflow settings<\/b>/);
+  assert.doesNotMatch(workflowOperationsSource, /Automatic starts|Test a step|Save fixture|Restore as draft/);
   assert.match(workflowOperationsSource, /Opening the latest run/);
-  assert.match(workflowOperationsSource, /latestResponse = await fetch\(`\/api\/automation-runs\/\$\{encodeURIComponent\(runList\[0\]\.id\)\}/);
+  assert.match(workflowOperationsSource, /inspectRun\(runList\[0\]\.id, true\)/);
+  assert.match(workflowOperationsSource, /workflowNodeNames\.get\(nodeRun\.nodeId\)/);
 });
 
-test("automation model fields reuse the same InspectorSelect as the main Canvas inspector", () => {
+test("automation dropdown fields reuse the unclipped InspectorSelect", () => {
   assert.match(canvasSource, /<InspectorSelect label="Output type and model"/);
   assert.match(workflowEditorSource, /field\.kind === "model"[^?]*\? <InspectorSelect/s);
+  assert.match(workflowEditorSource, /field\.kind === "select"[^?]*\? <InspectorSelect/s);
   assert.match(workflowEditorSource, /is-system-model[\s\S]*<InspectorSelect label=\{field\.label\}/);
-  assert.doesNotMatch(workflowEditorSource, /is-system-model[\s\S]{0,500}<select disabled=\{saving\}/);
+  assert.doesNotMatch(workflowEditorSource, /<select|<option/);
   assert.match(workflowEditorSource, /Saved model override needs attention/);
   assert.match(workflowEditorSource, /Clear override/);
 });
@@ -441,4 +445,6 @@ test("workflow dropdown closes outside even when the editor stops pointer bubbli
   assert.match(workflowEditorSource, /onPointerDown=\{\(event\) => event\.stopPropagation\(\)\}/);
   assert.match(inspectorSelectSource, /addEventListener\("pointerdown", closeOutside, true\)/);
   assert.match(inspectorSelectSource, /removeEventListener\("pointerdown", closeOutside, true\)/);
+  assert.match(inspectorSelectSource, /createPortal\(/);
+  assert.match(inspectorSelectSource, /menuRef\.current\?\.contains\(target\)/);
 });
