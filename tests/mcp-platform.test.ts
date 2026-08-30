@@ -159,6 +159,53 @@ test("OAuth authorization uses PKCE, rotates refresh tokens, and supports revoca
   assert.notEqual(stored.refresh_token_hash, refreshed.refresh_token);
 });
 
+test("OAuth approval recovers when a second submit replaces the first callback navigation", async () => {
+  const client = await registeredClient();
+  const verifier = "r".repeat(64);
+  const challenge = createHash("sha256").update(verifier).digest("base64url");
+  const consent = await createMcpOAuthConsentRequest({
+    userId: "mcp-user",
+    clientId: client.client_id,
+    redirectUri: "http://127.0.0.1:49152/callback",
+    responseType: "code",
+    codeChallenge: challenge,
+    codeChallengeMethod: "S256",
+    scope: "mcp:read canvas:write",
+    state: "double-submit",
+    resource,
+  }, new Request(`${origin}/oauth/authorize`));
+  const decision = {
+    userId: "mcp-user",
+    requestId: consent.id,
+    allow: true,
+    workspaceId: "mcp-space",
+    projectIds: ["mcp-canvas-a"],
+    restrictToProjects: true,
+    libraryAccess: true,
+    scopes: ["mcp:read", "canvas:write"] as Array<"mcp:read" | "canvas:write">,
+  };
+  const firstCallback = new URL(await decideMcpOAuthConsent(decision));
+  const replacementCallback = new URL(await decideMcpOAuthConsent(decision));
+  const firstCode = firstCallback.searchParams.get("code") || "";
+  const replacementCode = replacementCallback.searchParams.get("code") || "";
+  assert.ok(firstCode);
+  assert.ok(replacementCode);
+  assert.notEqual(replacementCode, firstCode);
+  assert.equal(replacementCallback.searchParams.get("state"), "double-submit");
+
+  const staleResponse = await exchangeMcpOAuthToken(new URLSearchParams({
+    grant_type: "authorization_code", client_id: client.client_id, code: firstCode,
+    redirect_uri: "http://127.0.0.1:49152/callback", code_verifier: verifier, resource,
+  }), oauthRequest);
+  assert.equal(staleResponse.status, 400);
+
+  const recoveredResponse = await exchangeMcpOAuthToken(new URLSearchParams({
+    grant_type: "authorization_code", client_id: client.client_id, code: replacementCode,
+    redirect_uri: "http://127.0.0.1:49152/callback", code_verifier: verifier, resource,
+  }), oauthRequest);
+  assert.equal(recoveredResponse.status, 200);
+});
+
 test("OAuth bearer reaches the real Streamable HTTP MCP route", async () => {
   const client = await registeredClient();
   const verifier = "b".repeat(64);

@@ -67,3 +67,14 @@ test("the profile menu derives MCP setup from each Cloud or self-host instance",
   assert.match(menu, /set PUBLIC_URL to the public HTTPS origin/);
   assert.match(menu, /ChatGPT cannot reach localhost directly/);
 });
+
+test("OAuth consent prevents duplicate submits while the loopback callback is pending", () => {
+  const form = source("src/app/oauth/authorize/OAuthConsentForm.tsx");
+  const oauth = source("src/lib/mcp/oauth.ts");
+  assert.match(form, /pendingDecision !== null/);
+  assert.match(form, /Connecting…/);
+  assert.match(form, /disabled=\{pendingDecision !== null\}/);
+  assert.match(oauth, /canRetryApproval/);
+  assert.match(oauth, /replacementCode/);
+  assert.match(oauth, /code_consumed_at/);
+});
