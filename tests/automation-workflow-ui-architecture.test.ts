@@ -416,20 +416,27 @@ test("valid workflow edits auto-save and become runnable without a publish actio
   assert.match(canvasSource, /setAutomationEditorWorkflowId\(\(current\) => current === workflowId \? null : workflowId\)/);
 });
 
-test("automation toolbar exposes quiet direct actions without status badges", () => {
-  assert.doesNotMatch(workflowEditorSource, /automation-validation-pill|>Valid<\/button>|>Manage<\/button>|manageOpen/);
-  assert.match(workflowEditorSource, /className="automation-editor-tool-button" aria-label="Run history"/);
-  assert.match(workflowEditorSource, /className="automation-editor-tool-button" aria-label="Export workflow JSON"/);
+test("automation toolbar keeps workflow actions in a clear Manage menu without status badges", () => {
+  assert.doesNotMatch(workflowEditorSource, /automation-validation-pill|>Valid<\/button>/);
+  assert.match(workflowEditorSource, /automation-manage-menu/);
+  assert.match(workflowEditorSource, /Manage <ChevronDown/);
+  assert.match(workflowEditorSource, /<b>Run history<\/b>/);
+  assert.match(workflowEditorSource, /<b>Export JSON<\/b>/);
   assert.match(workflowEditorSource, /validation && !validation\.valid/);
-  assert.match(workflowEditorSource, /aria-label=\{`Review \$\{validation\.issues\.length\} workflow issues`\}/);
+  assert.match(workflowEditorSource, /<b>Review issues<\/b>/);
   assert.doesNotMatch(workflowEditorSource, /<b>Versions<\/b>|<b>Automatic starts<\/b>|<b>Test a step<\/b>|<b>Workflow settings<\/b>/);
   assert.doesNotMatch(workflowOperationsSource, /Automatic starts|Test a step|Save fixture|Restore as draft/);
   assert.match(workflowOperationsSource, /Opening the latest run/);
   assert.match(workflowOperationsSource, /inspectRun\(runList\[0\]\.id, true\)/);
   assert.match(workflowOperationsSource, /workflowNodeNames\.get\(nodeRun\.nodeId\)/);
   assert.match(workflowOperationsSource, /inspectStep\(selectedRun\.id, nodeRun\.nodeId, nodeRun\.id\)/);
+  assert.match(panelSource, /ArrowDownToLine/);
+  assert.match(panelSource, /> Import<\/button>/);
+  assert.match(panelSource, /> New workflow<\/button>/);
+  assert.doesNotMatch(panelSource, /FileUp/);
   assert.match(workflowOperationsSource, /Not used on this route/);
-  assert.match(workflowOperationsSource, /rest of the run completed normally/);
+  assert.match(workflowOperationsSource, /This path was not selected for this run/);
+  assert.doesNotMatch(workflowOperationsSource, /This step completed normally/);
   assert.match(workflowOperationsSource, /nodeRun\.status === "failed" && nodeRun\.error && <p className="is-error"/);
 });
 

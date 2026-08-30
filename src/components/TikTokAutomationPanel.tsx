@@ -1,6 +1,6 @@
 "use client";
 
-import { ArrowRight, Check, FileUp, Plus, Settings2, Workflow, X } from "lucide-react";
+import { ArrowDownToLine, ArrowRight, Check, Plus, Settings2, Workflow, X } from "lucide-react";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { generatorRatiosFor, generatorResolutionsFor, type GeneratorModelOption } from "@/components/FrameNode";
 import { InspectorSelect } from "@/components/InspectorSelect";
@@ -306,11 +306,14 @@ export function TikTokAutomationPanel({
 
   return <aside className="tiktok-automation-panel" onPointerDown={(event) => event.stopPropagation()}>
     <header className="tiktok-automation-head">
-      <div><span className="eyebrow">AUTOMATION</span><h2>{selectedWorkflow?.name || "Choose a workflow"}</h2><p>{selectedWorkflow?.description || "Select, configure and run a workflow."}</p></div>
+      <div><span className="eyebrow">AUTOMATION</span><h2>{selectedWorkflow?.name || "Choose a workflow"}</h2><p>{selectedWorkflow?.description || "Select, configure and run a workflow."}</p>
+        {capabilities.edit && <div className="tiktok-automation-create-actions">
+          <input ref={importInputRef} type="file" accept="application/json,.json,.scenelith-automation.json" hidden onChange={(event) => void importWorkflow(event.target.files?.[0])} />
+          <button type="button" disabled={busy || creatingWorkflow} onClick={() => importInputRef.current?.click()}><ArrowDownToLine size={14} /> Import</button>
+          <button type="button" disabled={busy || creatingWorkflow} onClick={() => void createWorkflow()}><Plus size={14} /> New workflow</button>
+        </div>}
+      </div>
       <div className="tiktok-automation-head-actions">
-        <input ref={importInputRef} type="file" accept="application/json,.json,.scenelith-automation.json" hidden onChange={(event) => void importWorkflow(event.target.files?.[0])} />
-        {capabilities.edit && <button type="button" disabled={busy || creatingWorkflow} onClick={() => importInputRef.current?.click()} aria-label="Import workflow JSON" title="Import Scenelith automation JSON"><FileUp size={16} /></button>}
-        {capabilities.edit && <button type="button" disabled={busy || creatingWorkflow} onClick={() => void createWorkflow()} aria-label="Create workflow" title="Create workflow"><Plus size={16} /></button>}
         <button type="button" className={selectedAlertCount ? "has-alert" : undefined} disabled={!workflowId} onClick={() => workflowId && onConfigure(workflowId)} aria-label={selectedAlertCount ? `Configure workflow, ${selectedAlertCount} trigger alerts need attention` : "Configure workflow"} title={selectedAlertCount ? `${selectedAlertCount} trigger alert${selectedAlertCount === 1 ? "" : "s"} need attention` : "Configure workflow"}><Settings2 size={16} />{selectedAlertCount > 0 && <i>{Math.min(99, selectedAlertCount)}</i>}</button>
         <button type="button" onClick={onClose} aria-label="Close automation"><X size={16} /></button>
       </div>
