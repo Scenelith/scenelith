@@ -26,6 +26,9 @@ export const mcpScopes = [
 
 export type McpScope = (typeof mcpScopes)[number];
 
+const oauthScopes = [...mcpScopes, "offline_access"] as const;
+type OAuthScope = (typeof oauthScopes)[number];
+
 export type McpPrincipal = {
   connectionId: string;
   clientId: string;
@@ -104,6 +107,11 @@ function normalizedScopes(value: unknown): McpScope[] {
   return mcpScopes.filter((scope) => requested.includes(scope));
 }
 
+function normalizedOAuthScopes(value: unknown): OAuthScope[] {
+  const requested = jsonStrings(value);
+  return oauthScopes.filter((scope) => requested.includes(scope));
+}
+
 function normalizedProjectIds(value: unknown) {
   const ids = [...new Set(jsonStrings(value).map((id) => id.trim()).filter(Boolean))];
   return ids.length ? ids : null;
@@ -136,7 +144,8 @@ export function mcpOAuthMetadata(request?: Request) {
     grant_types_supported: ["authorization_code", "refresh_token"],
     token_endpoint_auth_methods_supported: ["none"],
     code_challenge_methods_supported: ["S256"],
-    scopes_supported: [...mcpScopes],
+    scopes_supported: [...oauthScopes],
+    authorization_response_iss_parameter_supported: true,
     service_documentation: new URL("/mcp", issuer).toString(),
   };
 }
@@ -204,7 +213,7 @@ export async function registerMcpOAuthClient(value: unknown) {
     grant_types: requestedGrants,
     response_types: ["code"],
     token_endpoint_auth_method: "none",
-    scope: mcpScopes.join(" "),
+    scope: oauthScopes.join(" "),
   }, { status: 201, headers: { "cache-control": "no-store", "access-control-allow-origin": "*" } });
 }
 
@@ -240,7 +249,7 @@ export async function createMcpOAuthConsentRequest(input: {
   if (input.codeChallengeMethod !== "S256" || !/^[A-Za-z0-9_-]{43,128}$/.test(input.codeChallenge)) throw new Error("This MCP client must use PKCE with S256");
   if (!sameResource(input.resource, mcpResource(request))) throw new Error("This authorization request targets a different MCP server");
   const requested = [...new Set(String(input.scope || "mcp:read").split(/\s+/).filter(Boolean))];
-  if (!requested.includes("mcp:read") || requested.some((scope) => !mcpScopes.includes(scope as McpScope))) throw new Error("This MCP client requested unsupported permissions");
+  if (!requested.includes("mcp:read") || requested.some((scope) => !oauthScopes.includes(scope as OAuthScope))) throw new Error("This MCP client requested unsupported permissions");
   if ((input.state || "").length > 2000) throw new Error("The authorization state is too large");
   const id = crypto.randomUUID();
   const now = new Date();
@@ -264,6 +273,7 @@ function authorizationRedirect(row: AuthorizationRow, params: Record<string, str
   const url = new URL(row.redirect_uri);
   for (const [key, value] of Object.entries(params)) url.searchParams.set(key, value);
   if (row.state) url.searchParams.set("state", row.state);
+  url.searchParams.set("iss", new URL(row.resource).origin);
   return url.toString();
 }
 
@@ -296,8 +306,10 @@ export async function decideMcpOAuthConsent(input: {
       await db.prepare("UPDATE mcp_oauth_authorizations SET decided_at = ? WHERE id = ?").run(now.toISOString(), row.id);
       return authorizationRedirect(row, { error: "access_denied", error_description: "The user denied access" });
     }
-    const requested = normalizedScopes(row.requested_scopes_json);
-    const granted = mcpScopes.filter((scope) => input.scopes.includes(scope) && requested.includes(scope));
+    const requested = normalizedOAuthScopes(row.requested_scopes_json);
+    const granted = oauthScopes.filter((scope) => scope === "offline_access"
+      ? requested.includes(scope)
+      : input.scopes.includes(scope as McpScope) && requested.includes(scope));
     if (!granted.includes("mcp:read")) throw new Error("Read access is required for an MCP connection");
     if (input.workspaceId && !await userCanAccessWorkspace(input.userId, input.workspaceId)) throw new Error("Workspace not found");
     const projectIds = input.restrictToProjects ? [...new Set((input.projectIds || []).map((id) => id.trim()).filter(Boolean))] : [];
@@ -319,7 +331,7 @@ function pkceChallenge(verifier: string) {
   return createHash("sha256").update(verifier).digest("base64url");
 }
 
-function tokenPayload(accessToken: string, refreshToken: string, scopes: McpScope[]) {
+function tokenPayload(accessToken: string, refreshToken: string, scopes: OAuthScope[]) {
   return {
     access_token: accessToken,
     token_type: "Bearer",
@@ -349,7 +361,7 @@ export async function exchangeMcpOAuthToken(form: URLSearchParams, request: Requ
       const now = new Date();
       const accessToken = `scn_access_${randomToken(32)}`;
       const refreshToken = `scn_refresh_${randomToken(40)}`;
-      const scopes = normalizedScopes(authorization.granted_scopes_json);
+      const scopes = normalizedOAuthScopes(authorization.granted_scopes_json);
       const connectionId = crypto.randomUUID();
       await db.prepare("UPDATE mcp_oauth_authorizations SET code_consumed_at = ? WHERE id = ?").run(now.toISOString(), authorization.id);
       await db.prepare(`INSERT INTO mcp_oauth_connections
@@ -373,7 +385,7 @@ export async function exchangeMcpOAuthToken(form: URLSearchParams, request: Requ
       const now = new Date();
       const nextAccess = `scn_access_${randomToken(32)}`;
       const nextRefresh = `scn_refresh_${randomToken(40)}`;
-      const scopes = normalizedScopes(connection.scopes_json);
+      const scopes = normalizedOAuthScopes(connection.scopes_json);
       await db.prepare(`UPDATE mcp_oauth_connections SET access_token_hash = ?, refresh_token_hash = ?, access_expires_at = ?, refresh_expires_at = ?, last_used_at = ?
         WHERE id = ?`).run(hashOpaqueToken(nextAccess), hashOpaqueToken(nextRefresh), new Date(now.getTime() + 60 * 60 * 1000).toISOString(), new Date(now.getTime() + 30 * 24 * 60 * 60 * 1000).toISOString(), now.toISOString(), connection.id);
       return tokenPayload(nextAccess, nextRefresh, scopes);
