@@ -172,6 +172,8 @@ export type AutomationWorkflowEditorDemo = Readonly<{
   previewDefinitionKey?: string | null;
   inspectorView?: "guide" | "settings" | "execution";
   focusNodeId?: string | null;
+  focusZoom?: number;
+  focusOffsetY?: number;
 }>;
 type AutomationNodeDefinitionRecord = ReturnType<typeof automationNodeDefinitions>[number];
 
@@ -1364,13 +1366,13 @@ export const AutomationWorkflowEditorOverlay = forwardRef<AutomationWorkflowEdit
     const frame = window.requestAnimationFrame(() => {
       const instance = flowInstanceRef.current;
       if (!instance) return;
-      void instance.setCenter(focused.position.x + 140, focused.position.y + 82, {
-        zoom: Math.max(.58, instance.getZoom()),
+      void instance.setCenter(focused.position.x + 140, focused.position.y + 82 + (demo.focusOffsetY || 0), {
+        zoom: demo.focusZoom ?? Math.max(.58, instance.getZoom()),
         duration: 720,
       });
     });
     return () => window.cancelAnimationFrame(frame);
-  }, [demo?.focusNodeId, flowNodes]);
+  }, [demo?.focusNodeId, demo?.focusOffsetY, demo?.focusZoom, flowNodes]);
   const selectedNode = graph?.nodes.find((node) => node.id === selectedId) || null;
   const selectedEdge = graph?.edges.find((edge) => `edge:${edge.id}` === selectedId) || null;
   const selectedAnnotation = graph?.annotations?.find((annotation) => `annotation:${annotation.id}` === selectedId) || null;
@@ -2099,7 +2101,7 @@ export const AutomationWorkflowEditorOverlay = forwardRef<AutomationWorkflowEdit
                 window.requestAnimationFrame(() => {
                   const demoFocusedNode = demo?.focusNodeId ? display.nodes.find((node) => node.id === demo.focusNodeId) : null;
                   if (demoFocusedNode) {
-                    void instance.setCenter(demoFocusedNode.position.x + 140, demoFocusedNode.position.y + 82, { zoom: .64, duration: 0 });
+                    void instance.setCenter(demoFocusedNode.position.x + 140, demoFocusedNode.position.y + 82 + (demo?.focusOffsetY || 0), { zoom: demo?.focusZoom ?? .64, duration: 0 });
                     return;
                   }
                   void instance.fitView({
