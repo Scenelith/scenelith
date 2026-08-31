@@ -2096,15 +2096,22 @@ export const AutomationWorkflowEditorOverlay = forwardRef<AutomationWorkflowEdit
               deleteKeyCode={null}
               onInit={(instance) => {
                 flowInstanceRef.current = instance;
-                window.requestAnimationFrame(() => void instance.fitView({
-                  nodes: display.nodes.some((node) => node.data.kind === "annotation")
-                    ? display.nodes.filter((node) => node.data.kind === "annotation").slice(0, 1)
-                    : display.nodes.filter((node) => node.data.kind === "step").slice(0, 8),
-                  padding: 0.2,
-                  minZoom: 0.36,
-                  maxZoom: 0.84,
-                  duration: 0,
-                }));
+                window.requestAnimationFrame(() => {
+                  const demoFocusedNode = demo?.focusNodeId ? display.nodes.find((node) => node.id === demo.focusNodeId) : null;
+                  if (demoFocusedNode) {
+                    void instance.setCenter(demoFocusedNode.position.x + 140, demoFocusedNode.position.y + 82, { zoom: .64, duration: 0 });
+                    return;
+                  }
+                  void instance.fitView({
+                    nodes: display.nodes.some((node) => node.data.kind === "annotation")
+                      ? display.nodes.filter((node) => node.data.kind === "annotation").slice(0, 1)
+                      : display.nodes.filter((node) => node.data.kind === "step").slice(0, 8),
+                    padding: 0.2,
+                    minZoom: 0.36,
+                    maxZoom: 0.84,
+                    duration: 0,
+                  });
+                });
               }}
               onNodesChange={onFlowNodesChange}
               onNodeDrag={(_, flowNode) => magnetizeFlowNode(flowNode)}
