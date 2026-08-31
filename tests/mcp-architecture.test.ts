@@ -63,6 +63,9 @@ test("the profile menu derives MCP setup from each Cloud or self-host instance",
   assert.match(setup, /"cache-control": "no-store"/);
   assert.match(menu, /Connect an AI agent/);
   for (const client of ["Codex", "Claude", "Claude Code", "ChatGPT", "Other"]) assert.match(menu, new RegExp(client));
+  assert.match(menu, /Settings → Plugins → MCPs → Add server/);
+  assert.match(menu, /Choose Streamable HTTP/);
+  assert.match(menu, /click Authenticate/);
   assert.match(menu, /No API key or manual token is needed/);
   assert.match(menu, /set PUBLIC_URL to the public HTTPS origin/);
   assert.match(menu, /ChatGPT cannot reach localhost directly/);

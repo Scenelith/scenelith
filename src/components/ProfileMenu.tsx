@@ -97,8 +97,8 @@ function McpConnectionSection({ onBack }: { onBack: () => void }) {
       body: "Add Scenelith as an HTTP MCP server. Claude Code opens OAuth the first time it connects.",
     },
     chatgpt: {
-      title: "Create an MCP app",
-      body: "Enable Developer mode, open Settings → Apps → Create, choose OAuth and use this MCP URL.",
+      title: "Add a Streamable HTTP server",
+      body: "In the desktop app, open Settings → Plugins → MCPs → Add server. Choose Streamable HTTP, paste this URL, save, then click Authenticate.",
     },
     other: {
       title: "Use any MCP client",
