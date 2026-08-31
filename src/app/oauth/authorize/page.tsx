@@ -3,6 +3,7 @@ import { redirect } from "next/navigation";
 import { Bot, Boxes, CircleAlert, Image, LockKeyhole, Network, Play, Sparkles, Workflow } from "lucide-react";
 import { getCurrentUser } from "@/lib/auth";
 import { createMcpOAuthConsentRequest, type McpScope } from "@/lib/mcp/oauth";
+import BrandMark from "@/components/BrandMark";
 import { OAuthConsentForm } from "./OAuthConsentForm";
 import { ResourceAccessPicker } from "./ResourceAccessPicker";
 import styles from "./oauth-authorize.module.css";
@@ -58,7 +59,7 @@ export default async function OAuthAuthorizePage({ searchParams }: { searchParam
     }, pageRequest);
   } catch (error) {
     return <main className={styles.shell}><section className={`${styles.card} ${styles.errorCard}`}>
-      <span className={styles.brand}><Sparkles size={15} />Scenelith</span>
+      <span className={styles.brand}><BrandMark />Scenelith</span>
       <CircleAlert className={styles.errorIcon} aria-hidden="true" />
       <h1>Connection request could not be verified</h1>
       <p>{error instanceof Error ? error.message : "Return to your agent and try connecting again."}</p>
@@ -69,12 +70,11 @@ export default async function OAuthAuthorizePage({ searchParams }: { searchParam
   return <main className={styles.shell}>
     <section className={styles.card}>
       <header className={styles.header}>
-        <span className={styles.brand}><Sparkles size={15} />Scenelith</span>
+        <span className={styles.brand}><BrandMark />Scenelith</span>
         <span className={styles.security}><LockKeyhole size={13} />Secure OAuth connection</span>
       </header>
 
       <div className={styles.intro}>
-        <span className={styles.agentIcon}><Bot size={23} /></span>
         <div><p>Connect an AI agent</p><h1>{consent.client.name} wants to access Scenelith</h1></div>
       </div>
 

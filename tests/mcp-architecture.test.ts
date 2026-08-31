@@ -70,11 +70,17 @@ test("the profile menu derives MCP setup from each Cloud or self-host instance",
 
 test("OAuth consent prevents duplicate submits while the loopback callback is pending", () => {
   const form = source("src/app/oauth/authorize/OAuthConsentForm.tsx");
+  const route = source("src/app/api/mcp/oauth/authorize/route.ts");
   const oauth = source("src/lib/mcp/oauth.ts");
   assert.match(form, /pendingDecision !== null/);
   assert.match(form, /Connecting…/);
   assert.match(form, /disabled=\{pendingDecision !== null\}/);
+  assert.match(form, /window\.location\.assign\(payload\.redirectTo\)/);
+  assert.match(form, /AbortController/);
+  assert.match(route, /redirectTo: destination/);
   assert.match(oauth, /canRetryApproval/);
   assert.match(oauth, /replacementCode/);
   assert.match(oauth, /code_consumed_at/);
+  assert.match(oauth, /authorization_response_iss_parameter_supported: true/);
+  assert.match(oauth, /"offline_access"/);
 });

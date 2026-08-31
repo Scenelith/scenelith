@@ -57,6 +57,8 @@ test("MCP OAuth discovery, challenge, and Origin protection match the HTTP autho
   assert.deepEqual(protectedMetadata.authorization_servers, [origin]);
   assert.equal(authorizationMetadata.registration_endpoint, `${origin}/api/mcp/oauth/register`);
   assert.deepEqual(authorizationMetadata.code_challenge_methods_supported, ["S256"]);
+  assert.equal(authorizationMetadata.authorization_response_iss_parameter_supported, true);
+  assert.ok(authorizationMetadata.scopes_supported.includes("offline_access"));
 
   const unauthorized = await postMcpRequest(new Request(resource, {
     method: "POST",
@@ -116,6 +118,7 @@ test("OAuth authorization uses PKCE, rotates refresh tokens, and supports revoca
   const code = callback.searchParams.get("code");
   assert.ok(code);
   assert.equal(callback.searchParams.get("state"), "state-1");
+  assert.equal(callback.searchParams.get("iss"), origin);
 
   const tokenResponse = await exchangeMcpOAuthToken(new URLSearchParams({
     grant_type: "authorization_code",
@@ -204,6 +207,25 @@ test("OAuth approval recovers when a second submit replaces the first callback n
     redirect_uri: "http://127.0.0.1:49152/callback", code_verifier: verifier, resource,
   }), oauthRequest);
   assert.equal(recoveredResponse.status, 200);
+});
+
+test("OAuth DCR accepts Codex loopback paths and Claude HTTPS callbacks", async () => {
+  for (const redirectUri of [
+    "http://127.0.0.1:52048/callback/IsICn7mwPa0I",
+    "https://claude.ai/api/mcp/auth_callback",
+  ]) {
+    const response = await registerMcpOAuthClient({
+      client_name: redirectUri.includes("claude.ai") ? "Claude" : "Codex",
+      redirect_uris: [redirectUri],
+      grant_types: ["authorization_code", "refresh_token"],
+      response_types: ["code"],
+      token_endpoint_auth_method: "none",
+    });
+    assert.equal(response.status, 201);
+    const registration = await response.json() as { redirect_uris: string[]; scope: string };
+    assert.deepEqual(registration.redirect_uris, [redirectUri]);
+    assert.match(registration.scope, /offline_access/);
+  }
 });
 
 test("OAuth bearer reaches the real Streamable HTTP MCP route", async () => {
