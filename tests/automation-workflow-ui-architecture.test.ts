@@ -49,6 +49,16 @@ test("automation AI settings reuse the complete Canvas Assistant model catalogue
   assert.doesNotMatch(panelSource, /tiktokAutomationPlanningModels/);
 });
 
+test("the real workflow editor supports a read-only product demo without API substitutes", () => {
+  assert.match(workflowEditorSource, /export type AutomationWorkflowEditorDemo/);
+  assert.match(workflowEditorSource, /demo\?\.detail\.draft \|\| demo\?\.detail\.published/);
+  assert.match(workflowEditorSource, /if \(demo\) return/);
+  assert.match(workflowEditorSource, /demo\?\.focusNodeId/);
+  assert.match(workflowEditorSource, /instance\.setCenter/);
+  assert.match(workflowEditorSource, /setSelectedId\(demo\.selectedNodeId \|\| null\)/);
+  assert.match(workflowEditorSource, /setPreviewDefinitionKey\(demo\.previewDefinitionKey \|\| null\)/);
+});
+
 test("automation image generation matches the Canvas Image Generator identity and owns its model setting", () => {
   const definition = automationNodeDefinitions().find((candidate) => candidate.type === "generation.image");
   assert.equal(definition?.title, "Image Generator");

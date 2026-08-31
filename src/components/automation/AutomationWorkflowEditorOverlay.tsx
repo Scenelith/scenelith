@@ -165,6 +165,14 @@ type AutomationWorkflowClientDetail = AutomationWorkflowDetail & {
   runInputs?: AutomationRunInputField[];
   draftRunInputs?: AutomationRunInputField[];
 };
+export type AutomationWorkflowEditorDemo = Readonly<{
+  workflows: AutomationWorkflowRecord[];
+  detail: AutomationWorkflowClientDetail;
+  selectedNodeId?: string | null;
+  previewDefinitionKey?: string | null;
+  inspectorView?: "guide" | "settings" | "execution";
+  focusNodeId?: string | null;
+}>;
 type AutomationNodeDefinitionRecord = ReturnType<typeof automationNodeDefinitions>[number];
 
 function workflowSwitcherPresentation(workflow: AutomationWorkflowRecord) {
@@ -1070,6 +1078,7 @@ export const AutomationWorkflowEditorOverlay = forwardRef<AutomationWorkflowEdit
   personas: PersonaRecord[];
   models: GeneratorModelOption[];
   canvasReferences: AutomationReferenceCandidate[];
+  demo?: AutomationWorkflowEditorDemo;
   execution?: AutomationWorkflowExecutionState | null;
   runtimeValues?: Record<string, unknown>;
   onRuntimeValueChange?: (workflowId: string, key: string, value: unknown) => void;
@@ -1078,30 +1087,31 @@ export const AutomationWorkflowEditorOverlay = forwardRef<AutomationWorkflowEdit
   onRetryFromNode?: (runId: string, nodeId: string) => Promise<void>;
   onClose: () => void;
   onWorkflowChanged?: (workflowId: string) => void;
-}>(function AutomationWorkflowEditorOverlay({ workspaceId, projectId, workflowId, sources, personas, models, canvasReferences, execution = null, runtimeValues = {}, onRuntimeValueChange, onRun, onCancel, onRetryFromNode, onClose, onWorkflowChanged }, ref) {
-  const [detail, setDetail] = useState<AutomationWorkflowClientDetail | null>(null);
-  const [graph, setGraph] = useState<AutomationWorkflowGraph | null>(null);
-  const [name, setName] = useState("");
-  const [selectedId, setSelectedId] = useState<string | null>(null);
+}>(function AutomationWorkflowEditorOverlay({ workspaceId, projectId, workflowId, sources, personas, models, canvasReferences, demo, execution = null, runtimeValues = {}, onRuntimeValueChange, onRun, onCancel, onRetryFromNode, onClose, onWorkflowChanged }, ref) {
+  const initialDemoVersion = demo?.detail.draft || demo?.detail.published || null;
+  const [detail, setDetail] = useState<AutomationWorkflowClientDetail | null>(demo?.detail || null);
+  const [graph, setGraph] = useState<AutomationWorkflowGraph | null>(() => initialDemoVersion ? structuredClone(initialDemoVersion.graph) : null);
+  const [name, setName] = useState(demo?.detail.workflow.name || "");
+  const [selectedId, setSelectedId] = useState<string | null>(demo?.selectedNodeId || null);
   const [search, setSearch] = useState("");
-  const [previewDefinitionKey, setPreviewDefinitionKey] = useState<string | null>(null);
+  const [previewDefinitionKey, setPreviewDefinitionKey] = useState<string | null>(demo?.previewDefinitionKey || null);
   const [inspectorView, setInspectorView] = useState<"guide" | "settings" | "execution">("settings");
   const [executionResult, setExecutionResult] = useState<{ key: string; attempts: AutomationNodeExecutionAttempt[] }>({ key: "", attempts: [] });
   const [retryingNodeId, setRetryingNodeId] = useState("");
   const [executionActionError, setExecutionActionError] = useState("");
-  const [loading, setLoading] = useState(true);
+  const [loading, setLoading] = useState(!demo);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState("");
   const [editRevision, setEditRevision] = useState(0);
   const [savedRevision, setSavedRevision] = useState(0);
-  const [availableWorkflows, setAvailableWorkflows] = useState<AutomationWorkflowRecord[]>([]);
+  const [availableWorkflows, setAvailableWorkflows] = useState<AutomationWorkflowRecord[]>(demo?.workflows || []);
   const [manageOpen, setManageOpen] = useState(false);
   const [deleteConfirmOpen, setDeleteConfirmOpen] = useState(false);
   const [validationOpen, setValidationOpen] = useState(false);
   const [mobileInspectorOpen, setMobileInspectorOpen] = useState(false);
   const [runHistoryOpen, setRunHistoryOpen] = useState(false);
   const [runDockStopArmed, setRunDockStopArmed] = useState(false);
-  const [validation, setValidation] = useState<AutomationValidationResult | null>(null);
+  const [validation, setValidation] = useState<AutomationValidationResult | null>(initialDemoVersion?.validation || null);
   const [bindingOptions, setBindingOptions] = useState<{ credentials: CredentialOption[]; workflows: WorkflowBindingOption[]; bindings: WorkflowBinding[] }>({ credentials: [], workflows: [], bindings: [] });
   const [newCredentialName, setNewCredentialName] = useState("");
   const [newCredentialValue, setNewCredentialValue] = useState("");
@@ -1169,7 +1179,31 @@ export const AutomationWorkflowEditorOverlay = forwardRef<AutomationWorkflowEdit
     return () => document.removeEventListener("pointerdown", onPointerDown);
   }, [validationOpen]);
   useEffect(() => {
+    if (!demo) return;
+    const version = demo.detail.draft || demo.detail.published;
+    if (!version) return;
     let cancelled = false;
+    queueMicrotask(() => {
+      if (cancelled) return;
+      setDetail(demo.detail);
+      setAvailableWorkflows(demo.workflows);
+      setGraph(structuredClone(version.graph));
+      setName(demo.detail.workflow.name);
+      setValidation(version.validation);
+      setSelectedId(demo.selectedNodeId || null);
+      setPreviewDefinitionKey(demo.previewDefinitionKey || null);
+      setInspectorView(demo.inspectorView || "settings");
+      setMobileInspectorOpen(Boolean(demo.selectedNodeId || demo.previewDefinitionKey));
+      setEditRevision(0);
+      setSavedRevision(0);
+      setError("");
+      setLoading(false);
+    });
+    return () => { cancelled = true; };
+  }, [demo]);
+  useEffect(() => {
+    let cancelled = false;
+    if (demo) return () => { cancelled = true; };
     void fetch(`/api/automation-workflows?projectId=${encodeURIComponent(projectId)}`, { cache: "no-store" })
       .then(async (response) => {
         const body = await response.json() as { workflows?: AutomationWorkflowRecord[]; error?: string };
@@ -1179,9 +1213,10 @@ export const AutomationWorkflowEditorOverlay = forwardRef<AutomationWorkflowEdit
       .then((workflows) => { if (!cancelled) setAvailableWorkflows(workflows); })
       .catch(() => undefined);
     return () => { cancelled = true; };
-  }, [projectId, workflowId]);
+  }, [demo, projectId, workflowId]);
   useEffect(() => {
     let cancelled = false;
+    if (demo) return () => { cancelled = true; };
     void fetch(`/api/automation-workflows/${encodeURIComponent(workflowId)}`, { cache: "no-store" })
       .then(async (response) => {
         const body = await response.json() as AutomationWorkflowClientDetail & { error?: string };
@@ -1211,9 +1246,10 @@ export const AutomationWorkflowEditorOverlay = forwardRef<AutomationWorkflowEdit
         setLoading(false);
       });
     return () => { cancelled = true; };
-  }, [workflowId]);
+  }, [demo, workflowId]);
 
   const refreshBindings = useCallback(async () => {
+    if (demo) { setBindingOptions({ credentials: [], workflows: [], bindings: [] }); return; }
     if (!detail || !detail.capabilities.edit) { setBindingOptions({ credentials: [], workflows: [], bindings: [] }); return; }
     const [credentialResponse, workflowResponse, bindingResponse] = await Promise.all([
       detail.capabilities.manageCredentials ? fetch(`/api/automation-credentials?workspaceId=${encodeURIComponent(detail.workflow.workspaceId)}`, { cache: "no-store" }) : null,
@@ -1224,7 +1260,7 @@ export const AutomationWorkflowEditorOverlay = forwardRef<AutomationWorkflowEdit
     const workflowsBody = await workflowResponse.json() as { workflows?: WorkflowBindingOption[] };
     const bindingsBody = await bindingResponse.json() as { bindings?: WorkflowBinding[] };
     setBindingOptions({ credentials: credentialsBody.credentials || [], workflows: workflowsBody.workflows || [], bindings: bindingsBody.bindings || [] });
-  }, [detail, projectId]);
+  }, [demo, detail, projectId]);
 
   useEffect(() => { const timer = window.setTimeout(() => void refreshBindings(), 0); return () => window.clearTimeout(timer); }, [refreshBindings]);
 
@@ -1321,6 +1357,20 @@ export const AutomationWorkflowEditorOverlay = forwardRef<AutomationWorkflowEdit
       });
     });
   }, [automationLayoutKey, display.nodes, setFlowNodes]);
+  useEffect(() => {
+    if (!demo?.focusNodeId) return;
+    const focused = flowNodes.find((node) => node.id === demo.focusNodeId);
+    if (!focused) return;
+    const frame = window.requestAnimationFrame(() => {
+      const instance = flowInstanceRef.current;
+      if (!instance) return;
+      void instance.setCenter(focused.position.x + 140, focused.position.y + 82, {
+        zoom: Math.max(.58, instance.getZoom()),
+        duration: 720,
+      });
+    });
+    return () => window.cancelAnimationFrame(frame);
+  }, [demo?.focusNodeId, flowNodes]);
   const selectedNode = graph?.nodes.find((node) => node.id === selectedId) || null;
   const selectedEdge = graph?.edges.find((edge) => `edge:${edge.id}` === selectedId) || null;
   const selectedAnnotation = graph?.annotations?.find((annotation) => `annotation:${annotation.id}` === selectedId) || null;
@@ -1350,7 +1400,7 @@ export const AutomationWorkflowEditorOverlay = forwardRef<AutomationWorkflowEdit
     && selectedExecutionNodeRun?.status === "failed",
   );
   useEffect(() => {
-    if (!selectedNode || !execution?.runId || !executionDetailKey) return;
+    if (demo || !selectedNode || !execution?.runId || !executionDetailKey) return;
     let cancelled = false;
     void fetch(`/api/automation-runs/${encodeURIComponent(execution.runId)}/nodes/${encodeURIComponent(selectedNode.id)}`, { cache: "no-store" })
       .then(async (response) => {
@@ -1361,7 +1411,7 @@ export const AutomationWorkflowEditorOverlay = forwardRef<AutomationWorkflowEdit
       .then((attempts) => { if (!cancelled) setExecutionResult({ key: executionDetailKey, attempts }); })
       .catch(() => { if (!cancelled) setExecutionResult({ key: executionDetailKey, attempts: [] }); });
     return () => { cancelled = true; };
-  }, [execution?.nodeRuns, execution?.runId, execution?.status, executionDetailKey, selectedNode]);
+  }, [demo, execution?.nodeRuns, execution?.runId, execution?.status, executionDetailKey, selectedNode]);
 
   async function retrySelectedExecutionNode() {
     if (!selectedNode || !execution?.runId || !onRetryFromNode || !selectedExecutionCanRetry || retryingNodeId) return;
