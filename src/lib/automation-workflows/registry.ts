@@ -50,7 +50,7 @@ const helpByType: Record<string, AutomationNodeHelp> = {
     whenToUse: "Use this as the start of a workflow. A person can press Run, and a configured schedule, event or webhook can start the same saved workflow automatically.",
     setup: ["Place it at the start of the workflow.", "Connect its Run output to every input step that must prepare a value before the work begins.", "Mark changeable fields on later steps as Ask on run so they appear in the Automation panel."],
     exampleFlow: { before: "Automation panel", after: "Source and creative inputs", explanation: "The person presses Run once. This step creates the run context that wakes the connected input steps." },
-    tips: ["A workflow needs exactly one start card.", "Schedules, events and webhooks use the current saved workflow."],
+    tips: ["A workflow needs exactly one start card.", "Schedules, events and webhooks use the published workflow version pinned when the trigger is activated."],
     technicalNotes: ["Emits one run-context object containing run metadata and the trigger payload when one exists.", "It does not transform creative data or call an external provider."],
   },
   "input.tiktok-source": {
