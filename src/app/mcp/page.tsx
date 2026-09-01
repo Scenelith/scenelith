@@ -13,7 +13,6 @@ import {
 } from "lucide-react";
 import MarketingFooter from "@/components/marketing/MarketingFooter";
 import MarketingHeader from "@/components/marketing/MarketingHeader";
-import { editionRuntimeProfile } from "@/editions/current/runtime";
 import { baseUrl, getCurrentUser } from "@/lib/auth";
 import { CopyMcpUrl } from "./CopyMcpUrl";
 import styles from "./mcp.module.css";
@@ -27,12 +26,11 @@ export const metadata: Metadata = {
 
 export default async function McpPage() {
   const endpoint = new URL("/api/mcp", baseUrl()).toString();
-  const hasMarketingSite = editionRuntimeProfile.capabilities.marketingSite;
   const authenticated = Boolean(await getCurrentUser());
 
   return (
     <div className={styles.page}>
-      <MarketingHeader active="MCP" authenticated={authenticated} marketingSite={hasMarketingSite} />
+      <MarketingHeader active="MCP" authenticated={authenticated} />
 
       <main>
         <section className={styles.hero}>
@@ -129,7 +127,7 @@ export default async function McpPage() {
           <a href="#connect">Copy the MCP link <ArrowRight size={16} /></a>
         </section>
       </main>
-      <MarketingFooter authenticated={authenticated} marketingSite={hasMarketingSite} />
+      <MarketingFooter authenticated={authenticated} />
     </div>
   );
 }

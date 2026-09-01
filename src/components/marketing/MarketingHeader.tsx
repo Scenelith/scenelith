@@ -1,11 +1,11 @@
 import Link from "next/link";
 import BrandMark from "@/components/BrandMark";
+import { editionMarketingChrome } from "@/editions/current/marketing";
 import styles from "./MarketingChrome.module.css";
 
 type MarketingHeaderProps = {
-  active?: "MCP";
+  active?: string;
   authenticated?: boolean;
-  marketingSite?: boolean;
 };
 
 function GitHubMark() {
@@ -16,25 +16,21 @@ function GitHubMark() {
   );
 }
 
-export default function MarketingHeader({ active, authenticated = false, marketingSite = false }: MarketingHeaderProps) {
-  const siteHref = (path: string) => marketingSite ? path : `https://scenelith.com${path}`;
-  const primaryHref = authenticated ? "/canvas" : marketingSite ? "/login?mode=register" : "/login";
+export default function MarketingHeader({ active, authenticated = false }: MarketingHeaderProps) {
+  const primaryHref = authenticated ? "/canvas" : editionMarketingChrome.unauthenticatedPrimaryHref;
 
   return (
     <header className={styles.header}>
       <div className={styles.headerInner}>
-        <Link className={styles.wordmark} href={marketingSite ? "/" : "/canvas"} aria-label="Scenelith home">
+        <Link className={styles.wordmark} href={editionMarketingChrome.homeHref} aria-label="Scenelith home">
           <BrandMark title="Scenelith" />
           <span>SCENELITH</span>
         </Link>
 
         <nav className={styles.navigation} aria-label="Primary navigation">
-          <a href={siteHref("/#product")}>Product</a>
-          <a href="https://docs.scenelith.com">Models</a>
-          <a href={siteHref("/pricing")}>Pricing</a>
-          <a href={siteHref("/affiliates")}>Affiliates</a>
-          <Link className={active === "MCP" ? styles.activeNavigation : undefined} href="/mcp">MCP</Link>
-          <a href="https://docs.scenelith.com">Docs</a>
+          {editionMarketingChrome.navigation.map((item) => (
+            <a className={active === item.label ? styles.activeNavigation : undefined} href={item.href} key={item.label}>{item.label}</a>
+          ))}
         </nav>
 
         <div className={styles.headerActions}>
