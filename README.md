@@ -26,36 +26,36 @@ From one-off generations to durable automations, Scenelith keeps media, decision
 <table>
   <tr>
     <td width="50%" valign="top">
-      <img src="docs/assets/readme/features/import-and-remake.jpg" alt="A TikTok source and regenerated result connected on the Scenelith canvas" />
+      <img src="docs/assets/readme/features/import-and-remake.gif" alt="Animated Scenelith demo recreating a TikTok source on the visual canvas" />
       <h3>Generate, edit, and remake</h3>
       <p>Create images and video from prompts or references, or import a TikTok slideshow or video and keep its source context visible beside every new branch.</p>
     </td>
     <td width="50%" valign="top">
-      <img src="docs/assets/readme/features/video-master.jpg" alt="Video Master editing a detected TikTok scene on the Scenelith canvas" />
+      <img src="docs/assets/readme/features/video-master.gif" alt="Animated Scenelith Video Master demo editing detected scenes" />
       <h3>Build video scene by scene</h3>
       <p>Detect source cuts, regenerate one scene at a time, keep original and generated versions, and assemble longer sequences in Video Master.</p>
     </td>
   </tr>
   <tr>
     <td width="50%" valign="top">
-      <img src="docs/assets/readme/features/automation-workflows.jpg" alt="A typed automation workflow and run controls beside the Scenelith content canvas" />
+      <img src="docs/assets/readme/features/automation-workflows.gif" alt="Animated Scenelith demo building and running a typed automation workflow" />
       <h3>Automate repeatable formats</h3>
       <p>Build typed node workflows with Ask on run inputs, immutable published versions, draft testing, durable run history, targeted retries, schedules, webhooks, and canvas-event triggers.</p>
     </td>
     <td width="50%" valign="top">
-      <img src="docs/assets/readme/features/reusable-identities.jpg" alt="Reusable Character and Before After identity reference groups in Scenelith" />
+      <img src="docs/assets/readme/features/reusable-identities.gif" alt="Animated Scenelith demo creating reusable Character and Before After identities" />
       <h3>Reuse identities and references</h3>
       <p>Save a Character or separate Before/After reference groups once. Pull product, style, pose, and composition references from the Canvas or Library whenever a generation or workflow needs them.</p>
     </td>
   </tr>
   <tr>
     <td width="50%" valign="top">
-      <img src="docs/assets/readme/features/mcp-agent-access.jpg" alt="Scenelith MCP connection page for AI agents" />
+      <img src="docs/assets/readme/features/mcp-agent-access.gif" alt="Animated walkthrough of the current Scenelith MCP connection and permission flow" />
       <h3>Let AI agents work in Scenelith</h3>
-      <p>Connect Codex, Claude, ChatGPT, or another compatible agent through OAuth-secured MCP, then grant scoped access to Canvas, Library, Identities, and Automations.</p>
+      <p>Connect Codex, Claude, ChatGPT, or another compatible agent through OAuth 2.1. Sign in when prompted, then choose the workspace, canvases, Library access, and exact capabilities the connection receives.</p>
     </td>
     <td width="50%" valign="top">
-      <img src="docs/assets/readme/features/self-hosted-architecture.jpg" alt="Scenelith self-hosted runtime architecture" />
+      <img src="docs/assets/readme/features/self-hosted-architecture.gif" alt="Animated overview of the Scenelith self-hosted runtime architecture" />
       <h3>Run it on your infrastructure</h3>
       <p>Keep provider keys in your environment, use local or S3-compatible storage, and move safe project structure between instances with portable <code>.scenelith.json</code> documents and recipes.</p>
     </td>
