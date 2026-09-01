@@ -18,6 +18,19 @@ test("MCP is a link-first OAuth connection and never an API-key setup", () => {
   assert.doesNotMatch(`${oauth}\n${endpoint}\n${setup}`, /createMcpApiKey|x-api-key|api_key=/i);
 });
 
+test("MCP setup uses the Scenelith marketing shell across Cloud and self-host", () => {
+  const setup = source("src/app/mcp/page.tsx");
+  const styles = source("src/app/mcp/mcp.module.css");
+  assert.match(setup, /import BrandMark from "@\/components\/BrandMark"/);
+  assert.match(setup, /editionRuntimeProfile\.capabilities\.marketingSite/);
+  assert.match(setup, /<header className=\{styles\.header\}>/);
+  assert.match(setup, /<footer className=\{styles\.footer\}>/);
+  assert.match(setup, /Connected agents/);
+  assert.doesNotMatch(setup, /Sparkles/);
+  assert.match(styles, /font-size: clamp\(70px, 7\.2vw, 118px\)/);
+  assert.match(styles, /\.footerSignal/);
+});
+
 test("MCP capabilities are scope-gated and canvas writes are revision-safe", () => {
   const server = source("src/lib/mcp/server.ts");
   const service = source("src/lib/mcp/service.ts");
