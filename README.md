@@ -15,7 +15,7 @@
   </p>
 </div>
 
-https://github.com/user-attachments/assets/4ce9d173-ed5f-4e00-a9ae-1dc7f9bfb5d3
+https://github.com/user-attachments/assets/c3dd7e87-aa44-4bf4-9d69-54a7179e38d5
 
 Scenelith keeps the source, references, prompts, generations, edits, and reusable identities connected instead of scattering a creative workflow across separate tools. Import a proven format, rebuild it with your own character or brand, compare every output, and continue editing on the same canvas.
 
