@@ -5,16 +5,16 @@ import {
   Bot,
   Boxes,
   Cable,
-  Circle,
   Image as ImageIcon,
   LockKeyhole,
   Network,
   ShieldCheck,
   Workflow,
 } from "lucide-react";
-import BrandMark from "@/components/BrandMark";
+import MarketingFooter from "@/components/marketing/MarketingFooter";
+import MarketingHeader from "@/components/marketing/MarketingHeader";
 import { editionRuntimeProfile } from "@/editions/current/runtime";
-import { baseUrl } from "@/lib/auth";
+import { baseUrl, getCurrentUser } from "@/lib/auth";
 import { CopyMcpUrl } from "./CopyMcpUrl";
 import styles from "./mcp.module.css";
 
@@ -25,124 +25,14 @@ export const metadata: Metadata = {
   description: "Connect compatible AI agents to Scenelith Canvas, Library, identities and Automations through one OAuth-secured MCP endpoint.",
 };
 
-type LinkItem = { label: string; href: string };
-type LinkGroup = { title: string; links: LinkItem[] };
-
-const commonNavigation: LinkItem[] = [
-  { label: "Product", href: "/#product" },
-  { label: "MCP", href: "/mcp" },
-  { label: "Docs", href: "https://docs.scenelith.com" },
-];
-
-const cloudNavigation: LinkItem[] = [
-  { label: "Product", href: "/#product" },
-  { label: "Models", href: "https://docs.scenelith.com" },
-  { label: "Pricing", href: "/pricing" },
-  { label: "Affiliates", href: "/affiliates" },
-  { label: "MCP", href: "/mcp" },
-  { label: "Docs", href: "https://docs.scenelith.com" },
-];
-
-const commonFooterGroups: LinkGroup[] = [
-  {
-    title: "Product",
-    links: [
-      { label: "Canvas", href: "/canvas" },
-      { label: "MCP", href: "/mcp" },
-      { label: "Connected agents", href: "/settings/mcp" },
-    ],
-  },
-  {
-    title: "Resources",
-    links: [
-      { label: "Documentation", href: "https://docs.scenelith.com" },
-      { label: "GitHub", href: "https://github.com/Scenelith/scenelith" },
-      { label: "Discussions", href: "https://github.com/Scenelith/scenelith/discussions" },
-    ],
-  },
-];
-
-const cloudFooterGroups: LinkGroup[] = [
-  {
-    title: "Product",
-    links: [
-      { label: "Canvas", href: "/canvas" },
-      { label: "MCP", href: "/mcp" },
-      { label: "Pricing", href: "/pricing" },
-      { label: "Affiliate program", href: "/affiliates" },
-    ],
-  },
-  {
-    title: "Resources",
-    links: [
-      { label: "Documentation", href: "https://docs.scenelith.com" },
-      { label: "Connected agents", href: "/settings/mcp" },
-      { label: "GitHub", href: "https://github.com/Scenelith/scenelith" },
-    ],
-  },
-  {
-    title: "Company",
-    links: [
-      { label: "Pricing", href: "/pricing" },
-      { label: "Affiliates", href: "/affiliates" },
-      { label: "Contact", href: "mailto:support@scenelith.com" },
-    ],
-  },
-  {
-    title: "Legal",
-    links: [
-      { label: "Privacy", href: "/privacy" },
-      { label: "Terms", href: "/terms" },
-    ],
-  },
-];
-
-function PageLink({ item, className }: { item: LinkItem; className?: string }) {
-  if (item.href.startsWith("/")) return <Link className={className} href={item.href}>{item.label}</Link>;
-  return <a className={className} href={item.href}>{item.label}</a>;
-}
-
-function GitHubMark() {
-  return (
-    <svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
-      <path d="M12 .7a11.5 11.5 0 0 0-3.64 22.41c.58.1.79-.25.79-.56v-2.23c-3.22.7-3.9-1.37-3.9-1.37-.53-1.34-1.29-1.7-1.29-1.7-1.05-.72.08-.7.08-.7 1.17.08 1.78 1.2 1.78 1.2 1.04 1.77 2.72 1.26 3.38.96.1-.75.4-1.26.74-1.55-2.57-.3-5.27-1.29-5.27-5.69 0-1.26.45-2.28 1.19-3.09-.12-.29-.52-1.46.11-3.05 0 0 .97-.31 3.16 1.18a10.9 10.9 0 0 1 5.75 0c2.2-1.49 3.16-1.18 3.16-1.18.63 1.59.23 2.76.11 3.05.74.81 1.19 1.83 1.19 3.09 0 4.41-2.71 5.39-5.29 5.68.42.36.79 1.06.79 2.14v3.17c0 .31.21.67.8.56A11.5 11.5 0 0 0 12 .7Z" />
-    </svg>
-  );
-}
-
-export default function McpPage() {
+export default async function McpPage() {
   const endpoint = new URL("/api/mcp", baseUrl()).toString();
   const hasMarketingSite = editionRuntimeProfile.capabilities.marketingSite;
-  const navigation = hasMarketingSite ? cloudNavigation : commonNavigation;
-  const footerGroups = hasMarketingSite ? cloudFooterGroups : commonFooterGroups;
-  const homeHref = hasMarketingSite ? "/" : "/canvas";
-  const canvasLabel = hasMarketingSite ? "Start creating" : "Open canvas";
-  const canvasHref = hasMarketingSite ? "/login?mode=register" : "/canvas";
+  const authenticated = Boolean(await getCurrentUser());
 
   return (
     <div className={styles.page}>
-      <header className={styles.header}>
-        <div className={styles.headerInner}>
-          <Link className={styles.wordmark} href={homeHref} aria-label="Scenelith home">
-            <BrandMark title="Scenelith" />
-            <span>SCENELITH</span>
-          </Link>
-
-          <nav className={styles.navigation} aria-label="Primary navigation">
-            {navigation.map((item) => (
-              <PageLink key={item.label} item={item} className={item.href === "/mcp" ? styles.activeNavigation : undefined} />
-            ))}
-          </nav>
-
-          <div className={styles.headerActions}>
-            <a className={styles.github} href="https://github.com/Scenelith/scenelith" target="_blank" rel="noreferrer" aria-label="Scenelith on GitHub">
-              <GitHubMark />
-            </a>
-            <Link className={styles.connectedLink} href="/settings/mcp">Connected agents</Link>
-            <Link className={styles.openCanvas} href={canvasHref}>{canvasLabel}</Link>
-          </div>
-        </div>
-      </header>
+      <MarketingHeader active="MCP" authenticated={authenticated} marketingSite={hasMarketingSite} />
 
       <main>
         <section className={styles.hero}>
@@ -239,29 +129,7 @@ export default function McpPage() {
           <a href="#connect">Copy the MCP link <ArrowRight size={16} /></a>
         </section>
       </main>
-
-      <footer className={styles.footer}>
-        <div className={styles.footerInner}>
-          <div className={styles.footerMain}>
-            <section className={styles.footerBrand}>
-              <Link className={styles.wordmark} href={homeHref}><BrandMark /><span>SCENELITH</span></Link>
-              <p>A connected canvas for visual production. Keep references, prompts, images and motion in one workflow.</p>
-              <Link className={styles.footerCta} href={canvasHref}>{hasMarketingSite ? "Build your first workflow" : "Return to canvas"}</Link>
-            </section>
-            <div className={styles.footerLinks}>
-              {footerGroups.map((group) => (
-                <section key={group.title}><h2>{group.title}</h2><ul>{group.links.map((item) => <li key={item.label}><PageLink item={item} /></li>)}</ul></section>
-              ))}
-            </div>
-          </div>
-          <div className={styles.footerMeta}>
-            <span>© {new Date().getFullYear()} SCENELITH</span>
-            <span className={styles.footerStatus}><Circle size={8} fill="currentColor" />SYSTEMS OPERATIONAL</span>
-            <span>VISUAL WORKFLOWS · REMOTE</span>
-          </div>
-        </div>
-        <div className={styles.footerSignal} aria-hidden="true"><i /><i /><i /><i /><i /><i /></div>
-      </footer>
+      <MarketingFooter authenticated={authenticated} marketingSite={hasMarketingSite} />
     </div>
   );
 }

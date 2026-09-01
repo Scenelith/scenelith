@@ -21,14 +21,20 @@ test("MCP is a link-first OAuth connection and never an API-key setup", () => {
 test("MCP setup uses the Scenelith marketing shell across Cloud and self-host", () => {
   const setup = source("src/app/mcp/page.tsx");
   const styles = source("src/app/mcp/mcp.module.css");
-  assert.match(setup, /import BrandMark from "@\/components\/BrandMark"/);
+  const header = source("src/components/marketing/MarketingHeader.tsx");
+  const footer = source("src/components/marketing/MarketingFooter.tsx");
+  const chrome = source("src/components/marketing/MarketingChrome.module.css");
+  assert.match(setup, /import MarketingHeader from "@\/components\/marketing\/MarketingHeader"/);
+  assert.match(setup, /import MarketingFooter from "@\/components\/marketing\/MarketingFooter"/);
   assert.match(setup, /editionRuntimeProfile\.capabilities\.marketingSite/);
-  assert.match(setup, /<header className=\{styles\.header\}>/);
-  assert.match(setup, /<footer className=\{styles\.footer\}>/);
-  assert.match(setup, /Connected agents/);
+  assert.match(setup, /<MarketingHeader active="MCP" authenticated=\{authenticated\} marketingSite=\{hasMarketingSite\}/);
+  assert.match(setup, /<MarketingFooter authenticated=\{authenticated\} marketingSite=\{hasMarketingSite\}/);
+  assert.match(header, /import BrandMark from "@\/components\/BrandMark"/);
+  for (const label of ["Product", "Models", "Pricing", "Affiliates", "MCP", "Docs"]) assert.match(header, new RegExp(`>${label}<`));
+  assert.match(footer, /Connected agents/);
   assert.doesNotMatch(setup, /Sparkles/);
   assert.match(styles, /font-size: clamp\(70px, 7\.2vw, 118px\)/);
-  assert.match(styles, /\.footerSignal/);
+  assert.match(chrome, /\.footerSignal/);
 });
 
 test("MCP capabilities are scope-gated and canvas writes are revision-safe", () => {
