@@ -42,7 +42,9 @@ Commands:
   backup [--output DIR]  Create a checksummed database and local-media backup
   restore --from DIR --confirm
                          Replace current data with a verified backup
-  update [VERSION]       Back up and install the latest or selected release
+  update [VERSION]       Safely back up and install the latest or selected release
+  storage configure-cors Apply and verify browser upload CORS on both S3 buckets
+  storage check-cors     Verify the managed CORS rule without changing it
   config                 Print the resolved Docker Compose configuration
   help                   Show this help
 
@@ -73,11 +75,10 @@ distribution_version() {
 }
 
 replace_environment_value() {
-  key=$1
-  value=$2
-  temporary="$ENV_FILE.tmp.$$"
-  trap 'rm -f "$temporary"' 0 HUP INT TERM
-  awk -v wanted="$key" -v replacement="$value" '
+  replace_env_key=$1
+  replace_env_value=$2
+  replace_env_temporary="$ENV_FILE.tmp.$$"
+  awk -v wanted="$replace_env_key" -v replacement="$replace_env_value" '
     BEGIN { replaced = 0 }
     index($0, wanted "=") == 1 {
       print wanted "=" replacement
@@ -88,10 +89,9 @@ replace_environment_value() {
     END {
       if (!replaced) print wanted "=" replacement
     }
-  ' "$ENV_FILE" > "$temporary"
-  chmod 600 "$temporary"
-  mv "$temporary" "$ENV_FILE"
-  trap - 0 HUP INT TERM
+  ' "$ENV_FILE" > "$replace_env_temporary"
+  chmod 600 "$replace_env_temporary"
+  mv "$replace_env_temporary" "$ENV_FILE"
 }
 
 random_secret() {
@@ -130,6 +130,39 @@ require_environment() {
 compose() {
   require_environment
   docker compose --env-file "$ENV_FILE" -f "$COMPOSE_FILE" "$@"
+}
+
+storage_cors_is_managed() {
+  value=$(environment_value STORAGE_CORS_MANAGED)
+  [ -z "$value" ] || [ "$value" = true ]
+}
+
+storage_cors() {
+  require_environment
+  action=${1:-}
+  [ "$(environment_value STORAGE_PROVIDER)" = s3 ] || die "Storage CORS commands require STORAGE_PROVIDER=s3. Local storage does not need bucket CORS."
+  case "$action" in
+    configure-cors)
+      say "Applying the Scenelith browser upload CORS rule to both S3 buckets..."
+      compose run --rm --no-deps -T storage-worker node scripts/configure-r2-cors.mjs
+      ;;
+    check-cors)
+      say "Checking browser upload CORS on both S3 buckets..."
+      compose run --rm --no-deps -T storage-worker node scripts/configure-r2-cors.mjs --check
+      ;;
+    *) die "Usage: ./scenelith storage configure-cors|check-cors" ;;
+  esac
+}
+
+configure_managed_storage_cors() {
+  [ "$(environment_value STORAGE_PROVIDER)" = s3 ] || return 0
+  if storage_cors_is_managed; then
+    if ! storage_cors configure-cors; then
+      warn "Automatic S3 CORS configuration failed. Scenelith will still start, but direct browser uploads may fail until ./scenelith storage configure-cors succeeds."
+    fi
+  else
+    warn "Automatic S3 CORS management is disabled. Run ./scenelith storage check-cors after configuring both buckets externally."
+  fi
 }
 
 version_at_least() {
@@ -350,6 +383,18 @@ EOF
         else
           doctor_add ok storage "S3-compatible media storage is configured."
         fi
+        cors_origins=$(environment_value STORAGE_CORS_ORIGINS)
+        [ -n "$cors_origins" ] || cors_origins=$(environment_value PUBLIC_URL)
+        if [ -z "$cors_origins" ]; then
+          doctor_add error storage-cors "PUBLIC_URL or STORAGE_CORS_ORIGINS is required for direct browser uploads."
+        else
+          cors_managed=$(environment_value STORAGE_CORS_MANAGED)
+          case "$cors_managed" in
+            ''|true) doctor_add ok storage-cors "S3 browser upload CORS will be applied and verified automatically for the configured origin." ;;
+            false) doctor_add warning storage-cors "Automatic S3 CORS management is disabled; the external bucket policy must be verified separately." ;;
+            *) doctor_add error storage-cors "STORAGE_CORS_MANAGED must be true or false." ;;
+          esac
+        fi
         ;;
       *) doctor_add error storage "Unsupported storage provider: $storage. Use local or s3." ;;
     esac
@@ -405,16 +450,22 @@ EOF
 }
 
 start_services() {
+  require_environment
+  merge_environment_defaults "$ENV_EXAMPLE" "$ENV_FILE"
   doctor || return 1
   say "Pulling the pinned Scenelith and infrastructure images..."
   compose pull || return 1
+  configure_managed_storage_cors || return 1
   say "Starting Scenelith..."
   compose up -d --no-build --wait --wait-timeout 300 || return 1
   say "Scenelith is ready at $(environment_value PUBLIC_URL)."
 }
 
 restart_services() {
+  require_environment
+  merge_environment_defaults "$ENV_EXAMPLE" "$ENV_FILE"
   doctor || return 1
+  configure_managed_storage_cors || return 1
   say "Recreating Scenelith from the installed images..."
   compose up -d --no-build --wait --wait-timeout 300 || return 1
   say "Scenelith is ready at $(environment_value PUBLIC_URL)."
@@ -667,9 +718,40 @@ copy_bundle_files() {
   chmod 755 "$destination_root/scenelith"
 }
 
+merge_environment_defaults() {
+  merge_env_defaults=$1
+  merge_env_target=$2
+  merge_env_temporary="$merge_env_target.tmp.$$"
+  cp "$merge_env_target" "$merge_env_temporary"
+  merge_env_added=0
+  while IFS= read -r line || [ -n "$line" ]; do
+    case "$line" in
+      *=*)
+        key=${line%%=*}
+        case "$key" in
+          ''|*[!A-Z0-9_]*) ;;
+          *)
+            if ! grep -q "^${key}=" "$merge_env_target"; then
+              if [ "$merge_env_added" -eq 0 ]; then
+                printf '\n# Defaults added by a Scenelith update. Review before changing.\n' >> "$merge_env_temporary"
+              fi
+              printf '%s\n' "$line" >> "$merge_env_temporary"
+              merge_env_added=$((merge_env_added + 1))
+            fi
+            ;;
+        esac
+        ;;
+    esac
+  done < "$merge_env_defaults"
+  chmod 600 "$merge_env_temporary"
+  mv "$merge_env_temporary" "$merge_env_target"
+  [ "$merge_env_added" -eq 0 ] || say "Added $merge_env_added new release default(s) to deploy/selfhost/.env without changing existing values."
+}
+
 update_installation() {
   [ ! -e "$ROOT/.git" ] || die "Source checkouts update through Git and tagged releases; ./scenelith update is for release-bundle installations."
   require_environment
+  doctor || die "The current installation must pass ./scenelith doctor before it can be updated."
   requested_version=${1:-latest}
   if [ "$requested_version" = latest ]; then
     release_path=latest/download
@@ -679,19 +761,19 @@ update_installation() {
     release_path="download/v$requested_version"
   fi
 
-  temporary=$(mktemp -d "${TMPDIR:-/tmp}/scenelith-update.XXXXXX")
-  trap 'rm -rf "$temporary"' 0 HUP INT TERM
+  update_temporary=$(mktemp -d "${TMPDIR:-/tmp}/scenelith-update.XXXXXX")
+  trap 'rm -rf "$update_temporary"' 0 HUP INT TERM
   base_url="https://github.com/$REPOSITORY/releases/$release_path"
   say "Downloading the verified Scenelith release bundle..."
-  download "$base_url/$ASSET_NAME" "$temporary/$ASSET_NAME"
-  download "$base_url/$ASSET_NAME.sha256" "$temporary/$ASSET_NAME.sha256"
-  expected=$(awk 'NR == 1 { print $1 }' "$temporary/$ASSET_NAME.sha256")
+  download "$base_url/$ASSET_NAME" "$update_temporary/$ASSET_NAME"
+  download "$base_url/$ASSET_NAME.sha256" "$update_temporary/$ASSET_NAME.sha256"
+  expected=$(awk 'NR == 1 { print $1 }' "$update_temporary/$ASSET_NAME.sha256")
   case "$expected" in *[!a-fA-F0-9]*|'') die "Release checksum is invalid" ;; esac
-  [ "$(sha256_file "$temporary/$ASSET_NAME")" = "$expected" ] || die "Release bundle checksum mismatch"
-  unsafe=$(tar -tzf "$temporary/$ASSET_NAME" | awk '/^\// || /(^|\/)\.\.($|\/)/ { print; exit }')
+  [ "$(sha256_file "$update_temporary/$ASSET_NAME")" = "$expected" ] || die "Release bundle checksum mismatch"
+  unsafe=$(tar -tzf "$update_temporary/$ASSET_NAME" | awk '/^\// || /(^|\/)\.\.($|\/)/ { print; exit }')
   [ -z "$unsafe" ] || die "Release archive contains an unsafe path: $unsafe"
-  tar -xzf "$temporary/$ASSET_NAME" -C "$temporary"
-  incoming="$temporary/scenelith-selfhost"
+  tar -xzf "$update_temporary/$ASSET_NAME" -C "$update_temporary"
+  incoming="$update_temporary/scenelith-selfhost"
   verify_bundle_manifest "$incoming"
   incoming_version=$(environment_value_from "$incoming/deploy/selfhost/.env.example" SCENELITH_VERSION)
   printf '%s\n' "$incoming_version" | grep -Eq '^[0-9]+\.[0-9]+\.[0-9]+$' || die "Downloaded bundle has an invalid version"
@@ -701,7 +783,7 @@ update_installation() {
   current_version=$(environment_value SCENELITH_VERSION)
   if [ "$current_version" = "$incoming_version" ]; then
     say "Scenelith $current_version is already installed."
-    rm -rf "$temporary"
+    rm -rf "$update_temporary"
     trap - 0 HUP INT TERM
     return
   fi
@@ -711,22 +793,23 @@ update_installation() {
 
   say "Creating a verified backup before updating $current_version → $incoming_version..."
   backup
-  previous="$temporary/previous"
+  previous="$update_temporary/previous"
   copy_bundle_files "$ROOT" "$previous"
-  cp "$ENV_FILE" "$temporary/previous.env"
+  cp "$ENV_FILE" "$update_temporary/previous.env"
 
   copy_bundle_files "$incoming" "$ROOT"
+  merge_environment_defaults "$ENV_EXAMPLE" "$ENV_FILE"
   replace_environment_value SCENELITH_VERSION "$incoming_version"
   if "$ROOT/scenelith" start; then
     say "Updated Scenelith $current_version → $incoming_version."
-    rm -rf "$temporary"
+    rm -rf "$update_temporary"
     trap - 0 HUP INT TERM
     return
   fi
 
   warn "The new release did not become healthy. Restoring the previous operational files and image."
   copy_bundle_files "$previous" "$ROOT"
-  cp "$temporary/previous.env" "$ENV_FILE"
+  cp "$update_temporary/previous.env" "$ENV_FILE"
   chmod 600 "$ENV_FILE"
   if "$ROOT/scenelith" start; then
     die "Update failed and Scenelith $current_version was restarted. The pre-update data backup remains in backups/."
@@ -758,6 +841,10 @@ case "$command" in
   update)
     [ "$#" -le 1 ] || die "Usage: ./scenelith update [VERSION]"
     update_installation "${1:-latest}"
+    ;;
+  storage)
+    [ "$#" -eq 1 ] || die "Usage: ./scenelith storage configure-cors|check-cors"
+    storage_cors "$1"
     ;;
   config) compose config ;;
   help|-h|--help) usage ;;

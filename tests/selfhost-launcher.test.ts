@@ -32,6 +32,11 @@ if [ "\${1:-}" = compose ] && [ "\${2:-}" = version ]; then
   exit 0
 fi
 printf '%s\\n' "$*" >> "\${SCENELITH_TEST_DOCKER_LOG}"
+case "$*" in
+  *"node scripts/configure-r2-cors.mjs"*)
+    if [ "\${SCENELITH_TEST_FAIL_CORS:-0}" = 1 ]; then exit 1; fi
+    ;;
+esac
 exit 0
 `, { mode: 0o755 });
   chmodSync(path, 0o755);
@@ -54,6 +59,25 @@ case "$url" in
   *.sha256) cp "\${SCENELITH_TEST_CHECKSUM}" "$destination" ;;
   *) cp "\${SCENELITH_TEST_ARCHIVE}" "$destination" ;;
 esac
+`, { mode: 0o755 });
+  chmodSync(path, 0o755);
+}
+
+function createFailingUpdateDocker(directory: string) {
+  const path = join(directory, "docker");
+  writeFileSync(path, `#!/bin/sh
+if [ "\${1:-}" = compose ] && [ "\${2:-}" = version ]; then
+  printf '2.38.2\\n'
+  exit 0
+fi
+printf '%s\\n' "$*" >> "\${SCENELITH_TEST_DOCKER_LOG}"
+case "$*" in
+  *"up -d --no-build --wait --wait-timeout 300"*)
+    installed_version=$(awk -F= '$1 == "SCENELITH_VERSION" { print $2; exit }' "\${SCENELITH_TEST_INSTALL_ENV}")
+    if [ "$installed_version" = "\${SCENELITH_TEST_FAIL_VERSION}" ]; then exit 1; fi
+    ;;
+esac
+exit 0
 `, { mode: 0o755 });
   chmodSync(path, 0o755);
 }
@@ -119,6 +143,28 @@ test("the release bundle installs without Git, npm, or a host Node runtime", () 
   assert.equal(statSync(join(backupDirectory, "media.tar.gz")).isFile(), true);
   const restore = spawnSync("./scenelith", ["restore", "--from", backupDirectory, "--confirm"], { cwd: bundle, encoding: "utf8", env: processEnvironment });
   assert.equal(restore.status, 0, restore.stderr || restore.stdout);
+
+  writeFileSync(envPath, readFileSync(envPath, "utf8")
+    .replace(/^STORAGE_PROVIDER=.*$/m, "STORAGE_PROVIDER=s3")
+    .replace(/^S3_ACCESS_KEY_ID=.*$/m, "S3_ACCESS_KEY_ID=test-access")
+    .replace(/^S3_SECRET_ACCESS_KEY=.*$/m, "S3_SECRET_ACCESS_KEY=test-secret")
+    .replace(/^S3_PRIVATE_BUCKET=.*$/m, "S3_PRIVATE_BUCKET=test-private")
+    .replace(/^S3_PUBLIC_BUCKET=.*$/m, "S3_PUBLIC_BUCKET=test-public"), { mode: 0o600 });
+  const configureCors = spawnSync("./scenelith", ["storage", "configure-cors"], { cwd: bundle, encoding: "utf8", env: processEnvironment });
+  assert.equal(configureCors.status, 0, configureCors.stderr || configureCors.stdout);
+  const checkCors = spawnSync("./scenelith", ["storage", "check-cors"], { cwd: bundle, encoding: "utf8", env: processEnvironment });
+  assert.equal(checkCors.status, 0, checkCors.stderr || checkCors.stdout);
+  const storageCalls = readFileSync(dockerLog, "utf8");
+  assert.match(storageCalls, /node scripts\/configure-r2-cors\.mjs\n/);
+  assert.match(storageCalls, /node scripts\/configure-r2-cors\.mjs --check/);
+
+  const startWithRejectedCorsPermission = spawnSync("./scenelith", ["start"], {
+    cwd: bundle,
+    encoding: "utf8",
+    env: { ...processEnvironment, SCENELITH_TEST_FAIL_CORS: "1" },
+  });
+  assert.equal(startWithRejectedCorsPermission.status, 0, startWithRejectedCorsPermission.stderr || startWithRejectedCorsPermission.stdout);
+  assert.match(startWithRejectedCorsPermission.stderr, /direct browser uploads may fail/);
 });
 
 test("source checkouts cannot overwrite themselves through the bundle updater", () => {
@@ -170,7 +216,7 @@ test("bundle updates preserve secrets, back up data, and move to one exact image
 
   const incoming = join(temporary, "scenelith-selfhost");
   const incomingExample = join(incoming, "deploy/selfhost/.env.example");
-  writeFileSync(incomingExample, readFileSync(incomingExample, "utf8").replace(/^SCENELITH_VERSION=.*$/m, `SCENELITH_VERSION=${nextVersion}`));
+  writeFileSync(incomingExample, `${readFileSync(incomingExample, "utf8").replace(/^SCENELITH_VERSION=.*$/m, `SCENELITH_VERSION=${nextVersion}`)}\nFUTURE_SAFE_DEFAULT=enabled\n`);
   const manifestPath = join(incoming, "MANIFEST.sha256");
   const manifest = readFileSync(manifestPath, "utf8").split(/\r?\n/).filter(Boolean).map((line) => {
     const path = line.slice(line.indexOf("  ") + 2);
@@ -203,6 +249,63 @@ test("bundle updates preserve secrets, back up data, and move to one exact image
   const updatedEnvironment = parseEnvironment(readFileSync(envPath, "utf8"));
   assert.equal(updatedEnvironment.get("SCENELITH_VERSION"), nextVersion);
   assert.equal(updatedEnvironment.get("SESSION_SECRET"), originalSecret);
+  assert.equal(updatedEnvironment.get("FUTURE_SAFE_DEFAULT"), "enabled");
   assert.equal(readdirSync(join(installation, "backups")).length, 1);
-  assert.match(readFileSync(dockerLog, "utf8"), /compose .* pull/);
+  const updateCalls = readFileSync(dockerLog, "utf8");
+  assert.match(updateCalls, /compose .* pull/);
+  assert.match(updateCalls, /run --rm --no-deps -T storage-worker node scripts\/configure-r2-cors\.mjs/);
+});
+
+test("an unhealthy bundle update restores the previous release while retaining the verified backup", () => {
+  execFileSync(process.execPath, ["scripts/build-selfhost-bundle.mjs"], { cwd: root, stdio: "pipe" });
+  const temporary = mkdtempSync(join(tmpdir(), "scenelith-update-rollback-test-"));
+  execFileSync("tar", ["-xzf", join(root, "dist/scenelith-selfhost.tar.gz"), "-C", temporary]);
+  const installation = join(temporary, "installation");
+  execFileSync("cp", ["-R", join(temporary, "scenelith-selfhost"), installation]);
+  assert.equal(spawnSync("./scenelith", ["init"], { cwd: installation }).status, 0);
+  const envPath = join(installation, "deploy/selfhost/.env");
+  const originalEnvironment = readFileSync(envPath, "utf8");
+
+  const incoming = join(temporary, "scenelith-selfhost");
+  const incomingExample = join(incoming, "deploy/selfhost/.env.example");
+  writeFileSync(incomingExample, readFileSync(incomingExample, "utf8").replace(/^SCENELITH_VERSION=.*$/m, `SCENELITH_VERSION=${nextVersion}`));
+  writeFileSync(join(incoming, "README.md"), `${readFileSync(join(incoming, "README.md"), "utf8")}\nINCOMING UPDATE MARKER\n`);
+  const manifestPath = join(incoming, "MANIFEST.sha256");
+  const manifest = readFileSync(manifestPath, "utf8").split(/\r?\n/).filter(Boolean).map((line) => {
+    const path = line.slice(line.indexOf("  ") + 2);
+    return `${sha256(join(incoming, path))}  ${path}`;
+  }).join("\n");
+  writeFileSync(manifestPath, `${manifest}\n`);
+  const archive = join(temporary, "scenelith-selfhost.tar.gz");
+  execFileSync("tar", ["-czf", archive, "-C", temporary, "scenelith-selfhost"]);
+  const checksum = join(temporary, "scenelith-selfhost.tar.gz.sha256");
+  writeFileSync(checksum, `${sha256(archive)}  scenelith-selfhost.tar.gz\n`);
+
+  const fakeBin = join(temporary, "bin");
+  mkdirSync(fakeBin);
+  createFakeCurl(fakeBin);
+  createFailingUpdateDocker(fakeBin);
+  const dockerLog = join(temporary, "docker.log");
+  writeFileSync(dockerLog, "");
+  const updated = spawnSync("./scenelith", ["update"], {
+    cwd: installation,
+    encoding: "utf8",
+    env: {
+      ...process.env,
+      PATH: `${fakeBin}:${process.env.PATH}`,
+      SCENELITH_TEST_ARCHIVE: archive,
+      SCENELITH_TEST_CHECKSUM: checksum,
+      SCENELITH_TEST_DOCKER_LOG: dockerLog,
+      SCENELITH_TEST_INSTALL_ENV: envPath,
+      SCENELITH_TEST_FAIL_VERSION: nextVersion,
+    },
+  });
+  assert.notEqual(updated.status, 0);
+  assert.match(updated.stderr, /previous operational files and image/);
+  assert.match(updated.stderr, /was restarted/);
+  assert.equal(readFileSync(envPath, "utf8"), originalEnvironment);
+  assert.doesNotMatch(readFileSync(join(installation, "README.md"), "utf8"), /INCOMING UPDATE MARKER/);
+  assert.equal(readdirSync(join(installation, "backups")).length, 1);
+  const starts = readFileSync(dockerLog, "utf8").match(/up -d --no-build --wait --wait-timeout 300/g) || [];
+  assert.equal(starts.length, 2);
 });

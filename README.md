@@ -86,6 +86,8 @@ cd scenelith
 
 The first account becomes the instance owner, and public registration closes by default. For domains, automatic HTTPS, S3-compatible storage, backups, upgrades, rollback, and the complete service topology, read the [self-hosting guide](docs/SELF_HOSTING.md).
 
+Release-bundle installations update in place with `./scenelith update`. The updater verifies the release, creates a checksummed backup, preserves the private environment and persistent data volumes, merges new configuration defaults without overwriting existing values, waits for health checks, and automatically returns to the previous image if the new release is unhealthy.
+
 <details>
 <summary><strong>Inspect the installer before running it</strong></summary>
 
