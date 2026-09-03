@@ -60,7 +60,16 @@ Uploaded and generated media uses the `scenelith-data` Docker volume by default.
 
 For distributed or off-host media storage, set `STORAGE_PROVIDER=s3` and configure the `S3_*` values in the environment file. Leave `S3_ENDPOINT` blank for AWS S3; set it for S3-compatible services such as MinIO, Backblaze, Cloudflare R2, or DigitalOcean Spaces.
 
-Create the private and public buckets named in the environment file. Source-checkout operators can run `npm run storage:configure-cors`. Release-bundle operators should create one CORS rule on both buckets: allow the origins in `PUBLIC_URL` or `STORAGE_CORS_ORIGINS`, allow `GET`, `HEAD`, and `PUT`, allow the `content-type` and `range` headers, and expose `etag`, `content-length`, and `content-range`.
+Create the private and public buckets named in the environment file. `PUBLIC_URL` is used as the browser upload origin by default; set `STORAGE_CORS_ORIGINS` to a comma-separated list only when the instance also needs another origin such as a local development URL.
+
+On `./scenelith start`, `restart`, and `update`, the release bundle applies an idempotent managed CORS rule to both buckets and verifies the result. The S3 credentials therefore need permission to read and write bucket CORS in addition to object access. A provider permission error is reported prominently without taking the whole instance offline; direct browser uploads may fail until the explicit configuration command succeeds. Run the same operation or a read-only check with:
+
+```bash
+./scenelith storage configure-cors
+./scenelith storage check-cors
+```
+
+The managed rule allows the configured origins, `GET`, `HEAD`, and `PUT`, accepts the `content-type` and `range` headers, and exposes `etag`, `content-length`, and `content-range`. Existing unrelated CORS rules are preserved. Set `STORAGE_CORS_MANAGED=false` only when bucket policy is controlled externally; `./scenelith doctor` will then warn that CORS needs an independent check. Source-checkout operators may also run `npm run storage:configure-cors`.
 
 ## Public server
 
@@ -92,7 +101,11 @@ Create and verify a backup first:
 
 The command briefly quiesces application writers, writes a PostgreSQL custom-format dump, archives local media, records checksums and release metadata, then starts the stack again. It never copies provider keys. S3-compatible media remains in operator-owned object storage and needs its own versioning or snapshot policy.
 
-Run `./scenelith update` for the latest stable release or `./scenelith update 1.2.3` for an exact release. The updater verifies the release archive and internal manifest, creates a backup, preserves the environment and Docker volumes, installs only the allowlisted deployment files, pulls the exact application image, applies ordered migrations, and waits for health checks. If the new services do not become healthy, it restores the previous deployment files and image. Core migrations are expand-only so the prior application image remains a valid operational rollback while the backup remains the data recovery boundary.
+Run `./scenelith update` for the latest stable release or `./scenelith update 1.2.3` for an exact release. This is the supported update path for release-bundle installations; do not replace the installation directory by hand.
+
+The updater verifies the current installation, downloads and verifies the release archive and internal manifest, creates a checksummed backup, preserves every existing environment value and Docker volume, adds only newly introduced environment defaults, installs only allowlisted deployment files, pulls the exact application image, applies ordered migrations, configures S3 CORS when enabled, and waits for health checks. User accounts, Canvas projects, workflows, credentials, and local media remain in PostgreSQL and persistent volumes rather than in the replaceable bundle files.
+
+If the new services do not become healthy, the updater restores the previous deployment files, environment, and image and restarts the prior version. Core migrations are enforced as expand-only, so the prior application remains compatible with the migrated database without discarding writes made during the attempted update. The pre-update backup remains available as the explicit data-recovery boundary. For S3-compatible media, enable provider-side versioning or snapshots because those objects are outside the local backup.
 
 To restore a backup, use its absolute directory and explicit confirmation:
 

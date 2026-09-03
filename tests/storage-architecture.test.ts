@@ -46,6 +46,8 @@ test("application PostgreSQL schema is immutable and versioned", () => {
 test("R2 and generic S3 browser upload CORS are managed without deleting unrelated rules", () => {
   const storage = source("src/lib/storage.ts");
   const cors = source("scripts/configure-r2-cors.mjs");
+  const dockerfile = source("Dockerfile");
+  const runtime = source("deploy/compose/runtime.yaml");
   assert.match(cors, /scenelith-browser-media-v1/);
   assert.match(cors, /AllowedMethods: \["GET", "HEAD", "PUT"\]/);
   assert.match(cors, /ExposeHeaders: \["etag", "content-length", "content-range"\]/);
@@ -53,6 +55,10 @@ test("R2 and generic S3 browser upload CORS are managed without deleting unrelat
   assert.match(cors, /STORAGE_PROVIDER/);
   assert.match(cors, /S3_ENDPOINT/);
   assert.match(cors, /STORAGE_CORS_ORIGINS/);
+  assert.match(cors, /--check/);
+  assert.match(cors, /CORS configured and verified/);
+  assert.match(dockerfile, /scripts\/configure-r2-cors\.mjs/);
+  assert.match(runtime, /STORAGE_CORS_ORIGINS/);
   assert.match(storage, /endpoint: endpoint \|\| undefined/);
   assert.doesNotMatch(storage, /S3_ENDPOINT is not configured/);
 });

@@ -39,6 +39,7 @@ COPY --chown=scenelith:scenelith src ./src
 COPY --chown=scenelith:scenelith config ./config
 COPY --chown=scenelith:scenelith database ./database
 COPY --chown=scenelith:scenelith collaboration ./collaboration
+COPY --chown=scenelith:scenelith scripts/configure-r2-cors.mjs ./scripts/configure-r2-cors.mjs
 RUN mkdir -p /app/data/storage && chown -R scenelith:scenelith /app/data
 USER scenelith
 EXPOSE 3000

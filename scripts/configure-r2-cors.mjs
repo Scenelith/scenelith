@@ -6,6 +6,15 @@ import {
 import { existsSync, readFileSync } from "node:fs";
 import { resolve } from "node:path";
 
+const supportedArguments = new Set(["--check", "--dry-run"]);
+const argumentsList = process.argv.slice(2);
+for (const argument of argumentsList) {
+  if (!supportedArguments.has(argument)) throw new Error(`Unknown option: ${argument}`);
+}
+const checkOnly = argumentsList.includes("--check");
+const dryRun = argumentsList.includes("--dry-run");
+if (checkOnly && dryRun) throw new Error("--check and --dry-run cannot be used together");
+
 const environment = { ...process.env };
 const selfhostEnvironmentPath = resolve(import.meta.dirname, "../deploy/selfhost/.env");
 if (existsSync(selfhostEnvironmentPath)) {
@@ -71,8 +80,21 @@ const managedRule = {
   MaxAgeSeconds: 3600,
 };
 
+function sameValues(actual = [], expected = []) {
+  return [...actual].map(String).sort().join("\n") === [...expected].map(String).sort().join("\n");
+}
+
+function matchesManagedRule(rule) {
+  return rule?.ID === managedRule.ID
+    && sameValues(rule.AllowedOrigins, managedRule.AllowedOrigins)
+    && sameValues(rule.AllowedMethods, managedRule.AllowedMethods)
+    && sameValues(rule.AllowedHeaders, managedRule.AllowedHeaders)
+    && sameValues(rule.ExposeHeaders, managedRule.ExposeHeaders)
+    && Number(rule.MaxAgeSeconds) === managedRule.MaxAgeSeconds;
+}
+
 for (const bucket of buckets) {
-  if (environment.STORAGE_CORS_DRY_RUN === "1" || environment.R2_CORS_DRY_RUN === "1") {
+  if (dryRun || environment.STORAGE_CORS_DRY_RUN === "1" || environment.R2_CORS_DRY_RUN === "1") {
     console.log(JSON.stringify({ bucket, managedRule }, null, 2));
     continue;
   }
@@ -83,11 +105,25 @@ for (const bucket of buckets) {
     const status = error?.$metadata?.httpStatusCode;
     if (status !== 404 && error?.name !== "NoSuchCORSConfiguration") throw error;
   }
+  const currentManagedRule = existing.find((rule) => rule.ID === managedRuleId);
+  if (checkOnly) {
+    if (!matchesManagedRule(currentManagedRule)) {
+      throw new Error(`${s3 ? "S3-compatible" : "R2"} CORS is missing or stale for ${bucket}. Run ./scenelith storage configure-cors.`);
+    }
+    console.log(`${s3 ? "S3-compatible" : "R2"} CORS verified for ${bucket}`);
+    continue;
+  }
+  if (matchesManagedRule(currentManagedRule)) {
+    console.log(`${s3 ? "S3-compatible" : "R2"} CORS already configured for ${bucket}`);
+    continue;
+  }
   const preserved = existing.filter((rule) => rule.ID !== managedRuleId);
   const rules = [...preserved, managedRule];
   await client.send(new PutBucketCorsCommand({
     Bucket: bucket,
     CORSConfiguration: { CORSRules: rules },
   }));
-  console.log(`${s3 ? "S3-compatible" : "R2"} CORS configured for ${bucket}; ${preserved.length} unrelated rule(s) preserved`);
+  const verified = (await client.send(new GetBucketCorsCommand({ Bucket: bucket }))).CORSRules || [];
+  if (!verified.some(matchesManagedRule)) throw new Error(`CORS verification failed for ${bucket}`);
+  console.log(`${s3 ? "S3-compatible" : "R2"} CORS configured and verified for ${bucket}; ${preserved.length} unrelated rule(s) preserved`);
 }
