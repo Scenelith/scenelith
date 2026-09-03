@@ -5,7 +5,7 @@
 import { createContext, memo, useContext, useEffect, useLayoutEffect, useMemo, useRef, useState, useSyncExternalStore, type CSSProperties, type Dispatch, type DragEvent as ReactDragEvent, type PointerEvent as ReactPointerEvent, type ReactNode, type SetStateAction } from "react";
 import { createPortal } from "react-dom";
 import { Handle, NodeToolbar, Position, useUpdateNodeInternals, type NodeProps } from "@xyflow/react";
-import { ArrowRightLeft, Check, ChevronDown, Clapperboard, Copy, Download, Expand, Eye, EyeOff, FileText, ImageIcon, Images, MousePointer2, Pause, Play, Plus, Quote, Settings2, Sparkles, StickyNote, Trash2, Upload, UserRound, Video, Volume2, VolumeX, WandSparkles, Workflow, X } from "lucide-react";
+import { ArrowRightLeft, Check, ChevronDown, Clapperboard, Copy, Download, Expand, Eye, EyeOff, FileText, ImageIcon, Images, MousePointer2, Pause, Play, Plus, Quote, RotateCcw, Settings2, Sparkles, StickyNote, Trash2, Upload, UserRound, Video, Volume2, VolumeX, WandSparkles, Workflow, X } from "lucide-react";
 import type { FrameNode, GeneratorInputRole, PersonaRecord, VideoMasterClip, VideoSceneSegment } from "@/lib/types";
 import { referenceMentionToken } from "@/lib/reference-mentions";
 import { ImageGeneration } from "@/components/ui/ai-chat-image-generation-1";
@@ -21,11 +21,55 @@ import { VideoMasterPlayer } from "@/components/VideoMasterPlayer";
 import { editorPlaybackUrl } from "@/lib/editor-media";
 import { AddToIdentityPopover } from "@/components/AddToIdentityPopover";
 import { ReferenceMenuShell } from "@/components/ReferenceMenuShell";
+import { imagePromptSystemInstruction, videoPromptSystemInstruction } from "@/lib/generation-prompt-system";
 
 export { CanvasVideoPlayer, type CanvasVideoPlaybackRequest } from "@/components/CanvasVideoPlayer";
 
 export type GeneratorModelOption = { id: string; label: string; mediaType: "image" | "video"; description: string; maxReferences: number; ratios?: string[]; ratiosByResolution?: Record<string, string[]>; referenceRatiosByResolution?: Record<string, string[]>; referenceOnlyRatios?: string[]; resolutions?: string[]; videoInputOnlyResolutions?: string[]; durations?: string[]; defaultRatio?: string; defaultResolution?: string; defaultDuration?: string; defaultGenerateAudio?: boolean; durationSource?: "select" | "reference-video"; inputPorts?: Array<{ id: string; label: string; kind: "image" | "video" | "audio"; required?: boolean; max?: number }>; supportsAudio?: boolean };
 type GeneratorReference = { id: string; edgeId?: string; url: string; title: string; thumbnailUrl?: string; assetId?: string; sourceNodeId?: string; personaId?: string; removable?: boolean; variant?: "reference" | "before" | "after"; role?: string; durationSeconds?: number; aspectRatio?: number };
+
+function GenerationAssistantSystemSettings({ defaultPrompt, savedCustomPrompt, mode, draft, onModeChange, onDraftChange, onReset, onSave }: {
+  defaultPrompt: string;
+  savedCustomPrompt: string;
+  mode: "default" | "custom";
+  draft: string;
+  onModeChange: (mode: "default" | "custom") => void;
+  onDraftChange: (value: string) => void;
+  onReset: () => void;
+  onSave: () => void;
+}) {
+  const hasSavedCustomPrompt = Boolean(savedCustomPrompt.trim());
+  const visiblePrompt = mode === "default" ? defaultPrompt : draft;
+  return <div className="generator-assistant-system-settings">
+    <div className="generator-assistant-system-intro">
+      <span><strong>SYSTEM PROMPT</strong><em className={mode === "custom" ? "is-custom" : ""}>{mode === "custom" ? "Custom" : "Scenelith default"}</em></span>
+      <p>Choose the built-in prompt or add instructions for this generation node. Required model and reference rules always stay active.</p>
+    </div>
+    <div className="generator-assistant-system-modes" role="tablist" aria-label="System prompt mode">
+      <button type="button" role="tab" aria-selected={mode === "default"} className={mode === "default" ? "is-active" : ""} onClick={() => onModeChange("default")}><span>Default</span><small>Updates with Scenelith</small></button>
+      <button type="button" role="tab" aria-selected={mode === "custom"} className={mode === "custom" ? "is-active" : ""} onClick={() => onModeChange("custom")}><span>Custom</span><small>Saved to this node</small></button>
+    </div>
+    <label className={`generator-assistant-system-editor ${mode === "default" ? "is-readonly" : ""}`}>
+      <span>{mode === "default" ? "Current default instructions" : "Your additional instructions"}<small>{visiblePrompt.length.toLocaleString("en-US")} / 10,000</small></span>
+      <textarea
+        aria-label={mode === "default" ? "Default system prompt" : "Custom system prompt"}
+        value={visiblePrompt}
+        readOnly={mode === "default"}
+        maxLength={10_000}
+        placeholder="Example: Use concise editorial language. Preserve the product's calm, premium tone."
+        onChange={(event) => onDraftChange(event.target.value)}
+        onWheelCapture={(event) => event.stopPropagation()}
+      />
+    </label>
+    <footer className="generator-assistant-system-actions">
+      <span>{mode === "custom" ? "Custom instructions are added after the default contract." : "No copy is stored, so future defaults apply automatically."}</span>
+      <div>
+        {hasSavedCustomPrompt && <button type="button" className="is-reset" onClick={onReset}><RotateCcw size={11} /><b>Reset to default</b></button>}
+        {mode === "custom" && <button type="button" className="is-save" disabled={!draft.trim()} onClick={onSave}><b>Save custom</b></button>}
+      </div>
+    </footer>
+  </div>;
+}
 
 export function generatorRatiosFor(model: GeneratorModelOption | undefined, resolution: string | undefined, hasReferences: boolean) {
   if (!model) return ["1:1", "4:5", "9:16", "16:9"];
@@ -1399,6 +1443,9 @@ function FrameNodeCardComponent({ id, data, selected }: NodeProps<FrameNode>) {
   const [videoMasterOutputFilter, setVideoMasterOutputFilter] = useState<"scene" | "all">("scene");
   const [videoMasterOutputTarget, setVideoMasterOutputTarget] = useState<string | null>(null);
   const [assistantSettingsOpen, setAssistantSettingsOpen] = useState(false);
+  const [promptAssistantSettingsOpen, setPromptAssistantSettingsOpen] = useState(false);
+  const [promptAssistantSystemMode, setPromptAssistantSystemMode] = useState<"default" | "custom">("default");
+  const [promptAssistantSystemDraft, setPromptAssistantSystemDraft] = useState("");
   const [assistantCopied, setAssistantCopied] = useState(false);
   const [assistantView, setAssistantView] = useState<"input" | "output">("input");
   const [videoMasterControlsHost, setVideoMasterControlsHost] = useState<HTMLDivElement | null>(null);
@@ -1433,6 +1480,25 @@ function FrameNodeCardComponent({ id, data, selected }: NodeProps<FrameNode>) {
   const assistantSettingsRef = useRef<HTMLDivElement>(null);
   const [liveNodeWidth, setLiveNodeWidth] = useState<number | null>(null);
   const [liveNodeHeight, setLiveNodeHeight] = useState<number | null>(null);
+  const openPromptAssistantSystemSettings = () => {
+    const customPrompt = String(data.systemPrompt || "");
+    setPromptAssistantSystemDraft(customPrompt);
+    setPromptAssistantSystemMode(customPrompt.trim() ? "custom" : "default");
+    setPromptAssistantSettingsOpen(true);
+    setOpenGeneratorMenu(null);
+  };
+  const resetPromptAssistantSystem = () => {
+    generator?.updateNode(id, { systemPrompt: "" });
+    setPromptAssistantSystemDraft("");
+    setPromptAssistantSystemMode("default");
+  };
+  const savePromptAssistantSystem = () => {
+    const customPrompt = promptAssistantSystemDraft.trim();
+    if (!customPrompt) return;
+    generator?.updateNode(id, { systemPrompt: customPrompt });
+    setPromptAssistantSystemDraft(customPrompt);
+    setPromptAssistantSettingsOpen(false);
+  };
   useEffect(() => {
     if (data.kind !== "videoMaster") return;
     const persistedClipId = data.videoMasterSelectedClipId || data.videoMasterClips?.[0]?.id || "";
@@ -1831,6 +1897,20 @@ function FrameNodeCardComponent({ id, data, selected }: NodeProps<FrameNode>) {
     const generatedOutputs = Array.isArray(data.generatedOutputs) ? data.generatedOutputs.filter((output) => Boolean(output?.url)) : [];
     const outputMediaType = data.mediaType || selectedModel?.mediaType || "image";
     const GeneratorNodeIcon = outputMediaType === "video" ? Video : ImageIcon;
+    const promptAssistantDefaultSystemPrompt = outputMediaType === "video"
+      ? videoPromptSystemInstruction({
+        modelId: selectedModel?.id || data.modelId,
+        modelLabel: selectedModel?.label,
+        duration: data.duration,
+        generateAudio: data.generateAudio ?? selectedModel?.defaultGenerateAudio ?? false,
+        references,
+      })
+      : imagePromptSystemInstruction({
+        modelId: selectedModel?.id || data.modelId,
+        modelLabel: selectedModel?.label,
+        aspectRatio: data.aspectRatio,
+        resolution: data.resolution,
+      });
     const availableModels = generator.models.filter((model) => model.mediaType === outputMediaType);
     const selectedRatio = String(data.aspectRatio || selectedModel?.defaultRatio || "4:5");
     const ratioCss = /^\d+:\d+$/.test(selectedRatio) ? selectedRatio.replace(":", " / ") : "16 / 9";
@@ -2148,7 +2228,7 @@ function FrameNodeCardComponent({ id, data, selected }: NodeProps<FrameNode>) {
             }} />
             {outputMediaType === "video" && Boolean(selectedModel?.durations?.length) && <GeneratorSelect menuKey="duration" openMenu={openGeneratorMenu} setOpenMenu={setOpenGeneratorMenu} className="generator-duration-control" value={data.duration || selectedModel?.defaultDuration || selectedModel?.durations?.[0] || "5"} label="DURATION" options={selectedModel!.durations!.map((duration) => ({ value: duration, label: `${duration}s` }))} onChange={(value) => generator.updateNode(id, { duration: value as FrameNode["data"]["duration"] })} />}
             {outputMediaType === "video" && selectedModel?.supportsAudio && <button type="button" className={`generator-sound-control ${generatedAudioEnabled ? "is-on" : ""}`} title={generatedAudioEnabled ? "Generated audio on" : "Generated audio off"} aria-label={generatedAudioEnabled ? "Disable generated audio" : "Enable generated audio"} onPointerDown={(event) => { event.preventDefault(); event.stopPropagation(); generator.updateNode(id, { generateAudio: !generatedAudioEnabled }); }}>{generatedAudioEnabled ? <Volume2 size={12} /> : <VolumeX size={12} />}</button>}
-            <button type="button" className={`generator-assistant-trigger generator-assistant-control ${assistantOpen ? "is-active" : ""}`} aria-label="Open prompt assistant" title="Prompt assistant" onPointerDown={(event) => { event.preventDefault(); event.stopPropagation(); setOpenGeneratorMenu(null); setAssistantOpen((open) => !open); }}><AssistantGlyph size={13} /></button>
+            <button type="button" className={`generator-assistant-trigger generator-assistant-control ${assistantOpen ? "is-active" : ""}`} aria-label="Open prompt assistant" title="Prompt assistant" onPointerDown={(event) => { event.preventDefault(); event.stopPropagation(); setOpenGeneratorMenu(null); setPromptAssistantSettingsOpen(false); setAssistantOpen((open) => !open); }}><AssistantGlyph size={13} /></button>
             <div className={`generator-run-control ${openGeneratorMenu === "run" ? "is-open" : ""}`}>
               <span id={`generation-cost-${id}`} role="tooltip" className="generator-credit-tooltip">{runCreditLabel}</span>
               <button className="generator-run" onPointerDown={(event) => { event.preventDefault(); event.stopPropagation(); setOpenGeneratorMenu(null); generator.generateNode(id); }} disabled={busy || queued || !canGenerate} aria-label={`Generate this node · ${runCredits} credits`} aria-describedby={`generation-cost-${id}`}>{busy ? <span className="generator-spinner" /> : <Play size={15} fill="currentColor" />}</button>
@@ -2174,8 +2254,21 @@ function FrameNodeCardComponent({ id, data, selected }: NodeProps<FrameNode>) {
       {assistantOpen && <section className="generator-prompt-assistant nodrag nopan" onPointerDown={(event) => event.stopPropagation()}>
         <header className="generator-assistant-head">
           <span>ASSISTANT</span>
-          <button type="button" aria-label="Close prompt assistant" onPointerDown={(event) => { event.stopPropagation(); setAssistantOpen(false); setAssistantMention(null); }}><X size={13} /></button>
+          <div className="generator-assistant-head-actions">
+            <button type="button" className={promptAssistantSettingsOpen ? "is-active" : ""} aria-label="System prompt settings" aria-expanded={promptAssistantSettingsOpen} title="System prompt" onPointerDown={(event) => { event.preventDefault(); event.stopPropagation(); if (promptAssistantSettingsOpen) setPromptAssistantSettingsOpen(false); else openPromptAssistantSystemSettings(); }}><Settings2 size={13} /></button>
+            <button type="button" aria-label="Close prompt assistant" onPointerDown={(event) => { event.stopPropagation(); setAssistantOpen(false); setPromptAssistantSettingsOpen(false); setAssistantMention(null); }}><X size={13} /></button>
+          </div>
         </header>
+        {promptAssistantSettingsOpen ? <GenerationAssistantSystemSettings
+          defaultPrompt={promptAssistantDefaultSystemPrompt}
+          savedCustomPrompt={String(data.systemPrompt || "")}
+          mode={promptAssistantSystemMode}
+          draft={promptAssistantSystemDraft}
+          onModeChange={setPromptAssistantSystemMode}
+          onDraftChange={setPromptAssistantSystemDraft}
+          onReset={resetPromptAssistantSystem}
+          onSave={savePromptAssistantSystem}
+        /> : <>
         <div className="generator-assistant-references">
           <div className="generator-assistant-reference-title"><span>CONNECTED REFERENCES</span><small>Click or type @ to mention</small></div>
           <div className="generator-assistant-reference-strip">
@@ -2202,7 +2295,8 @@ function FrameNodeCardComponent({ id, data, selected }: NodeProps<FrameNode>) {
           </div>}
         </div>
         {assistantError && <p className="generator-assistant-error">{assistantError}</p>}
-        <footer className="generator-assistant-foot"><GeneratorSelect menuKey="prompt-assistant-model" openMenu={openGeneratorMenu} setOpenMenu={setOpenGeneratorMenu} className="prompt-assistant-model-select" value={normalizeAssistantModelId(data.textModelId)} label="ASSISTANT MODEL" options={assistantModels.map((model) => ({ value: model.id, label: model.label, description: assistantModelCreditDescription(model, { inputCharacters: assistantBrief.length + String(connectedText?.text || "").length, imageCount: references.length, outputTokens: 1_800 }) }))} onChange={(value) => generator.updateNode(id, { textModelId: value })} /><button type="button" className={data.demoAssistantBuild ? "is-demo-selecting" : ""} disabled={assistantBusy || !assistantBrief.trim()} onPointerDown={(event) => event.stopPropagation()} onClick={(event) => { event.preventDefault(); event.stopPropagation(); void buildPromptWithAssistant(); }}>{assistantBusy && <span className="generator-spinner" />}<b>{assistantBusy ? "Building" : "Build prompt"}</b>{data.demoAssistantBuild && <i className="generator-assistant-demo-pointer is-build" aria-hidden="true"><MousePointer2 size={17} /></i>}</button></footer>
+        <footer className="generator-assistant-foot"><GeneratorSelect menuKey="prompt-assistant-model" openMenu={openGeneratorMenu} setOpenMenu={setOpenGeneratorMenu} className="prompt-assistant-model-select" value={normalizeAssistantModelId(data.textModelId)} label="ASSISTANT MODEL" options={assistantModels.map((model) => ({ value: model.id, label: model.label, description: assistantModelCreditDescription(model, { inputCharacters: assistantBrief.length + String(data.systemPrompt || "").length + String(connectedText?.text || "").length, imageCount: references.length, outputTokens: 1_800 }) }))} onChange={(value) => generator.updateNode(id, { textModelId: value })} /><button type="button" className={data.demoAssistantBuild ? "is-demo-selecting" : ""} disabled={assistantBusy || !assistantBrief.trim()} onPointerDown={(event) => event.stopPropagation()} onClick={(event) => { event.preventDefault(); event.stopPropagation(); void buildPromptWithAssistant(); }}>{assistantBusy && <span className="generator-spinner" />}<b>{assistantBusy ? "Building" : "Build prompt"}</b>{data.demoAssistantBuild && <i className="generator-assistant-demo-pointer is-build" aria-hidden="true"><MousePointer2 size={17} /></i>}</button></footer>
+        </>}
       </section>}
       <div className="generator-semantic-ports nodrag nopan" onPointerDown={(event) => event.stopPropagation()}>
         <div className="generator-text-port" title="Text prompt input"><Handle id="text-input" type="target" position={Position.Left} /><span>T</span></div>
@@ -2270,6 +2364,7 @@ function FrameNodeCardComponent({ id, data, selected }: NodeProps<FrameNode>) {
     const maxReferences = selectedModel?.maxReferences || inputPorts.reduce((sum, port) => sum + Math.max(1, Number(port.max || 1)), 0) || 1;
     const ratios = generatorRatiosFor(selectedModel, selectedClip?.resolution, sceneReferences.length > 0).filter((ratio) => ratio !== "source");
     const sourceAspectRatio = videoMasterSourceRatio(selectedClip, Number(data.videoAspectRatio));
+    const sourceAspectRatioLabel = nearestVideoMasterRatio(sourceAspectRatio, ["1:1", "4:3", "3:4", "16:9", "9:16", "21:9", "9:21"]);
     const originalAspectRatio = nearestVideoMasterRatio(sourceAspectRatio, ratios);
     const selectedAspectRatio = selectedClip?.aspectRatioMode === "custom" ? selectedClip.aspectRatio || originalAspectRatio : originalAspectRatio;
     const ratioOptions: SelectOption[] = selectedClip ? [
@@ -2516,6 +2611,23 @@ function FrameNodeCardComponent({ id, data, selected }: NodeProps<FrameNode>) {
       token: masterOriginalConnectedReference?.token ?? referenceMentionToken(masterOriginalReference.title, masterAssistantReferences.length),
     } : undefined;
     const masterOtherAssistantReferences = masterAssistantReferences.filter((reference) => reference !== masterOriginalConnectedReference);
+    const masterAssistantDefaultSystemPrompt = videoPromptSystemInstruction({
+      modelId: selectedModel?.id,
+      modelLabel: selectedModel?.label,
+      duration: generationDuration ? String(generationDuration) : undefined,
+      generateAudio: generatedAudioEnabled,
+      references: masterAssistantReferences,
+      sceneSource: masterOriginalAssistantReference ? { token: masterOriginalAssistantReference.token } : undefined,
+      videoMasterContext: selectedClip ? {
+        clipTitle: selectedClip.title,
+        timelineDurationSeconds: timelineDuration,
+        generationDurationSeconds: generationDuration,
+        sourceKind: selectedClip.sourceNodeId && selectedClip.sourceSegmentId ? "source-segment" : selectedClip.origin === "upload" ? "uploaded-clip" : "new-scene",
+        sourceAspectRatio: sourceAspectRatioLabel,
+        outputAspectRatio: selectedAspectRatio,
+        outputRatioChanged: selectedClip.aspectRatioMode === "custom" && selectedAspectRatio !== sourceAspectRatioLabel,
+      } : undefined,
+    });
     const masterAssistantMentionReferences = masterOriginalAssistantReference
       ? [masterOriginalAssistantReference, ...masterOtherAssistantReferences]
       : masterOtherAssistantReferences;
@@ -2765,10 +2877,20 @@ function FrameNodeCardComponent({ id, data, selected }: NodeProps<FrameNode>) {
                   setReferencePersonaPickerOpen(false);
                   setReferenceMenuPortId(nextModel?.inputPorts?.[0]?.id || "reference-image");
                   generator.updateMasterClipModel(id, selectedClip.id, value);
-                }} ratioValue={selectedClip.aspectRatioMode === "custom" ? selectedAspectRatio : "original"} ratioOptions={ratioOptions} onRatioChange={(value) => updateClip(selectedClip.id, value === "original" ? { aspectRatio: originalAspectRatio, aspectRatioMode: "original", sourceAspectRatio } : { aspectRatio: value, aspectRatioMode: "custom", sourceAspectRatio })} durationValue={masterDurationOptions.length ? String(generationDuration || selectedModel?.defaultDuration || masterDurationOptions[0]?.value || "5") : undefined} durationOptions={masterDurationOptions} onDurationChange={(value) => updateClip(selectedClip.id, { generationDuration: Number(value) })} qualityValue={resolutions.includes(String(selectedClip.resolution || "")) ? String(selectedClip.resolution) : resolutions.includes(selectedModel?.defaultResolution || "") ? selectedModel!.defaultResolution! : resolutions[0]} qualityOptions={resolutions.map((resolution) => ({ value: resolution, label: resolution }))} onQualityChange={(value) => updateClip(selectedClip.id, { resolution: value })} assistantActive={assistantOpen} onAssistant={() => setAssistantOpen((open) => !open)} supportsAudio={Boolean(selectedModel?.supportsAudio)} audioEnabled={generatedAudioEnabled} onToggleAudio={() => updateClip(selectedClip.id, { generateAudio: !generatedAudioEnabled })} runDisabled={!selectedClip.prompt.trim() || masterHasActiveGeneration || missingRequiredInputs.length > 0} runTitle={missingRequiredInputs.length ? `Connect ${missingRequiredInputs.map((port) => port.label).join(" and ")}` : masterHasActiveGeneration ? "Another scene is generating" : `Run ${runCredits.toLocaleString("en-US")} credits`} runBusy={masterBusy} onRun={() => generator.generateMasterClip(id, selectedClip.id)} demoAssistantClick={Boolean(data.demoAssistantClick)} />
+            }} ratioValue={selectedClip.aspectRatioMode === "custom" ? selectedAspectRatio : "original"} ratioOptions={ratioOptions} onRatioChange={(value) => updateClip(selectedClip.id, value === "original" ? { aspectRatio: originalAspectRatio, aspectRatioMode: "original", sourceAspectRatio } : { aspectRatio: value, aspectRatioMode: "custom", sourceAspectRatio })} durationValue={masterDurationOptions.length ? String(generationDuration || selectedModel?.defaultDuration || masterDurationOptions[0]?.value || "5") : undefined} durationOptions={masterDurationOptions} onDurationChange={(value) => updateClip(selectedClip.id, { generationDuration: Number(value) })} qualityValue={resolutions.includes(String(selectedClip.resolution || "")) ? String(selectedClip.resolution) : resolutions.includes(selectedModel?.defaultResolution || "") ? selectedModel!.defaultResolution! : resolutions[0]} qualityOptions={resolutions.map((resolution) => ({ value: resolution, label: resolution }))} onQualityChange={(value) => updateClip(selectedClip.id, { resolution: value })} assistantActive={assistantOpen} onAssistant={() => { setPromptAssistantSettingsOpen(false); setAssistantOpen((open) => !open); }} supportsAudio={Boolean(selectedModel?.supportsAudio)} audioEnabled={generatedAudioEnabled} onToggleAudio={() => updateClip(selectedClip.id, { generateAudio: !generatedAudioEnabled })} runDisabled={!selectedClip.prompt.trim() || masterHasActiveGeneration || missingRequiredInputs.length > 0} runTitle={missingRequiredInputs.length ? `Connect ${missingRequiredInputs.map((port) => port.label).join(" and ")}` : masterHasActiveGeneration ? "Another scene is generating" : `Run ${runCredits.toLocaleString("en-US")} credits`} runBusy={masterBusy} onRun={() => generator.generateMasterClip(id, selectedClip.id)} demoAssistantClick={Boolean(data.demoAssistantClick)} />
           </div>}
           {assistantOpen && selectedClip && <section className="generator-prompt-assistant video-master-prompt-assistant nodrag nopan" onPointerDown={(event) => event.stopPropagation()} onPointerUp={(event) => event.stopPropagation()} onClick={(event) => event.stopPropagation()} onDoubleClick={(event) => event.stopPropagation()}>
-            <header className="generator-assistant-head"><span>SCENE PROMPT ASSISTANT</span><button type="button" aria-label="Close scene prompt assistant" onPointerDown={(event) => { event.preventDefault(); event.stopPropagation(); setAssistantOpen(false); setAssistantMention(null); }}><X size={13} /></button></header>
+            <header className="generator-assistant-head"><span>SCENE PROMPT ASSISTANT</span><div className="generator-assistant-head-actions"><button type="button" className={promptAssistantSettingsOpen ? "is-active" : ""} aria-label="System prompt settings" aria-expanded={promptAssistantSettingsOpen} title="System prompt" onPointerDown={(event) => { event.preventDefault(); event.stopPropagation(); if (promptAssistantSettingsOpen) setPromptAssistantSettingsOpen(false); else openPromptAssistantSystemSettings(); }}><Settings2 size={13} /></button><button type="button" aria-label="Close scene prompt assistant" onPointerDown={(event) => { event.preventDefault(); event.stopPropagation(); setAssistantOpen(false); setPromptAssistantSettingsOpen(false); setAssistantMention(null); }}><X size={13} /></button></div></header>
+            {promptAssistantSettingsOpen ? <GenerationAssistantSystemSettings
+              defaultPrompt={masterAssistantDefaultSystemPrompt}
+              savedCustomPrompt={String(data.systemPrompt || "")}
+              mode={promptAssistantSystemMode}
+              draft={promptAssistantSystemDraft}
+              onModeChange={setPromptAssistantSystemMode}
+              onDraftChange={setPromptAssistantSystemDraft}
+              onReset={resetPromptAssistantSystem}
+              onSave={savePromptAssistantSystem}
+            /> : <>
             <div className="generator-assistant-references">
               <div className="generator-assistant-reference-title"><span>SCENE REFERENCES</span><small>Assign each role with @</small></div>
               <div className="generator-assistant-reference-strip is-compact">
@@ -2791,7 +2913,8 @@ function FrameNodeCardComponent({ id, data, selected }: NodeProps<FrameNode>) {
               {assistantMention && <div className="generator-assistant-mention-menu">{masterAssistantMentionOptions.map((reference, index) => <button type="button" className={index === assistantMentionIndex ? "is-active" : ""} key={reference.id} onPointerDown={(event) => { event.preventDefault(); event.stopPropagation(); insertMasterAssistantMention(reference); }}><GeneratorReferencePreview reference={reference} /><span><strong>{reference.title}</strong><small>{generatorReferenceRoleLabels[reference.role || ""] || "Visual reference"} · {reference.token}</small></span></button>)}{!masterAssistantMentionOptions.length && <p>No matching references</p>}</div>}
             </div>
             {assistantError && <p className="generator-assistant-error">{assistantError}</p>}
-            <footer className="generator-assistant-foot"><GeneratorSelect menuKey="master-prompt-assistant-model" openMenu={openGeneratorMenu} setOpenMenu={setOpenGeneratorMenu} className="prompt-assistant-model-select" value={normalizeAssistantModelId(data.textModelId)} label="ASSISTANT MODEL" options={assistantModels.map((model) => ({ value: model.id, label: model.label, description: assistantModelCreditDescription(model, { inputCharacters: assistantBrief.length, imageCount: sceneReferences.length, outputTokens: 2_400 }) }))} onChange={(value) => generator.updateNode(id, { textModelId: value })} /><button type="button" className={data.demoAssistantBuild ? "is-demo-selecting" : ""} disabled={assistantBusy || !assistantBrief.trim()} onPointerDown={(event) => event.stopPropagation()} onClick={(event) => { event.preventDefault(); event.stopPropagation(); void buildMasterPromptWithAssistant(); }}>{assistantBusy && <span className="generator-spinner" />}<b>{assistantBusy ? "Building" : "Build scene prompt"}</b>{data.demoAssistantBuild && <i className="generator-assistant-demo-pointer is-build" aria-hidden="true"><MousePointer2 size={17} /></i>}</button></footer>
+            <footer className="generator-assistant-foot"><GeneratorSelect menuKey="master-prompt-assistant-model" openMenu={openGeneratorMenu} setOpenMenu={setOpenGeneratorMenu} className="prompt-assistant-model-select" value={normalizeAssistantModelId(data.textModelId)} label="ASSISTANT MODEL" options={assistantModels.map((model) => ({ value: model.id, label: model.label, description: assistantModelCreditDescription(model, { inputCharacters: assistantBrief.length + String(data.systemPrompt || "").length, imageCount: sceneReferences.length, outputTokens: 2_400 }) }))} onChange={(value) => generator.updateNode(id, { textModelId: value })} /><button type="button" className={data.demoAssistantBuild ? "is-demo-selecting" : ""} disabled={assistantBusy || !assistantBrief.trim()} onPointerDown={(event) => event.stopPropagation()} onClick={(event) => { event.preventDefault(); event.stopPropagation(); void buildMasterPromptWithAssistant(); }}>{assistantBusy && <span className="generator-spinner" />}<b>{assistantBusy ? "Building" : "Build scene prompt"}</b>{data.demoAssistantBuild && <i className="generator-assistant-demo-pointer is-build" aria-hidden="true"><MousePointer2 size={17} /></i>}</button></footer>
+            </>}
           </section>}
         </div>
         <div className="video-master-workbench video-scene-workbench nodrag nopan nowheel" onPointerDown={(event) => event.stopPropagation()}>

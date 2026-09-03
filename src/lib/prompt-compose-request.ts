@@ -16,6 +16,7 @@ export const promptComposeRequestSchema = z.object({
   sourceAspectRatio: z.string().max(20).optional(),
   sourceDimensions: z.string().max(40).optional(),
   outputSizeChanged: z.boolean().optional(),
+  systemPrompt: z.string().max(10_000).optional().default(""),
   videoMasterContext: z.object({
     nodeId: z.string().min(1).max(160),
     clipId: z.string().min(1).max(160),
