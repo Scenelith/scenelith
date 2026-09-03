@@ -787,6 +787,20 @@ body,
   background-image: none !important;
   backdrop-filter: none;
 }
+.generator-assistant-head-actions > button:hover,
+.generator-assistant-head-actions > button.is-active,
+.generator-assistant-system-modes button:hover,
+.generator-assistant-system-modes button.is-active,
+.generator-assistant-system-actions button.is-reset { background: var(--color-ink-5); }
+.generator-assistant-head-actions > button.is-active,
+.generator-assistant-system-intro em.is-custom { color: var(--color-mint); }
+.generator-assistant-system-intro em.is-custom { background: var(--color-mint-soft); }
+.generator-assistant-system-modes,
+.generator-assistant-system-editor textarea { border-color: var(--color-border); background: var(--color-ink-1); }
+.generator-assistant-system-editor textarea:focus { border-color: var(--color-mint-line); }
+.generator-assistant-system-editor.is-readonly textarea { background: var(--color-ink-2); color: var(--color-text-muted); }
+.generator-assistant-system-actions button.is-save { background: var(--color-text); color: var(--color-ink-0); }
+.generator-assistant-system-actions button.is-save:hover:not(:disabled) { background: var(--color-mint); }
 .generator-assistant-compose { border-color: var(--color-border); background: var(--color-ink-1); color: var(--color-text); }
 .generator-assistant-compose:focus-within { border-color: var(--color-mint-line); }
 .generator-assistant-error { color: var(--color-rose); }

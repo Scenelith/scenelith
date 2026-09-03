@@ -86,6 +86,7 @@ export async function composeCanvasGenerationPrompt(input: {
   sourceAspectRatio?: string;
   sourceDimensions?: string;
   outputSizeChanged?: boolean;
+  systemPrompt?: string;
   assistantModelId?: string;
   references?: CanvasPromptReference[];
   videoMasterContext?: {
@@ -124,7 +125,7 @@ export async function composeCanvasGenerationPrompt(input: {
       workspaceId,
       userId: input.userId,
       kind: "prompt_assistant",
-      inputCharacters: brief.length + loadedReferences.reduce((sum, reference) => sum + reference.title.length + reference.token.length, 0),
+      inputCharacters: brief.length + String(input.systemPrompt || "").length + loadedReferences.reduce((sum, reference) => sum + reference.title.length + reference.token.length, 0),
       imageCount: loadedReferences.filter((reference) => reference.mimeType.startsWith("image/")).length
         + Math.min(12, loadedReferences.filter((reference) => reference.mimeType.startsWith("video/")).length * 5),
       maxOutputTokens: 4_096,
@@ -143,6 +144,7 @@ export async function composeCanvasGenerationPrompt(input: {
         sourceAspectRatio: input.sourceAspectRatio,
         sourceDimensions: input.sourceDimensions,
         outputSizeChanged: input.outputSizeChanged,
+        systemPrompt: input.systemPrompt,
         videoMasterContext: input.videoMasterContext,
       }),
     });
