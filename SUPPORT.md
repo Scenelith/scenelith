@@ -6,4 +6,4 @@ Include the Scenelith version, host architecture, Docker and Compose versions, r
 
 Never post `.env` files, provider keys, session cookies, database dumps, private media URLs, or user content. Vulnerabilities belong in a private security advisory as described in `SECURITY.md`.
 
-The source-available self-hosted edition is community supported and has no response-time guarantee. Operators remain responsible for their infrastructure, provider accounts, backups, updates, and incident response.
+The open-source self-hosted edition is community supported and has no response-time guarantee. Operators remain responsible for their infrastructure, provider accounts, backups, updates, and incident response.

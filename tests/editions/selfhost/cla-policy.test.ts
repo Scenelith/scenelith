@@ -31,6 +31,24 @@ test("the CLA preserves contributor ownership while covering Cloud and relicensi
   assert.match(agreement, /employer or another entity/i);
 });
 
+test("the public and self-hosted edition consistently declares Apache-2.0", () => {
+  const license = source("LICENSE.md");
+  const readme = source("README.md");
+  const trademarks = source("TRADEMARKS.md");
+  const packageJson = JSON.parse(source("package.json"));
+  const packageLock = JSON.parse(source("package-lock.json"));
+  const selfhostOverlay = JSON.parse(source("editions/selfhost/package.overlay.json"));
+
+  assert.match(license, /Apache License\s+Version 2\.0, January 2004/);
+  assert.doesNotMatch(license, /Sustainable Use License/i);
+  assert.equal(packageJson.license, "Apache-2.0");
+  assert.equal(packageLock.packages[""].license, "Apache-2.0");
+  assert.equal(selfhostOverlay.license, "Apache-2.0");
+  assert.match(readme, /open-source software licensed under the \[Apache License 2\.0\]/);
+  assert.doesNotMatch(readme, /source-available|Sustainable Use License/i);
+  assert.match(trademarks, /Apache License 2\.0/);
+});
+
 test("public contribution instructions make the CLA mandatory for external contributors without a size exemption", () => {
   const contributionGuide = readFileSync(join(root, "CONTRIBUTING.md"), "utf8");
   const pullRequestTemplate = source(".github/PULL_REQUEST_TEMPLATE.md");
