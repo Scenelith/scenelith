@@ -2,11 +2,11 @@
   <img src="public/scenelith-mark-email.png" width="72" alt="Scenelith logo" />
   <h1>Scenelith</h1>
   <p><strong>Create AI images and video, edit images and video timelines, and automate TikTok slideshows on one visual canvas.</strong></p>
-  <p>Source-available · Self-hosted · Your infrastructure · Your provider keys</p>
+  <p>Open source · Self-hosted · Your infrastructure · Your provider keys</p>
   <p>
     <a href="https://github.com/Scenelith/scenelith/actions/workflows/runtime.yml"><img src="https://github.com/Scenelith/scenelith/actions/workflows/runtime.yml/badge.svg" alt="Runtime checks" /></a>
     <a href="https://github.com/Scenelith/scenelith/releases"><img src="https://img.shields.io/github/v/release/Scenelith/scenelith" alt="Latest release" /></a>
-    <a href="LICENSE.md"><img src="https://img.shields.io/badge/license-Sustainable%20Use-6ad7b0" alt="Sustainable Use License" /></a>
+    <a href="LICENSE.md"><img src="https://img.shields.io/badge/license-Apache%202.0-6ad7b0" alt="Apache License 2.0" /></a>
   </p>
   <p>
     <a href="https://scenelith.com">Website</a> ·
@@ -185,6 +185,6 @@ Community changes merge directly into this canonical repository after review, CL
 
 ## License
 
-Scenelith is **source-available**, not OSI open source. The [Sustainable Use License](LICENSE.md) allows internal business, non-commercial, and personal use and modification. It does not allow selling Scenelith, commercial redistribution, or operating it as a commercial hosted service. Brand use is covered by [TRADEMARKS.md](TRADEMARKS.md).
+Scenelith Community is open-source software licensed under the [Apache License 2.0](LICENSE.md). You may use, modify, distribute, and use it commercially subject to the license terms. The hosted Scenelith Cloud service and its private extension code are not included in this repository. Brand use is covered by [TRADEMARKS.md](TRADEMARKS.md).
 
 The repository boundary and hosted-extension model are documented in [Distribution architecture](docs/DISTRIBUTION_ARCHITECTURE.md).

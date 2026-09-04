@@ -164,7 +164,7 @@ for (const path of publicStyles) {
 
 const packageJson = JSON.parse(readFileSync(join(root, "package.json"), "utf8"));
 const envExample = readFileSync(join(root, "deploy/selfhost/.env.example"), "utf8");
-if (packageJson.name !== "scenelith" || packageJson.private !== true || packageJson.license !== "SEE LICENSE IN LICENSE.md") {
+if (packageJson.name !== "scenelith" || packageJson.private !== true || packageJson.license !== "Apache-2.0") {
   failures.push("public package metadata must identify Scenelith, prevent npm publication, and declare the repository license");
 }
 if (packageJson.repository?.url !== "git+https://github.com/Scenelith/scenelith.git") {

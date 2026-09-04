@@ -1,7 +1,7 @@
 {
   "name": "scenelith",
   "description": "Open visual AI creation and automation canvas with first-class self-hosting",
-  "license": "SEE LICENSE IN LICENSE.md",
+  "license": "Apache-2.0",
   "repository": {
     "type": "git",
     "url": "git+https://github.com/Scenelith/scenelith.git"
