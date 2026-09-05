@@ -72,6 +72,7 @@ import {
 } from "@/lib/automation-workflows/deliveries";
 import { automationCapabilitiesForWorkspace } from "@/lib/automation-workflows/permissions";
 import type { McpPrincipal } from "@/lib/mcp/oauth";
+import { createMcpOriginalDownload } from "@/lib/mcp/downloads";
 import { createAutomationNodeTemplate } from "@/lib/mcp/automation";
 import { getAssistantModel } from "@/lib/assistant-models";
 import { generationProvider, importProvider, intelligenceProvider } from "@/platform/providers/registry";
@@ -180,6 +181,23 @@ export async function getMcpCanvas(principal: McpPrincipal, projectId: string) {
   if (!row) throw Object.assign(new Error("Canvas not found"), { status: 404 });
   const canvas = await rowToProject(row, await readMcpCanvasSnapshot(projectId));
   return { ...canvas, nodeDirectory: canvas.graph.nodes.map((node) => ({ nodeId: node.id, type: canvasNodeType(node.data), number: node.data.nodeNumber, label: canvasNodeLabel(node.data), title: node.data.title })) };
+}
+
+export async function downloadMcpCanvasNodeOutput(principal: McpPrincipal, input: { projectId: string; nodeId: string; outputIndex?: number }) {
+  const canvas = await getMcpCanvas(principal, input.projectId);
+  const node = canvas.graph.nodes.find((candidate) => candidate.id === input.nodeId);
+  if (!node || node.data.kind !== "prompt") throw new Error("Choose an Image Generator or Video Generator node from get_canvas");
+  const outputs = node.data.generatedOutputs || [];
+  if (input.outputIndex !== undefined && (!Number.isSafeInteger(input.outputIndex) || input.outputIndex < 1 || input.outputIndex > outputs.length)) {
+    throw new Error(`output_index must identify an existing saved result (1–${outputs.length})`);
+  }
+  const output = input.outputIndex === undefined ? null : outputs[input.outputIndex - 1];
+  // The toolbar downloads outputUrl, which is the selected result; the last
+  // entry in history is not necessarily the result visible on the canvas.
+  const url = output ? output.url : node.data.outputUrl;
+  const assetId = assetIdFromAssetUrl(url);
+  if (!assetId) throw new Error("This node has no saved original output to download");
+  return { ...await createMcpOriginalDownload(principal, input.projectId, assetId), nodeId: node.id, nodeLabel: canvasNodeLabel(node.data), outputIndex: input.outputIndex ?? (outputs.findIndex((candidate) => assetIdFromAssetUrl(candidate.url) === assetId) + 1 || null) };
 }
 
 export async function createMcpCanvas(principal: McpPrincipal, input: { workspaceId: string; name: string }) {

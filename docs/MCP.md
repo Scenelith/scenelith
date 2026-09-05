@@ -161,3 +161,9 @@ Open `https://scenelith.example.com/mcp` to copy the endpoint and `https://scene
 - Revoking either token revokes the whole connection.
 - Canvas writes use collaboration revisions and audit events include the OAuth connection and client IDs.
 - Automation runs use the same immutable input and workflow snapshots as runs started from the Scenelith UI.
+
+## Download original generator output
+
+Call `get_canvas` and resolve a visible label such as `Image Generator 48` through `nodeDirectory`. Then call `download_canvas_node_output` with `canvas_id` and `node_id`. Omitting `output_index` downloads the currently selected result, exactly like the generator toolbar Download button; a positive 1-based `output_index` chooses an entry from `generatedOutputs` without changing the selection. Both image and video generators are supported.
+
+The result contains `downloadUrl`, `expiresAt`, `filename`, `mimeType`, `sizeBytes`, `assetId`, and `variant: "original"`. Fetch the URL as a binary file, following redirects. It requires no browser session, contains no OAuth access token, and never selects a thumbnail. The link expires within 10 minutes (earlier if the access token expires), and refreshing or revoking the connection invalidates it. Treat it as a temporary private capability. Access to the canvas and source asset is rechecked when downloading. R2 delivery redirects to a signed original object URL; an already issued storage URL remains usable until its own short expiry. Local storage streams the original file. The operation needs `mcp:read`, respects approved canvas grants, and does not generate media, consume credits, or mutate the graph.

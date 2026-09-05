@@ -39,6 +39,7 @@ import {
   connectMcpCanvasNodes,
   connectMcpAutomationNodes,
   duplicateMcpCanvasNodes,
+  downloadMcpCanvasNodeOutput,
   detachMcpCanvasReference,
   deleteMcpAutomationFixture,
   editMcpCanvasImage,
@@ -235,6 +236,16 @@ export function createScenelithMcpServer(principal: McpPrincipal, origin: string
     inputSchema: z.object({ canvas_id: z.string().min(1) }).strict(),
     annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false },
   }, ({ canvas_id }) => safeTool(() => getMcpCanvas(principal, canvas_id), (canvas) => ({ canvas })));
+
+  server.registerTool("download_canvas_node_output", {
+    title: "Download original node output",
+    description: "Get a temporary download URL for the full original image or video from a generator node, matching its Canvas Download button. No browser login is needed. Omit output_index for the currently selected result, or use a 1-based index into generatedOutputs from get_canvas. Download the returned URL as a file; it is not a preview. Links expire within 10 minutes and may be invalidated by reconnecting. Does not generate media, spend credits, or change the canvas.",
+    inputSchema: z.object({ canvas_id: z.string().min(1), node_id: z.string().min(1), output_index: z.number().int().positive().optional() }).strict(),
+    annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false },
+  }, ({ canvas_id, node_id, output_index }) => safeTool(
+    () => downloadMcpCanvasNodeOutput(principal, { projectId: canvas_id, nodeId: node_id, outputIndex: output_index }),
+    (download) => ({ download }),
+  ));
 
   server.registerTool("get_canvas_capabilities", {
     title: "Get canvas capabilities",
