@@ -733,7 +733,9 @@ const server = new Server({
     const source = transactionOrigin && typeof transactionOrigin === "object" ? transactionOrigin.source : transactionOrigin;
     if (["postgres-load", "journal-replay", "snapshot"].includes(String(source))) return;
     if (source !== "node-numbering" && numberedDocuments.has(document)) {
-      numberDocumentNodes(document, numberedDocuments.get(document));
+      // Accept another replica's resolved slots; restoring our stale cache here
+      // would make Redis peers repeatedly undo each other's assignments.
+      numberDocumentNodes(document, source === "redis" ? undefined : numberedDocuments.get(document));
       numberedDocuments.set(document, readGraph(document).nodes);
     }
     await journalDocumentUpdate(documentName, update, context?.userId);

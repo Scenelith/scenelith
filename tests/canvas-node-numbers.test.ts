@@ -91,3 +91,35 @@ test("concurrent creations converge on free slots without changing the establish
   }
   server.destroy();
 });
+
+
+test("two collaboration replicas converge instead of restoring conflicting local slots", () => {
+  const seed = new Y.Doc();
+  writeGraph(seed, { nodes: assignCanvasNodeNumbers([node("established")]), edges: [] });
+  const replicas = [new Y.Doc(), new Y.Doc()];
+  for (const [index, replica] of replicas.entries()) {
+    Y.applyUpdate(replica, Y.encodeStateAsUpdate(seed));
+    const before = readGraph(replica);
+    const after = { ...before, nodes: assignCanvasNodeNumbers([...before.nodes, node(`replica-${index}`)], before.nodes) };
+    patchGraphInYDoc(replica, before, after);
+    numberDocumentNodes(replica, before.nodes);
+  }
+  // Redis updates must accept a peer's numbering instead of imposing a stale
+  // per-process cache. Reconcile collisions from the common merged Yjs state.
+  for (let round = 0; round < 5; round++) {
+    const updates = replicas.map(replica => Y.encodeStateAsUpdate(replica));
+    for (const [index, replica] of replicas.entries()) {
+      Y.applyUpdate(replica, updates[1 - index]);
+      numberDocumentNodes(replica);
+    }
+  }
+  assert.deepEqual(readGraph(replicas[0]), readGraph(replicas[1]));
+  for (const replica of replicas) {
+    const nodes = readGraph(replica).nodes as FrameNode[];
+    assert.deepEqual(nodes.map(n => n.data.nodeNumber).sort(), [1, 2, 3]);
+    assert.equal(nodes.find(n => n.id === "established")?.data.nodeNumber, 1);
+    assert.equal(numberDocumentNodes(replica), false);
+    replica.destroy();
+  }
+  seed.destroy();
+});
