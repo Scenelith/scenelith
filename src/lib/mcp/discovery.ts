@@ -22,6 +22,8 @@ Use Canvas tools to read or change the visible creative graph: nodes, connection
 
 Visible Canvas labels have stable per-type numbers (for example Image Generator 3). The get_canvas nodeDirectory includes label, type, number and nodeId. Match the user's label in the selected canvas, then use its nodeId. Numbers are scoped to one type and canvas, survive edits, and may be reused after deletion.
 
+Use \`download_canvas_node_output\` to download a generator’s full original image or video. Resolve the visible node label with \`nodeDirectory\` first. Omit \`output_index\` for the selected result, or use a 1-based index into \`generatedOutputs\`. Fetch the returned \`downloadUrl\` as a file (following redirects); it needs no browser cookies and expires within 10 minutes. Treat it as a temporary private link. Request a fresh link after expiry or OAuth refresh. This reads existing media without changing the graph or spending credits.
+
 ### Library
 
 Use Library tools for durable media, not for graph layout. \`list_library_assets\` returns approved images and videos in cursor pages; follow \`next_cursor\` until it is null when a complete search is required. Browser URLs are not agent credentials, so call \`inspect_library_asset\` to actually see a candidate image or a representative video frame. \`upload_library_asset\` adds base64 media to one approved canvas Library and returns an \`asset_id\`; it does not place the media on the Canvas and does not create an Identity.

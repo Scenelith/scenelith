@@ -23,6 +23,7 @@ import {
   applyCanvasPatch,
   createMcpCanvasNode,
   duplicateMcpCanvasNodes,
+  downloadMcpCanvasNodeOutput,
   patchMcpCanvas,
   copyMcpVideoMasterOutput,
   connectMcpCanvasNodes,
@@ -36,6 +37,9 @@ import {
   updateMcpCanvasVideoTimeline,
 } from "../src/lib/mcp/service";
 import { closeRelationalPool, db, resetTestDatabase } from "./postgres-test-db";
+
+import { saveBytes } from "../src/lib/storage";
+import { GET as downloadOriginal } from "../src/app/api/mcp/download/route";
 
 const origin = "https://scenelith.example";
 const resource = `${origin}/api/mcp`;
@@ -52,6 +56,82 @@ beforeEach(async () => {
 });
 
 after(async () => { await closeRelationalPool(); });
+
+test("MCP downloads selected original bytes and saved video outputs without browser cookies, enforcing capability lifetime and grants", async () => {
+  const clientRegistration = await registeredClient();
+  const now = new Date().toISOString();
+  const expiresAt = new Date(Date.now() + 3_600_000).toISOString();
+  const principal: McpPrincipal = {
+    connectionId: "download-connection", clientId: clientRegistration.client_id, userId: "mcp-user",
+    workspaceId: "mcp-space", projectIds: ["mcp-canvas-a"], libraryAccess: false,
+    scopes: ["mcp:read"], resource, expiresAt,
+  };
+  await db.prepare(`INSERT INTO mcp_oauth_connections
+    (id, user_id, client_id, workspace_id, project_ids_json, library_access, resource, scopes_json, access_token_hash, refresh_token_hash, access_expires_at, refresh_expires_at, created_at)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`).run(principal.connectionId, principal.userId, principal.clientId, principal.workspaceId,
+      JSON.stringify(principal.projectIds), false, resource, JSON.stringify(principal.scopes), "access-hash", "refresh-hash", expiresAt, expiresAt, now);
+  const imageBytes = Buffer.from("full-resolution-image-original");
+  const videoBytes = Buffer.from("full-resolution-video-original");
+  for (const [id, bytes, mime, project] of [
+    ["download-image", imageBytes, "image/png", "mcp-canvas-a"],
+    ["download-video", videoBytes, "video/mp4", "mcp-canvas-a"],
+    ["download-hidden", imageBytes, "image/png", "mcp-canvas-b"],
+  ] as const) {
+    const stored = await saveBytes(bytes, "mcp-download-tests", id, mime);
+    await db.prepare(`INSERT INTO assets (id, workspace_id, project_id, kind, role, filename, storage_path, mime_type, size_bytes, thumbnail_storage_path, created_at)
+      VALUES (?, 'mcp-space', ?, 'generated_image', 'generated', ?, ?, ?, ?, 'missing-thumbnail.webp', ?)`)
+      .run(id, project, `Оригинал-${id}`, stored.reference, mime, bytes.length, now);
+  }
+  const graph = { nodes: [{ id: "generator", type: "frame", position: { x: 0, y: 0 }, data: {
+    kind: "prompt", title: "Generator", mediaType: "image", outputUrl: "/api/assets/download-image?variant=thumbnail", assetId: "stale-asset-id",
+    generatedOutputs: [{ url: "/api/assets/download-image", mediaType: "image" }, { url: "/api/assets/download-video", mediaType: "video" }],
+  } }], edges: [] };
+  await db.prepare("UPDATE projects SET graph_json = ? WHERE id = 'mcp-canvas-a'").run(JSON.stringify(graph));
+  const before = await getMcpCanvas(principal, "mcp-canvas-a");
+  const server = createScenelithMcpServer(principal, origin);
+  const client = new Client({ name: "download-test", version: "1.0.0" });
+  const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
+  await server.connect(serverTransport);
+  await client.connect(clientTransport);
+  try {
+    const tools = await client.listTools();
+    assert.equal(tools.tools.find((tool) => tool.name === "download_canvas_node_output")?.annotations?.readOnlyHint, true);
+    const result = await client.callTool({ name: "download_canvas_node_output", arguments: { canvas_id: "mcp-canvas-a", node_id: "generator" } });
+    assert.ok(!result.isError);
+    const selected = (result.structuredContent as { download: { downloadUrl: string; assetId: string; variant: string; sizeBytes: number; outputIndex: number } }).download;
+    assert.equal(selected.assetId, "download-image");
+    assert.equal(selected.variant, "original");
+    assert.equal(selected.outputIndex, 1);
+    assert.equal(selected.sizeBytes, imageBytes.length);
+    const response = await downloadOriginal(new Request(`${selected.downloadUrl}&variant=thumbnail`));
+    assert.equal(response.status, 200);
+    assert.equal(response.headers.get("content-type"), "image/png");
+    assert.match(response.headers.get("content-disposition") || "", /^attachment;/);
+    assert.match(response.headers.get("cache-control") || "", /no-store/);
+    assert.deepEqual(Buffer.from(await response.arrayBuffer()), imageBytes);
+    const video = await downloadMcpCanvasNodeOutput(principal, { projectId: "mcp-canvas-a", nodeId: "generator", outputIndex: 2 });
+    const videoResponse = await downloadOriginal(new Request(video.downloadUrl));
+    assert.equal(videoResponse.headers.get("content-type"), "video/mp4");
+    assert.deepEqual(Buffer.from(await videoResponse.arrayBuffer()), videoBytes);
+    assert.deepEqual(await getMcpCanvas(principal, "mcp-canvas-a"), before);
+    await assert.rejects(() => downloadMcpCanvasNodeOutput(principal, { projectId: "mcp-canvas-a", nodeId: "generator", outputIndex: 3 }), /output_index/);
+    await assert.rejects(() => downloadMcpCanvasNodeOutput(principal, { projectId: "mcp-canvas-b", nodeId: "generator" }), /Canvas not found/);
+    const tampered = new URL(selected.downloadUrl);
+    const [payload, mac] = tampered.searchParams.get("ticket")!.split(".");
+    const ticket = JSON.parse(Buffer.from(payload, "base64url").toString());
+    for (const patch of [{ asset: "download-hidden" }, { expires: Date.now() - 1 }]) {
+      tampered.searchParams.set("ticket", `${Buffer.from(JSON.stringify({ ...ticket, ...patch })).toString("base64url")}.${mac}`);
+      assert.equal((await downloadOriginal(new Request(tampered))).status, 404);
+    }
+    await db.prepare("UPDATE mcp_oauth_connections SET project_ids_json = ? WHERE id = ?").run(JSON.stringify(["mcp-canvas-b"]), principal.connectionId);
+    assert.equal((await downloadOriginal(new Request(selected.downloadUrl))).status, 404);
+    await db.prepare("UPDATE mcp_oauth_connections SET project_ids_json = ?, refresh_token_hash = 'rotated' WHERE id = ?").run(JSON.stringify(["mcp-canvas-a"]), principal.connectionId);
+    assert.equal((await downloadOriginal(new Request(selected.downloadUrl))).status, 404);
+    const fresh = await downloadMcpCanvasNodeOutput(principal, { projectId: "mcp-canvas-a", nodeId: "generator" });
+    await db.prepare("UPDATE mcp_oauth_connections SET revoked_at = ? WHERE id = ?").run(now, principal.connectionId);
+    assert.equal((await downloadOriginal(new Request(fresh.downloadUrl))).status, 404);
+  } finally { await client.close(); await server.close(); }
+});
 
 test("MCP OAuth discovery, challenge, and Origin protection match the HTTP authorization contract", async () => {
   const request = new Request(resource);

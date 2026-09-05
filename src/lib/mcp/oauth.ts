@@ -437,6 +437,23 @@ export function principalHasScope(principal: McpPrincipal, scope: McpScope) {
   return principal.scopes.includes(scope);
 }
 
+// Download capabilities use a domain-separated HMAC of per-connection random
+// key material. Refreshing or revoking the connection invalidates its links;
+// no instance-wide signing secret or bearer access token is exposed in a URL.
+export async function mcpDownloadConnection(connectionId: string) {
+  const now = new Date().toISOString();
+  const row = await db.prepare(`SELECT * FROM mcp_oauth_connections
+    WHERE id = ? AND revoked_at IS NULL AND access_expires_at > ?`).get(connectionId, now) as ConnectionRow | undefined;
+  if (!row || !normalizedScopes(row.scopes_json).includes("mcp:read")) return null;
+  const principal: McpPrincipal = {
+    connectionId: row.id, clientId: row.client_id, userId: row.user_id,
+    workspaceId: row.workspace_id, projectIds: normalizedProjectIds(row.project_ids_json),
+    libraryAccess: Boolean(row.library_access), scopes: normalizedScopes(row.scopes_json),
+    resource: row.resource, expiresAt: row.access_expires_at,
+  };
+  return { principal, signingKey: row.refresh_token_hash };
+}
+
 export async function listMcpOAuthConnections(userId: string) {
   const rows = await db.prepare(`SELECT c.*, o.client_name FROM mcp_oauth_connections c
     JOIN mcp_oauth_clients o ON o.client_id = c.client_id
