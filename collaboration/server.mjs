@@ -5,7 +5,7 @@ import RedisClient from "ioredis";
 import * as Y from "yjs";
 import { Server } from "@hocuspocus/server";
 import { Redis } from "@hocuspocus/extension-redis";
-import { graphSummary, numberDocumentNodes, readGraph, writeGraph } from "./document-codec.mjs";
+import { graphSummary, numberDocumentNodes, readGraph, readNodeNumberingState, writeGraph } from "./document-codec.mjs";
 import { assertCollaborationMigrationsCurrent } from "./migration-runner.mjs";
 
 const required = [
@@ -690,7 +690,7 @@ const server = new Server({
     const state = await loadDocumentState(documentName);
     Y.applyUpdate(document, state, "postgres-load");
     const changed = numberDocumentNodes(document);
-    numberedDocuments.set(document, readGraph(document).nodes);
+    numberedDocuments.set(document, readNodeNumberingState(document));
     if (changed) await persistDocument(documentName, document, "node-number-backfill");
     return document;
   },
@@ -736,7 +736,7 @@ const server = new Server({
       // Accept another replica's resolved slots; restoring our stale cache here
       // would make Redis peers repeatedly undo each other's assignments.
       numberDocumentNodes(document, source === "redis" ? undefined : numberedDocuments.get(document));
-      numberedDocuments.set(document, readGraph(document).nodes);
+      numberedDocuments.set(document, readNodeNumberingState(document));
     }
     await journalDocumentUpdate(documentName, update, context?.userId);
   },
