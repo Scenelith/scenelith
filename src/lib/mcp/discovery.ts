@@ -1,6 +1,6 @@
 import type { McpPrincipal } from "@/lib/mcp/oauth";
 
-export const SCENELITH_MCP_INSTRUCTIONS = `Scenelith has four separate tool domains: Canvas, Library, Identities, and Automations. Read scenelith://guide/agent-workflows before the first multi-step task and scenelith://connection/access before choosing a workspace or canvas. Before Automation authoring or repair, read scenelith://automation/guide and call get_automation_capabilities; validate every proposed connection and complete graph. IDs are typed and are never interchangeable: workspace_id selects a workspace, canvas_id selects a project/canvas, asset_id selects Library media, identity_id selects an Identity, and workflow_id/run_id select Automation objects. Always read before writing, use semantic tools instead of patch_canvas when one exists, and fetch get_canvas immediately before a Canvas write so expected_revision is current. Never guess IDs or expand beyond the approved connection. A tool that is absent was not granted.`;
+export const SCENELITH_MCP_INSTRUCTIONS = `Scenelith has four separate tool domains: Canvas, Library, Identities, and Automations. Read scenelith://guide/agent-workflows before the first multi-step task and scenelith://connection/access before choosing a workspace or canvas. Before Automation authoring or repair, read scenelith://automation/guide and call get_automation_capabilities; validate every proposed connection and complete graph. IDs are typed and are never interchangeable: workspace_id selects a workspace, canvas_id selects a project/canvas, asset_id selects Library media, identity_id selects an Identity, and workflow_id/run_id select Automation objects. Always read before writing, use semantic tools instead of patch_canvas when one exists, and fetch get_canvas immediately before a Canvas write so expected_revision is current. Canvas nodeDirectory maps visible labels such as Image Generator 3 to nodeId. Resolve the user's type and number within the selected canvas using this directory, then pass nodeId to tools; numbers are not IDs. Deleted numbers may be reused, so re-read the directory before acting. Never guess IDs or expand beyond the approved connection. A tool that is absent was not granted.`;
 
 export const SCENELITH_AGENT_GUIDE = `# Scenelith agent workflow guide
 
@@ -19,6 +19,8 @@ IDs are typed. Never pass a \`canvas_id\` where an \`asset_id\`, \`identity_id\`
 ### Canvas
 
 Use Canvas tools to read or change the visible creative graph: nodes, connections, placed assets, generation references, identities, timelines, and Video Master scenes. Start with \`list_canvases\`, then \`get_canvas\`. Call \`get_canvas_capabilities\` before choosing node types, models, settings, ports, or reference roles. Prefer semantic tools such as \`create_canvas_node\`, \`place_canvas_asset\`, \`attach_canvas_reference\`, and \`place_canvas_identity\`; use \`patch_canvas\` only for graph edits without a dedicated tool.
+
+Visible Canvas labels have stable per-type numbers (for example Image Generator 3). The get_canvas nodeDirectory includes label, type, number and nodeId. Match the user's label in the selected canvas, then use its nodeId. Numbers are scoped to one type and canvas, survive edits, and may be reused after deletion.
 
 ### Library
 

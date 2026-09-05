@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
+import { createServer } from "node:http";
 import test, { after, beforeEach } from "node:test";
 import { Client } from "@modelcontextprotocol/client";
 import { InMemoryTransport } from "@modelcontextprotocol/server";
@@ -20,6 +21,9 @@ import {
   addMcpVideoMasterAsset,
   addMcpVideoMasterScene,
   applyCanvasPatch,
+  createMcpCanvasNode,
+  duplicateMcpCanvasNodes,
+  patchMcpCanvas,
   copyMcpVideoMasterOutput,
   connectMcpCanvasNodes,
   createMcpCanvasRemakeBranch,
@@ -819,4 +823,70 @@ test("canvas patches are atomic and preserve unrelated graph state", () => {
   assert.equal(next.nodes[0]?.data.title, "Updated");
   assert.equal(next.edges[0]?.target, "note-2");
   assert.deepEqual(next.viewport, { x: 4, y: 5, zoom: 1 });
+});
+
+
+test("MCP visible node directory stays stable across writes and freed slots are reused", async () => {
+  const principal: McpPrincipal = {
+    connectionId: "number-test", clientId: "number-client", userId: "mcp-user", workspaceId: "mcp-space",
+    projectIds: ["mcp-canvas-a"], libraryAccess: false,
+    scopes: ["mcp:read", "canvas:write"], resource, expiresAt: new Date(Date.now() + 60_000).toISOString(),
+  };
+  let canvas = await getMcpCanvas(principal, "mcp-canvas-a");
+  const created = [];
+  for (const type of ["image_generator", "image_generator", "video_generator"] as const) {
+    const result = await createMcpCanvasNode(principal, { projectId: canvas.id, expectedRevision: canvas.revision, type, position: { x: 0, y: 0 } });
+    canvas = result.canvas;
+    created.push(result.node);
+  }
+  assert.deepEqual(canvas.nodeDirectory.map(n => n.label), ["Image Generator 1", "Image Generator 2", "Video Generator 1"]);
+  canvas = await patchMcpCanvas(principal, { projectId: canvas.id, expectedRevision: canvas.revision, operations: [{ type: "remove_node", nodeId: created[0].id }] });
+  const copied = await duplicateMcpCanvasNodes(principal, { projectId: canvas.id, expectedRevision: canvas.revision, nodeIds: [created[1].id] });
+  const reloaded = await getMcpCanvas(principal, canvas.id);
+  assert.equal(reloaded.nodeDirectory.find(n => n.nodeId === created[1].id)?.label, "Image Generator 2");
+  assert.equal(reloaded.nodeDirectory.find(n => n.nodeId === copied.duplicatedNodeIds[0])?.label, "Image Generator 1");
+  assert.equal(reloaded.graph.nodes.find(n => n.id === copied.duplicatedNodeIds[0])?.data.nodeNumber, 1);
+});
+
+
+test("MCP uses live collaboration revision when the application projection is behind", async () => {
+  const principal: McpPrincipal = {
+    connectionId: "live-number-test", clientId: "live-client", userId: "mcp-user", workspaceId: "mcp-space",
+    projectIds: ["mcp-canvas-a"], libraryAccess: false, scopes: ["mcp:read", "canvas:write"], resource,
+    expiresAt: new Date(Date.now() + 60_000).toISOString(),
+  };
+  let live = { graph: { nodes: [], edges: [] }, revision: 42, stateVector: "live-vector-42", updatedAt: new Date().toISOString() };
+  let writtenRevision: number | undefined;
+  let writtenVector: string | undefined;
+  const http = createServer(async (request, response) => {
+    if (request.method === "PUT") {
+      let body = "";
+      for await (const chunk of request) body += chunk;
+      const input = JSON.parse(body);
+      writtenRevision = input.expectedRevision;
+      writtenVector = input.expectedStateVector;
+      live = { ...live, graph: input.graph, revision: 43, stateVector: "live-vector-43" };
+    }
+    response.setHeader("content-type", "application/json");
+    response.end(JSON.stringify(live));
+  });
+  await new Promise<void>(resolve => http.listen(0, "127.0.0.1", resolve));
+  const address = http.address() as { port: number };
+  const priorSecret = process.env.COLLABORATION_INTERNAL_SECRET;
+  const priorUrl = process.env.COLLABORATION_INTERNAL_URL;
+  process.env.COLLABORATION_INTERNAL_SECRET = "test-live-node-number-secret";
+  process.env.COLLABORATION_INTERNAL_URL = `http://127.0.0.1:${address.port}`;
+  try {
+    const canvas = await getMcpCanvas(principal, "mcp-canvas-a");
+    assert.equal(canvas.revision, 42);
+    const result = await createMcpCanvasNode(principal, { projectId: canvas.id, expectedRevision: canvas.revision, type: "image_generator", position: { x: 0, y: 0 } });
+    assert.equal(writtenRevision, 42);
+    assert.equal(writtenVector, "live-vector-42");
+    assert.equal(result.canvas.revision, 43);
+    assert.equal(result.canvas.nodeDirectory[0].label, "Image Generator 1");
+  } finally {
+    if (priorSecret === undefined) delete process.env.COLLABORATION_INTERNAL_SECRET; else process.env.COLLABORATION_INTERNAL_SECRET = priorSecret;
+    if (priorUrl === undefined) delete process.env.COLLABORATION_INTERNAL_URL; else process.env.COLLABORATION_INTERNAL_URL = priorUrl;
+    await new Promise<void>((resolve, reject) => http.close(error => error ? reject(error) : resolve()));
+  }
 });

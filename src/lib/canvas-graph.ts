@@ -1,3 +1,4 @@
+import { assignCanvasNodeNumbers } from "../../collaboration/node-numbers.mjs";
 import type { FrameEdge, FrameNode, FramePortType, GeneratorInputRole, ProjectGraph } from "./types";
 
 const generatorInputRoles = new Set<GeneratorInputRole>([
@@ -96,7 +97,7 @@ function dedupeNormalizedEdges(edges: FrameEdge[]) {
 }
 
 export function stableGraphNodes(graphNodes: FrameNode[]): FrameNode[] {
-  return graphNodes.map((node) => {
+  return assignCanvasNodeNumbers(graphNodes).map((node) => {
     const {
       measured: _measured,
       selected: _selected,
@@ -151,6 +152,8 @@ export function duplicateGraphSelection(
     const data = structuredClone(node.data);
     // A manual duplicate is a standalone canvas node. It must not inherit
     // automation lineage, otherwise graph hydration can reconnect it later.
+    delete data.nodeNumber;
+    delete data.nodeNumberType;
     delete data.automationKind;
     delete data.automationSourceNodeId;
     delete data.automationSlideIndex;

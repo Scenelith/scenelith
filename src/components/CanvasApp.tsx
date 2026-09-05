@@ -2,6 +2,7 @@
 
 /* eslint-disable @next/next/no-img-element */
 
+import { assignCanvasNodeNumbers } from "../../collaboration/node-numbers.mjs";
 import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState, type CSSProperties, type Dispatch, type SetStateAction } from "react";
 import dynamic from "next/dynamic";
 import {
@@ -659,7 +660,7 @@ function CanvasWorkspace({ initialProject, projects: initialProjects, initialWor
   }, []);
   const setNodes = useCallback<Dispatch<SetStateAction<FrameNode[]>>>((action) => {
     const previous = localNodesStateRef.current;
-    const next = typeof action === "function" ? action(previous) : action;
+    const next = assignCanvasNodeNumbers(typeof action === "function" ? action(previous) : action, previous);
     if (next === previous) return;
     localNodesStateRef.current = next;
     nodesRef.current = next;
@@ -694,6 +695,7 @@ function CanvasWorkspace({ initialProject, projects: initialProjects, initialWor
   const commitGraph = useCallback((nextNodes: FrameNode[], nextEdges: FrameEdge[]) => {
     const previousNodes = localNodesStateRef.current;
     const previousEdges = localEdgesStateRef.current;
+    nextNodes = assignCanvasNodeNumbers(nextNodes, previousNodes);
     localNodesStateRef.current = nextNodes;
     localEdgesStateRef.current = nextEdges;
     nodesRef.current = nextNodes;

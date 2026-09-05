@@ -45,7 +45,7 @@ test("MCP capabilities are scope-gated and canvas writes are revision-safe", () 
     assert.match(server, new RegExp(`principalHasScope\\(principal, "${scope.replace(":", "\\:")}"\\)`));
   }
   assert.match(service, /current\.revision !== input\.expectedRevision/);
-  assert.match(service, /writeCollaborativeGraph\(input\.projectId, nextGraph, input\.expectedRevision\)/);
+  assert.match(service, /writeCollaborativeGraph\(input\.projectId, nextGraph, input\.expectedRevision, current\.stateVector\)/);
   assert.match(service, /automationCapabilitiesForWorkspace/);
   assert.match(server, /principal\.libraryAccess/);
   assert.match(server, /!principal\.projectIds/);

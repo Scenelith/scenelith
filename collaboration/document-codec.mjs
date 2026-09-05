@@ -1,4 +1,5 @@
 import * as Y from "yjs";
+import { assignCanvasNodeNumbers } from "./node-numbers.mjs";
 
 const ROOT_NODES = "nodes";
 const ROOT_EDGES = "edges";
@@ -113,4 +114,40 @@ export function graphSummary(graph) {
       .slice(0, 3)
       .map((node) => ({ id: String(node.id), imageUrl: String(node.data.imageUrl) })),
   };
+}
+
+/** Read only slot metadata, not prompts, media history or timeline contents. */
+export function readNodeNumberingState(document) {
+  const order = document.getMap(ROOT_META).get("nodeOrder");
+  const nodes = new Map(Array.from(document.getMap(ROOT_NODES).entries(), ([id, value]) => {
+    const data = value instanceof Y.Map ? value.get("data") : value?.data;
+    const metadata = Object.fromEntries(["kind", "mediaType", "createdAt", "nodeNumber", "nodeNumberType"]
+      .map((key) => [key, data instanceof Y.Map ? data.get(key) : data?.[key]]));
+    return [id, { id, data: metadata }];
+  }));
+  const result = [];
+  for (const id of Array.isArray(order) ? order : []) {
+    if (nodes.has(id)) result.push(nodes.get(id));
+    nodes.delete(id);
+  }
+  return [...result, ...nodes.values()];
+}
+
+/** Only patch numbering fields; never rewrite other concurrently edited data. */
+export function numberDocumentNodes(document, previousNodes) {
+  const nodes = readNodeNumberingState(document);
+  const numbered = assignCanvasNodeNumbers(nodes, previousNodes);
+  if (numbered === nodes) return false;
+  document.transact(() => {
+    for (let index = 0; index < numbered.length; index++) {
+      if (numbered[index] === nodes[index]) continue;
+      const node = document.getMap(ROOT_NODES).get(numbered[index].id);
+      const data = node instanceof Y.Map ? node.get("data") : null;
+      if (data instanceof Y.Map) {
+        data.set("nodeNumber", numbered[index].data.nodeNumber);
+        data.set("nodeNumberType", numbered[index].data.nodeNumberType);
+      }
+    }
+  }, "node-numbering");
+  return true;
 }

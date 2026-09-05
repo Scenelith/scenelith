@@ -1,3 +1,4 @@
+import { assignCanvasNodeNumbers, canvasNodeLabel, canvasNodeType } from "../../../collaboration/node-numbers.mjs";
 import {
   createAssetThumbnailFromStorage,
   createIdentityThumbnail,
@@ -5,7 +6,7 @@ import {
 } from "@/lib/image-thumbnails";
 import { appendAuditEvent } from "@/lib/audit-log";
 import { duplicateGraphSelection, generatorInputCapacity, generatorSourceAssetIds, normalizeProjectGraph } from "@/lib/canvas-graph";
-import { writeCollaborativeGraph } from "@/lib/collaboration-store";
+import { readCollaborativeGraph, writeCollaborativeGraph } from "@/lib/collaboration-store";
 import { deleteStorageObject, readStorageObject, safeExtension, saveBytes } from "@/lib/storage";
 import { assertWorkspaceStorageCapacity, enqueueStorageDeletion } from "@/lib/storage-lifecycle";
 import {
@@ -13,6 +14,8 @@ import {
   listAccessibleProjectRows,
   listAccessibleWorkspaceRows,
   readProjectGraphSnapshot,
+  type ProjectGraphSnapshot,
+  summarizeProjectGraph,
   rowToProject,
   rowToProjectListItem,
   rowToHook,
@@ -162,12 +165,21 @@ export async function listMcpCanvases(principal: McpPrincipal, workspaceId?: str
     .filter((project) => tokenAllowsWorkspace(principal, project.workspaceId) && tokenAllowsProject(principal, project.id) && (!workspaceId || project.workspaceId === workspaceId));
 }
 
+async function readMcpCanvasSnapshot(projectId: string): Promise<ProjectGraphSnapshot & { stateVector?: string }> {
+  if (!process.env.COLLABORATION_INTERNAL_SECRET) return readProjectGraphSnapshot(projectId);
+  // MCP acts on the live document; its revision is independent of the async
+  // application projection, especially after a backfill or concurrent edit.
+  const snapshot = await readCollaborativeGraph(projectId);
+  return { ...snapshot, graph: normalizeProjectGraph(snapshot.graph), summary: summarizeProjectGraph(snapshot.graph) };
+}
+
 export async function getMcpCanvas(principal: McpPrincipal, projectId: string) {
   await assertProject(principal, projectId);
   const row = await db.prepare("SELECT id, workspace_id, name, source_url, status, created_at, updated_at FROM projects WHERE id = ?")
     .get(projectId) as Record<string, unknown> | undefined;
   if (!row) throw Object.assign(new Error("Canvas not found"), { status: 404 });
-  return await rowToProject(row, await readProjectGraphSnapshot(projectId));
+  const canvas = await rowToProject(row, await readMcpCanvasSnapshot(projectId));
+  return { ...canvas, nodeDirectory: canvas.graph.nodes.map((node) => ({ nodeId: node.id, type: canvasNodeType(node.data), number: node.data.nodeNumber, label: canvasNodeLabel(node.data), title: node.data.title })) };
 }
 
 export async function createMcpCanvas(principal: McpPrincipal, input: { workspaceId: string; name: string }) {
@@ -185,22 +197,24 @@ export async function createMcpCanvas(principal: McpPrincipal, input: { workspac
 }
 
 export function applyCanvasPatch(graphInput: ProjectGraph, operations: CanvasPatchOperation[]) {
-  const graph = structuredClone(graphInput);
+  const graph = structuredClone(normalizeProjectGraph(graphInput));
   for (const operation of operations) {
     if (operation.type === "add_node") {
       const id = operation.id || crypto.randomUUID();
       if (graph.nodes.some((node) => node.id === id)) throw new Error(`Canvas node ${id} already exists`);
-      graph.nodes.push({ id, type: operation.nodeType || "frameNode", position: operation.position, data: operation.data } as FrameNode);
+      graph.nodes = assignCanvasNodeNumbers([...graph.nodes, { id, type: operation.nodeType || "frameNode", position: operation.position, data: { ...operation.data, createdAt: new Date().toISOString() } } as FrameNode], graph.nodes);
       continue;
     }
     if (operation.type === "update_node") {
       const index = graph.nodes.findIndex((node) => node.id === operation.nodeId);
       if (index < 0) throw new Error(`Canvas node ${operation.nodeId} was not found`);
+      const previousNodes = [...graph.nodes];
       graph.nodes[index] = {
         ...graph.nodes[index],
         ...(operation.position ? { position: operation.position } : {}),
         ...(operation.data ? { data: { ...graph.nodes[index].data, ...operation.data } } : {}),
       };
+      graph.nodes = assignCanvasNodeNumbers(graph.nodes, previousNodes);
       continue;
     }
     if (operation.type === "remove_node") {
@@ -245,7 +259,7 @@ export async function patchMcpCanvas(principal: McpPrincipal, input: {
   name?: string;
 }) {
   const workspaceId = await assertProject(principal, input.projectId);
-  const current = await readProjectGraphSnapshot(input.projectId);
+  const current = await readMcpCanvasSnapshot(input.projectId);
   if (current.revision !== input.expectedRevision) {
     throw Object.assign(new Error(`Canvas changed. Read it again and use revision ${current.revision}.`), { code: "CANVAS_REVISION_CONFLICT", status: 409, currentRevision: current.revision });
   }
@@ -253,7 +267,7 @@ export async function patchMcpCanvas(principal: McpPrincipal, input: {
   const collaborative = Boolean(process.env.COLLABORATION_INTERNAL_SECRET);
   let conflictRevision: number | undefined;
   if (collaborative) {
-    const written = await writeCollaborativeGraph(input.projectId, nextGraph, input.expectedRevision);
+    const written = await writeCollaborativeGraph(input.projectId, nextGraph, input.expectedRevision, current.stateVector);
     if ("conflict" in written) conflictRevision = written.snapshot.revision;
   } else {
     const written = await writeProjectGraphSnapshot(input.projectId, nextGraph, { expectedRevision: input.expectedRevision });

@@ -46,6 +46,12 @@ Library access is a separate resource grant on the consent screen. Reading Libra
 
 In the current product model a saved Canvas is the project resource, so the OAuth picker labels the boundary as **Project / canvas access**. A specific-project grant cannot create or import an additional canvas, and every project-scoped tool rechecks both the OAuth grant and the user's current Scenelith access before reading or changing data.
 
+## Canvas node numbers
+
+Every node shows a short number scoped to its type and canvas, such as **Image Generator 3**, **Video Generator 1**, or **Assistant 2**. Existing canvases are backfilled using creation time, with saved order as a fallback. Renaming or moving a node does not change its number. Deleting a node leaves other numbers unchanged; the next new node of that type reuses the smallest free number. Copies receive a new free number.
+
+Ask an agent to use “Image Generator 3 on Canvas 01.” The agent reads `get_canvas`, resolves the label through `nodeDirectory` (`nodeId`, `type`, `number`, `label`, `title`), and passes the returned `nodeId` to semantic tools. Never pass the short number as a node ID. Re-read before writing because a deleted number may have been reused. With collaboration enabled, MCP reads the live document and checks its revision and state vector when writing.
+
 ## Tools
 
 ### Information architecture for agents
