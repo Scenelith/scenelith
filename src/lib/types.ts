@@ -83,6 +83,9 @@ export type VideoMasterClip = {
 
 export type FrameNodeData = {
   kind: FrameNodeKind;
+  /** Stable positive slot within this canvas and node type. */
+  nodeNumber?: number;
+  nodeNumberType?: string;
   title: string;
   subtitle?: string;
   assetId?: string;

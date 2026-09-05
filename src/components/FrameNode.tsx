@@ -2,6 +2,7 @@
 
 /* eslint-disable @next/next/no-img-element */
 
+import { canvasNodeLabel } from "../../collaboration/node-numbers.mjs";
 import { createContext, memo, useContext, useEffect, useLayoutEffect, useMemo, useRef, useState, useSyncExternalStore, type CSSProperties, type Dispatch, type DragEvent as ReactDragEvent, type PointerEvent as ReactPointerEvent, type ReactNode, type SetStateAction } from "react";
 import { createPortal } from "react-dom";
 import { Handle, NodeToolbar, Position, useUpdateNodeInternals, type NodeProps } from "@xyflow/react";
@@ -1843,7 +1844,7 @@ function FrameNodeCardComponent({ id, data, selected }: NodeProps<FrameNode>) {
     const images = generator.getReferences(id);
     const renderedWidth = liveNodeWidth || data.nodeWidth || 430;
     return <article className={`frame-node frame-node--assistant ${selected ? "is-selected" : ""}`} style={{ width: renderedWidth }}>
-      <header className="assistant-node-title"><span><AssistantGlyph size={15} />Assistant</span></header>
+      <header className="assistant-node-title"><span><AssistantGlyph size={15} />{canvasNodeLabel(data)}</span></header>
       <div className="assistant-node-shell">
         {busy && <ImageGeneration className="assistant-generation-progress" startingLabel="Preparing context…" generatingLabel="Assistant is writing. This may take a moment.">
           <div className="assistant-generation-preview">{output ? <p>{output}</p> : <AssistantGlyph size={24} />}</div>
@@ -2176,7 +2177,7 @@ function FrameNodeCardComponent({ id, data, selected }: NodeProps<FrameNode>) {
         <i />
         <button type="button" className="is-delete" title="Delete node" onPointerDown={(event) => { event.preventDefault(); event.stopPropagation(); generator.deleteNode(id); }}><Trash2 size={15} /></button>
       </NodeToolbar>
-      <header className="generator-node-title"><span><GeneratorNodeIcon size={15} />{outputMediaType === "video" ? "Video Generator" : "Image Generator"}</span></header>
+      <header className="generator-node-title"><span><GeneratorNodeIcon size={15} />{canvasNodeLabel(data)}</span></header>
       <div className={`generator-media-stage ${displayedOutputUrl ? "has-output" : ""} ${generatedOutputs.length ? "has-history" : ""} ${busy && !previewOwnsPlayback ? "is-generating" : ""} ${queued && !previewOwnsPlayback ? "is-queued" : ""} ${failed || outputLoadFailed ? "is-failed" : ""}`} style={{ aspectRatio: ratioCss, "--prompt-max-height": `${promptMaxHeight}px` } as CSSProperties}>
         {outputMediaType === "video" && outputUrl ? <CanvasVideoPlayer src={outputUrl} variant="generator" selectionActive={Boolean(selected)} onDoubleClick={() => generator.openPreview(id)} /> : displayedOutputUrl ? <img key={`${outputUrl}:${outputRetryAttempt}`} className="generator-output-image" src={displayedOutputUrl} alt="Generated output" draggable={false} loading={selected ? "eager" : "lazy"} fetchPriority={selected ? "high" : "auto"} decoding="async" onLoad={outputIsLoaded ? undefined : markOutputLoaded} onError={outputIsLoaded ? undefined : retryOutputLoad} onPointerDown={(event) => event.stopPropagation()} onDoubleClick={(event) => { event.stopPropagation(); if (readyOutputUrl) generator.openPreview(id); }} /> : null}
         {displayedOutputUrl && <div className="generator-output-vignette" />}
@@ -2322,7 +2323,7 @@ function FrameNodeCardComponent({ id, data, selected }: NodeProps<FrameNode>) {
     const renderedNoteWidth = liveNodeWidth || data.nodeWidth || 330;
     const renderedNoteHeight = liveNodeHeight || data.nodeHeight || 410;
     return <article className={`frame-node frame-node--sticky-note sticky-note-${data.noteColor || "yellow"} ${selected ? "is-selected" : ""}`} style={{ width: renderedNoteWidth, height: renderedNoteHeight }}>
-      <header className="sticky-note-head"><span><StickyNote size={13} /> NOTE</span><small>{String(data.noteText || "").length}</small></header>
+      <header className="sticky-note-head"><span><StickyNote size={13} /> {canvasNodeLabel(data)}</span><small>{String(data.noteText || "").length}</small></header>
       <textarea
         className="sticky-note-editor nodrag nopan"
         value={String(data.noteText || "")}
@@ -2774,7 +2775,7 @@ function FrameNodeCardComponent({ id, data, selected }: NodeProps<FrameNode>) {
         <i />
         <button type="button" className="is-delete" title="Delete node" onPointerDown={(event) => { event.preventDefault(); event.stopPropagation(); generator.deleteNode(id); }}><Trash2 size={15} /></button>
       </NodeToolbar>
-      <header className="scene-floating-title video-master-floating-title"><span><i className="scene-floating-title-media-icon is-video" aria-hidden="true"><Clapperboard size={15} /></i>{data.title || "Video Master"}</span></header>
+      <header className="scene-floating-title video-master-floating-title"><span><i className="scene-floating-title-media-icon is-video" aria-hidden="true"><Clapperboard size={15} /></i>{canvasNodeLabel(data)}{data.title && data.title !== "Video Master" ? ` · ${data.title}` : ""}</span></header>
       <div className="video-master-shell video-editor-shell video-scene-editor">
         <div className={`video-master-generator-stage generator-media-stage ${clipMediaUrl ? "has-output" : ""} ${masterBusy ? "is-generating" : ""} ${masterFailed ? "is-failed" : ""}`} style={{ height: masterPreviewHeight, "--prompt-max-height": `${promptMaxHeight}px` } as CSSProperties}>
           <div className="video-master-media-viewport">
@@ -2999,7 +3000,7 @@ function FrameNodeCardComponent({ id, data, selected }: NodeProps<FrameNode>) {
       <NodeToolbar isVisible={selected} position={Position.Top} offset={10} className="generator-node-toolbar video-timeline-node-toolbar nodrag nopan">
         <button type="button" title="Open source editor" aria-label="Open source editor" onClick={(event) => { event.preventDefault(); event.stopPropagation(); window.dispatchEvent(new CustomEvent(OPEN_VIDEO_EDITOR_EVENT, { detail: { nodeId: id } })); }}><Expand size={15} /></button>
       </NodeToolbar>
-      <header className="scene-floating-title video-timeline-floating-title"><span><i className="scene-floating-title-media-icon is-video" aria-hidden="true"><Video size={15} /></i>{data.title}</span></header>
+      <header className="scene-floating-title video-timeline-floating-title"><span><i className="scene-floating-title-media-icon is-video" aria-hidden="true"><Video size={15} /></i>{canvasNodeLabel(data)}{data.title ? ` · ${data.title}` : ""}</span></header>
       <VideoSceneTimeline
         nodeId={id}
         src={data.imageUrl}
@@ -3040,7 +3041,7 @@ function FrameNodeCardComponent({ id, data, selected }: NodeProps<FrameNode>) {
       || data.subtitle === "Pasted from clipboard"
       || (data.kind === "scene" && sceneIsVideo);
     return <article className={`frame-node frame-node--scene-media ${sceneIsVideo ? "is-video" : "is-image"} ${selected ? "is-selected" : ""}`} style={{ width: renderedSceneWidth }}>
-      <header className="scene-floating-title"><span><i className={`scene-floating-title-media-icon ${sceneIsVideo ? "is-video" : "is-image"}`} aria-hidden="true">{sceneIsVideo ? <Video size={15} /> : <Icon size={15} />}</i>{data.title}</span></header>
+      <header className="scene-floating-title"><span><i className={`scene-floating-title-media-icon ${sceneIsVideo ? "is-video" : "is-image"}`} aria-hidden="true">{sceneIsVideo ? <Video size={15} /> : <Icon size={15} />}</i>{canvasNodeLabel(data)}{data.title ? ` · ${data.title}` : ""}</span></header>
       <div className="scene-media-shell" style={naturalSceneRatio ? { aspectRatio: naturalSceneRatio } : undefined} onDoubleClick={(event) => { event.stopPropagation(); generator?.openPreview(id); }}>
         {sceneIsVideo ? <CanvasVideoPlayer src={image} variant="scene" selectionActive={Boolean(selected)} clipStart={Number(data.videoClipStart || 0)} clipEnd={typeof data.videoClipEnd === "number" ? data.videoClipEnd : undefined} onAspectRatio={setNaturalSceneRatio} onDoubleClick={() => generator?.openPreview(id)} /> : <img src={thumbnailImage} alt={data.title} draggable={false} loading="lazy" decoding="async" onLoad={(event) => {
           const element = event.currentTarget;
@@ -3065,7 +3066,7 @@ function FrameNodeCardComponent({ id, data, selected }: NodeProps<FrameNode>) {
     <article className={`frame-node frame-node--${data.kind} ${selected ? "is-selected" : ""}`}>
       {data.kind !== "source" && <Handle id="input" type="target" position={Position.Left} className="node-handle node-visual-port node-input-handle"><Icon size={13} /></Handle>}
       <header className="node-head">
-        <span className="node-kind"><Icon size={13} /> {data.kind}</span>
+        <span className="node-kind"><Icon size={13} /> {canvasNodeLabel(data)}</span>
         {data.status && data.status !== "idle" && <span className={`status-dot status-${data.status}`} />}
       </header>
       {hasImage && (

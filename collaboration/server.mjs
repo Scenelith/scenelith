@@ -5,7 +5,7 @@ import RedisClient from "ioredis";
 import * as Y from "yjs";
 import { Server } from "@hocuspocus/server";
 import { Redis } from "@hocuspocus/extension-redis";
-import { graphSummary, readGraph, writeGraph } from "./document-codec.mjs";
+import { graphSummary, numberDocumentNodes, readGraph, writeGraph } from "./document-codec.mjs";
 import { assertCollaborationMigrationsCurrent } from "./migration-runner.mjs";
 
 const required = [
@@ -33,6 +33,7 @@ const bootstrapUrl = new URL(process.env.FRAMEFLOW_INTERNAL_URL);
 const tokenRefreshIntervals = new Map();
 const tokenRefreshDeadlines = new Map();
 const liveConnections = new Map();
+const numberedDocuments = new WeakMap();
 const liveConnectionsBySocket = new Map();
 const syncRateWindows = new Map();
 const maxConnectionsPerUserDocument = Number(process.env.COLLABORATION_MAX_CONNECTIONS_PER_USER_DOCUMENT || 6);
@@ -688,6 +689,9 @@ const server = new Server({
   async onLoadDocument({ document, documentName }) {
     const state = await loadDocumentState(documentName);
     Y.applyUpdate(document, state, "postgres-load");
+    const changed = numberDocumentNodes(document);
+    numberedDocuments.set(document, readGraph(document).nodes);
+    if (changed) await persistDocument(documentName, document, "node-number-backfill");
     return document;
   },
   async beforeSync({ documentName, type, payload, context, connection }) {
@@ -725,9 +729,13 @@ const server = new Server({
       });
     }
   },
-  async onChange({ documentName, update, context, transactionOrigin }) {
-    const source = transactionOrigin && typeof transactionOrigin === "object" ? transactionOrigin.source : "unknown";
+  async onChange({ document, documentName, update, context, transactionOrigin }) {
+    const source = transactionOrigin && typeof transactionOrigin === "object" ? transactionOrigin.source : transactionOrigin;
     if (["postgres-load", "journal-replay", "snapshot"].includes(String(source))) return;
+    if (source !== "node-numbering" && numberedDocuments.has(document)) {
+      numberDocumentNodes(document, numberedDocuments.get(document));
+      numberedDocuments.set(document, readGraph(document).nodes);
+    }
     await journalDocumentUpdate(documentName, update, context?.userId);
   },
   async onStoreDocument({ document, documentName, lastContext }) {
@@ -945,6 +953,30 @@ const server = new Server({
 });
 
 await server.listen();
+// Hydrate older documents through the normal live-document path. This updates
+// the Yjs state, journal, revisions and projection without bypassing live peers.
+async function backfillCanvasNodeNumbers() {
+  let cursor = "";
+  let count = 0;
+  for (;;) {
+    const batch = await pool.query(`SELECT document_name FROM collaboration_documents
+      WHERE document_name > $1 AND EXISTS (
+        SELECT 1 FROM jsonb_array_elements(graph->'nodes') node
+        WHERE NOT (node->'data' ? 'nodeNumber')
+      ) ORDER BY document_name LIMIT 50`, [cursor]);
+    if (!batch.rowCount) {
+      operationalLog("info", "canvas_node_number_backfill_complete", { count });
+      return;
+    }
+    for (const row of batch.rows) {
+      cursor = row.document_name;
+      const connection = await server.hocuspocus.openDirectConnection(cursor, { userId: "node-number-backfill" });
+      await connection.disconnect({ unloadImmediately: true });
+      count++;
+    }
+  }
+}
+void backfillCanvasNodeNumbers().catch((error) => operationalLog("error", "canvas_node_number_backfill_failed", { error: error instanceof Error ? error.message : String(error) }));
 const mirrorInterval = setInterval(() => void flushMirrorOutbox(), 2_000);
 mirrorInterval.unref();
 const historyPruneInterval = setInterval(() => void pruneCollaborationHistory(), 60 * 60 * 1000);

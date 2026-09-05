@@ -1,4 +1,5 @@
 import * as Y from "yjs";
+import { assignCanvasNodeNumbers } from "./node-numbers.mjs";
 
 const ROOT_NODES = "nodes";
 const ROOT_EDGES = "edges";
@@ -113,4 +114,23 @@ export function graphSummary(graph) {
       .slice(0, 3)
       .map((node) => ({ id: String(node.id), imageUrl: String(node.data.imageUrl) })),
   };
+}
+
+/** Only patch numbering fields; never rewrite other concurrently edited data. */
+export function numberDocumentNodes(document, previousNodes) {
+  const graph = readGraph(document);
+  const numbered = assignCanvasNodeNumbers(graph.nodes, previousNodes);
+  if (numbered === graph.nodes) return false;
+  document.transact(() => {
+    for (let index = 0; index < numbered.length; index++) {
+      if (numbered[index] === graph.nodes[index]) continue;
+      const node = document.getMap(ROOT_NODES).get(numbered[index].id);
+      const data = node instanceof Y.Map ? node.get("data") : null;
+      if (data instanceof Y.Map) {
+        data.set("nodeNumber", numbered[index].data.nodeNumber);
+        data.set("nodeNumberType", numbered[index].data.nodeNumberType);
+      }
+    }
+  }, "node-numbering");
+  return true;
 }
