@@ -1989,36 +1989,39 @@ function FrameNodeCardComponent({ id, data, selected }: NodeProps<FrameNode>) {
     const generationCountLabel = generationCount === 1
       ? "Creates 1 generator node"
       : `Creates ${generationCount} generator nodes · ${simultaneousCount} at a time on ${generator.queueLabel}`;
+    const activeReferencePort = inputPorts.find((port) => port.id === referenceMenuPortId) || inputPorts[0];
+    const portReferences = references.filter((reference) => (reference.role || "reference-image") === activeReferencePort?.id);
     const attachedReferences = data.attachedReferences || [];
     const promptIsLong = Boolean((data.prompt || "").length > 150 || (data.prompt || "").split("\n").length > 4);
-    const excludedReferenceRoles = incompatibleReferenceRoles(selectedModel?.id, "reference-image");
+    const excludedReferenceRoles = incompatibleReferenceRoles(selectedModel?.id, activeReferencePort?.id);
     const compatibleReferenceCount = references.filter((reference) => !excludedReferenceRoles.includes(reference.role || "reference-image")).length;
-    const attachedReferenceIds = new Set(attachedReferences.filter((reference) => !reference.role || reference.role === "reference-image").map((reference) => reference.assetId));
+    const availableReferenceSlots = Math.max(0, Math.min(maxReferences - compatibleReferenceCount, (activeReferencePort?.max || maxReferences) - portReferences.length));
+    const attachedReferenceIds = new Set(attachedReferences.filter((reference) => (reference.role || "reference-image") === activeReferencePort?.id).map((reference) => reference.assetId));
     const attachedPersonaId = attachedReferences.find((reference) => reference.personaId && generator.personas.some((persona) => persona.id === reference.personaId))?.personaId || "";
     const selectedReferencePersona = generator.personas.find((persona) => persona.id === referencePersonaId)
       || generator.personas.find((persona) => persona.id === attachedPersonaId)
       || null;
     const attachPersonaAsset = (persona: PersonaRecord, asset: PersonaRecord["assets"][number]) => {
+      if (activeReferencePort?.kind !== "image") return;
       if (attachedReferenceIds.has(asset.id)) {
-        generator.updateNode(id, { attachedReferences: attachedReferences.filter((reference) => reference.assetId !== asset.id) });
+        generator.updateNode(id, { attachedReferences: attachedReferences.filter((reference) => reference.assetId !== asset.id || (reference.role || "reference-image") !== activeReferencePort.id) });
         return;
       }
-      if (compatibleReferenceCount >= maxReferences) return;
-      generator.updateNode(id, { attachedReferences: [...attachedReferences, { assetId: asset.id, url: asset.url, title: `${persona.name} · ${asset.role} ${persona.assets.filter((item) => item.role === asset.role).findIndex((item) => item.id === asset.id) + 1}`, personaId: persona.id, variant: asset.role }] });
+      if (availableReferenceSlots === 0) return;
+      generator.updateNode(id, { attachedReferences: [...attachedReferences, { assetId: asset.id, url: asset.url, title: `${persona.name} · ${asset.role} ${persona.assets.filter((item) => item.role === asset.role).findIndex((item) => item.id === asset.id) + 1}`, personaId: persona.id, variant: asset.role, role: activeReferencePort.id as GeneratorInputRole }] });
     };
     const attachPersonaVariant = (persona: PersonaRecord, variant: "reference" | "before" | "after") => {
-      const occupied = compatibleReferenceCount;
-      const freeSlots = Math.max(0, maxReferences - occupied);
+      if (activeReferencePort?.kind !== "image") return;
+      const freeSlots = availableReferenceSlots;
       const additions = persona.assets
         .filter((asset) => asset.role === variant && !attachedReferenceIds.has(asset.id))
         .slice(0, freeSlots)
-        .map((asset, index) => ({ assetId: asset.id, url: asset.url, title: `${persona.name} · ${variant} ${index + 1}`, personaId: persona.id, variant }));
+        .map((asset, index) => ({ assetId: asset.id, url: asset.url, title: `${persona.name} · ${variant} ${index + 1}`, personaId: persona.id, variant, role: activeReferencePort.id as GeneratorInputRole }));
       if (additions.length) generator.updateNode(id, { attachedReferences: [...attachedReferences, ...additions] });
     };
-    const removeAttachedReference = (assetId: string) => generator.updateNode(id, { attachedReferences: attachedReferences.filter((reference) => reference.assetId !== assetId) });
     const removeReference = (reference: GeneratorReference) => {
       if (reference.sourceNodeId) generator.disconnectReference(id, reference.sourceNodeId, reference.edgeId);
-      else if (reference.assetId) removeAttachedReference(reference.assetId);
+      else if (reference.assetId) generator.updateNode(id, { attachedReferences: attachedReferences.filter((item) => item.assetId !== reference.assetId || (item.role || "reference-image") !== (reference.role || "reference-image")) });
     };
     const insertReferenceMention = (reference: (typeof mentionOptions)[number]) => {
       if (!referenceMention) return;
@@ -2108,17 +2111,18 @@ function FrameNodeCardComponent({ id, data, selected }: NodeProps<FrameNode>) {
     const ratioOptions = references.length
       ? [{ value: "original", label: `Original · ${data.ratioMode === "original" ? data.aspectRatio || "auto" : "auto"}`, description: "Match the first connected reference" }, ...ratios.map((ratio) => ({ value: ratio, label: ratio }))]
       : ratios.map((ratio) => ({ value: ratio, label: ratio }));
-    const referenceMenu = openGeneratorMenu === "references" && <ReferenceMenuShell
-      attachedLabel={`${references.length} ATTACHED`}
-      capacityTitle={selectedModel?.label || "Selected model"}
-      capacityDescription={maxReferences > 0 ? `supports up to ${maxReferences} reference input${maxReferences === 1 ? "" : "s"}` : "does not accept reference inputs"}
+    const referenceMenu = openGeneratorMenu === "references" && activeReferencePort && <ReferenceMenuShell
+      attachedLabel={`${portReferences.length} ATTACHED`}
+      ariaLabel={activeReferencePort.label}
+      capacityTitle={activeReferencePort.label}
+      capacityDescription={`${activeReferencePort.required ? "Required input" : "Optional input"} · up to ${activeReferencePort.max || maxReferences}`}
       onScrollWheelCapture={(event) => {
         if ((event.target as HTMLElement).closest(".generator-persona-picker-options")) return;
         event.stopPropagation();
       }}
     >
-      {references.length > 0 && <div className="generator-reference-current">
-        {references.map((reference) => {
+      {portReferences.length > 0 && <div className="generator-reference-current">
+        {portReferences.map((reference) => {
           const persona = reference.assetId ? generator.personas.find((item) => item.id === reference.personaId) : null;
           const asset = persona?.assets.find((item) => item.id === reference.assetId);
           const variant = asset?.role || reference.variant;
@@ -2131,7 +2135,8 @@ function FrameNodeCardComponent({ id, data, selected }: NodeProps<FrameNode>) {
           </div>;
         })}
       </div>}
-      <div className="generator-reference-divider"><span>IDENTITY LIBRARY</span></div>
+      {!portReferences.length && <div className="generator-reference-empty"><Images size={17} /><span>Connect {activeReferencePort.kind === "image" ? "an image" : activeReferencePort.kind === "video" ? "a video" : "audio"} from the canvas to this input.</span></div>}
+      {activeReferencePort.kind === "image" && <><div className="generator-reference-divider"><span>IDENTITY LIBRARY</span></div>
       <div className="generator-reference-list nowheel">
         {generator.personas.length > 0 && <div className={`generator-persona-picker ${referencePersonaPickerOpen ? "is-open" : ""}`}>
           <button type="button" className="generator-persona-picker-trigger" aria-expanded={referencePersonaPickerOpen} onPointerDown={(event) => event.stopPropagation()} onClick={(event) => { event.preventDefault(); event.stopPropagation(); setReferencePersonaPickerOpen((open) => !open); }}>
@@ -2159,13 +2164,13 @@ function FrameNodeCardComponent({ id, data, selected }: NodeProps<FrameNode>) {
           const states = reference.length ? ([['reference', reference]] as const) : ([['before', before], ['after', after]] as const);
           return <div className="generator-persona-option" key={selectedReferencePersona.id}>
             {states.map(([variant, assets]) => <div className="generator-persona-state" key={variant}>
-              <header><span>{variant === "reference" ? "identity" : variant}</span><button type="button" disabled={!assets.some((asset) => !attachedReferenceIds.has(asset.id)) || compatibleReferenceCount >= maxReferences} onPointerDown={(event) => event.stopPropagation()} onClick={(event) => { event.preventDefault(); event.stopPropagation(); attachPersonaVariant(selectedReferencePersona, variant); }}>Add available</button></header>
-              <div>{assets.map((asset, index) => { const active = attachedReferenceIds.has(asset.id); return <button type="button" className={active ? "is-attached" : ""} disabled={!active && compatibleReferenceCount >= maxReferences} title={`${active ? "Remove" : "Attach"} ${selectedReferencePersona.name} ${variant} ${index + 1}`} key={asset.id} onPointerDown={(event) => event.stopPropagation()} onClick={(event) => { event.preventDefault(); event.stopPropagation(); attachPersonaAsset(selectedReferencePersona, asset); }}><img src={asset.thumbnailUrl || asset.url} alt="" loading="lazy" decoding="async" /><span>{String(index + 1).padStart(2, "0")}</span>{active && <Check size={9} />}</button>; })}{!assets.length && <small>No {variant} photos</small>}</div>
+              <header><span>{variant === "reference" ? "identity" : variant}</span><button type="button" disabled={!assets.some((asset) => !attachedReferenceIds.has(asset.id)) || availableReferenceSlots === 0} onPointerDown={(event) => event.stopPropagation()} onClick={(event) => { event.preventDefault(); event.stopPropagation(); attachPersonaVariant(selectedReferencePersona, variant); }}>Add available</button></header>
+              <div>{assets.map((asset, index) => { const active = attachedReferenceIds.has(asset.id); return <button type="button" className={active ? "is-attached" : ""} disabled={!active && availableReferenceSlots === 0} title={`${active ? "Remove" : "Attach"} ${selectedReferencePersona.name} ${variant} ${index + 1}`} key={asset.id} onPointerDown={(event) => event.stopPropagation()} onClick={(event) => { event.preventDefault(); event.stopPropagation(); attachPersonaAsset(selectedReferencePersona, asset); }}><img src={asset.thumbnailUrl || asset.url} alt="" loading="lazy" decoding="async" /><span>{String(index + 1).padStart(2, "0")}</span>{active && <Check size={9} />}</button>; })}{!assets.length && <small>No {variant} photos</small>}</div>
             </div>)}
           </div>;
         })()}
         {!generator.personas.length && <div className="generator-reference-empty"><UserRound size={17} /><span>Add identities in the Identities section first.</span></div>}
-      </div>
+      </div></>}
     </ReferenceMenuShell>;
     const renderedGeneratorWidth = liveNodeWidth || data.nodeWidth || generatorWidth;
     const promptMaxHeight = Math.round(Math.min(120, Math.max(44, (Number(renderedGeneratorWidth) / ratioValue) * 0.2)));
@@ -2546,9 +2551,11 @@ function FrameNodeCardComponent({ id, data, selected }: NodeProps<FrameNode>) {
       });
     };
     const activeReferencePort = inputPorts.find((port) => port.id === referenceMenuPortId) || inputPorts[0];
+    const portReferences = sceneReferences.filter((reference) => (reference.role || "reference-image") === activeReferencePort?.id);
     const attachedReferences = selectedClip?.attachedReferences || [];
     const excludedReferenceRoles = incompatibleReferenceRoles(selectedModel?.id, activeReferencePort?.id);
     const compatibleReferenceCount = sceneReferences.filter((reference) => !excludedReferenceRoles.includes(reference.role || "reference-image")).length;
+    const availableReferenceSlots = Math.max(0, Math.min(maxReferences - compatibleReferenceCount, (activeReferencePort?.max || maxReferences) - portReferences.length));
     const attachedReferenceIds = new Set(attachedReferences.filter((reference) => (reference.role || "reference-image") === activeReferencePort?.id).map((reference) => reference.assetId));
     const attachedPersonaId = attachedReferences.find((reference) => reference.personaId && generator.personas.some((persona) => persona.id === reference.personaId))?.personaId || "";
     const selectedReferencePersona = generator.personas.find((persona) => persona.id === referencePersonaId)
@@ -2560,7 +2567,7 @@ function FrameNodeCardComponent({ id, data, selected }: NodeProps<FrameNode>) {
         updateClip(selectedClip.id, { attachedReferences: attachedReferences.filter((reference) => reference.assetId !== asset.id || (reference.role || "reference-image") !== activeReferencePort.id) });
         return;
       }
-      if (compatibleReferenceCount >= maxReferences) return;
+      if (availableReferenceSlots === 0) return;
       updateClip(selectedClip.id, { attachedReferences: [...attachedReferences, {
         assetId: asset.id,
         url: asset.url,
@@ -2575,7 +2582,7 @@ function FrameNodeCardComponent({ id, data, selected }: NodeProps<FrameNode>) {
       if (!selectedClip || activeReferencePort?.kind !== "image") return;
       const additions = persona.assets
         .filter((asset) => asset.role === variant && !attachedReferenceIds.has(asset.id))
-        .slice(0, Math.max(0, maxReferences - compatibleReferenceCount))
+        .slice(0, availableReferenceSlots)
         .map((asset, index) => ({ assetId: asset.id, url: asset.url, thumbnailUrl: asset.thumbnailUrl, title: `${persona.name} · ${variant} ${index + 1}`, personaId: persona.id, variant, role: activeReferencePort.id as GeneratorInputRole }));
       if (additions.length) updateClip(selectedClip.id, { attachedReferences: [...attachedReferences, ...additions] });
     };
@@ -2583,7 +2590,7 @@ function FrameNodeCardComponent({ id, data, selected }: NodeProps<FrameNode>) {
       if (!selectedClip) return;
       if (reference.sourceNodeId) generator.disconnectReference(id, reference.sourceNodeId, reference.edgeId);
       else if (selectedClip.origin !== "upload" && reference.role === "reference-video" && reference.url === selectedClip.sourceUrl) updateClip(selectedClip.id, moveUploadedMasterClipToLane(selectedClip, "output"));
-      else if (reference.assetId) updateClip(selectedClip.id, { attachedReferences: attachedReferences.filter((item) => item.assetId !== reference.assetId) });
+      else if (reference.assetId) updateClip(selectedClip.id, { attachedReferences: attachedReferences.filter((item) => item.assetId !== reference.assetId || (item.role || "reference-image") !== (reference.role || "reference-image")) });
     };
     const mentionOptions = sceneReferences.map((reference, index) => ({ ...reference, referenceIndex: index, token: referenceMentionToken(reference.title, index) }))
       .filter((reference) => !referenceMention?.query || `${reference.title} ${reference.token}`.toLocaleLowerCase().includes(referenceMention.query.toLocaleLowerCase()));
@@ -2681,22 +2688,23 @@ function FrameNodeCardComponent({ id, data, selected }: NodeProps<FrameNode>) {
       }
     };
     const referenceMenu = openGeneratorMenu === "references" && activeReferencePort && <ReferenceMenuShell
-      attachedLabel={`${sceneReferences.length} ATTACHED`}
+      attachedLabel={`${portReferences.length} ATTACHED`}
+      ariaLabel={activeReferencePort.label}
       capacityTitle={activeReferencePort.label}
       capacityDescription={`${activeReferencePort.required ? "Required input" : "Optional input"} · up to ${activeReferencePort.max || maxReferences}`}
       onScrollWheelCapture={(event) => { if ((event.target as HTMLElement).closest(".generator-persona-picker-options")) return; event.stopPropagation(); }}
     >
-        {sceneReferences.length > 0 && <div className="generator-reference-current">{sceneReferences.map((reference) => {
+        {portReferences.length > 0 && <div className="generator-reference-current">{portReferences.map((reference) => {
           const roleLabel = generatorReferenceRoleLabels[reference.role || ""] || "Connected reference";
           const durationLabel = Number(reference.durationSeconds || 0) > 0 ? ` · ${Number(reference.durationSeconds).toFixed(1)}s` : "";
           return <div className="generator-reference-row" key={`${reference.role}:${reference.id}`}><GeneratorReferencePreview reference={reference} /><span><strong>{reference.title}</strong><small>{roleLabel}{durationLabel}</small></span>{reference.removable && <button type="button" aria-label={`Detach ${reference.title}`} onClick={(event) => { event.preventDefault(); event.stopPropagation(); removeReference(reference); }}><X size={12} /></button>}</div>;
         })}</div>}
-        {!sceneReferences.length && <div className="generator-reference-empty"><Images size={17} /><span>Connect media from the canvas to this scene.</span></div>}
+        {!portReferences.length && <div className="generator-reference-empty"><Images size={17} /><span>Connect {activeReferencePort.kind === "image" ? "an image" : activeReferencePort.kind === "video" ? "a video" : "audio"} from the canvas to this scene input.</span></div>}
         {activeReferencePort.kind === "image" && <><div className="generator-reference-divider"><span>IDENTITY LIBRARY</span></div><div className="generator-reference-list nowheel">
           {generator.personas.length > 0 && <div className={`generator-persona-picker ${referencePersonaPickerOpen ? "is-open" : ""}`}><button type="button" className="generator-persona-picker-trigger" aria-expanded={referencePersonaPickerOpen} onClick={(event) => { event.preventDefault(); event.stopPropagation(); setReferencePersonaPickerOpen((open) => !open); }}><span className="generator-persona-picker-avatar">{selectedReferencePersona?.avatarUrl ? <img src={selectedReferencePersona.avatarUrl} alt="" /> : <UserRound size={14} />}</span><span><small>Selected identity</small><strong>{selectedReferencePersona?.name || "Choose identity"}</strong></span><ChevronDown size={13} /></button>
             {referencePersonaPickerOpen && <div className="generator-persona-picker-options nowheel">{generator.personas.map((persona) => <button type="button" className={selectedReferencePersona?.id === persona.id ? "is-selected" : ""} key={persona.id} onClick={(event) => { event.preventDefault(); event.stopPropagation(); setReferencePersonaId(persona.id); setReferencePersonaPickerOpen(false); }}><span className="generator-persona-picker-avatar">{persona.avatarUrl ? <img src={persona.avatarUrl} alt="" /> : <UserRound size={14} />}</span><span><strong>{persona.name}</strong><small>{persona.assets.length} photos</small></span>{selectedReferencePersona?.id === persona.id && <Check size={12} />}</button>)}</div>}
           </div>}
-          {selectedReferencePersona && <div className="generator-persona-option">{(["reference", "before", "after"] as const).map((variant) => { const assets = selectedReferencePersona.assets.filter((asset) => asset.role === variant); if (!assets.length) return null; return <div className="generator-persona-state" key={variant}><header><span>{variant === "reference" ? "identity" : variant}</span><button type="button" disabled={!assets.some((asset) => !attachedReferenceIds.has(asset.id)) || compatibleReferenceCount >= maxReferences} onClick={(event) => { event.preventDefault(); event.stopPropagation(); attachPersonaVariant(selectedReferencePersona, variant); }}>Add available</button></header><div>{assets.map((asset, index) => { const active = attachedReferenceIds.has(asset.id); return <button type="button" className={active ? "is-attached" : ""} disabled={!active && compatibleReferenceCount >= maxReferences} key={asset.id} onClick={(event) => { event.preventDefault(); event.stopPropagation(); attachPersonaAsset(selectedReferencePersona, asset); }}><img src={asset.thumbnailUrl || asset.url} alt="" /><span>{String(index + 1).padStart(2, "0")}</span>{active && <Check size={9} />}</button>; })}</div></div>; })}</div>}
+          {selectedReferencePersona && <div className="generator-persona-option">{(["reference", "before", "after"] as const).map((variant) => { const assets = selectedReferencePersona.assets.filter((asset) => asset.role === variant); if (!assets.length) return null; return <div className="generator-persona-state" key={variant}><header><span>{variant === "reference" ? "identity" : variant}</span><button type="button" disabled={!assets.some((asset) => !attachedReferenceIds.has(asset.id)) || availableReferenceSlots === 0} onClick={(event) => { event.preventDefault(); event.stopPropagation(); attachPersonaVariant(selectedReferencePersona, variant); }}>Add available</button></header><div>{assets.map((asset, index) => { const active = attachedReferenceIds.has(asset.id); return <button type="button" className={active ? "is-attached" : ""} disabled={!active && availableReferenceSlots === 0} key={asset.id} onClick={(event) => { event.preventDefault(); event.stopPropagation(); attachPersonaAsset(selectedReferencePersona, asset); }}><img src={asset.thumbnailUrl || asset.url} alt="" /><span>{String(index + 1).padStart(2, "0")}</span>{active && <Check size={9} />}</button>; })}</div></div>; })}</div>}
         </div></>}
     </ReferenceMenuShell>;
     const renderedMasterWidth = Math.max(860, Number(liveNodeWidth || data.nodeWidth || 920));
