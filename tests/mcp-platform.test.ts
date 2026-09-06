@@ -1011,3 +1011,33 @@ test("MCP uses live collaboration revision when the application projection is be
     await new Promise<void>((resolve, reject) => http.close(error => error ? reject(error) : resolve()));
   }
 });
+
+test("MCP connection patches disconnect incompatible scene inputs in the saved graph", () => {
+  const graph = {
+    nodes: [
+      { id: "image", type: "frameNode", position: { x: 0, y: 0 }, data: { kind: "source" as const, title: "Image" } },
+      { id: "video", type: "frameNode", position: { x: 0, y: 0 }, data: { kind: "source" as const, title: "Video" } },
+      { id: "master", type: "frameNode", position: { x: 0, y: 0 }, data: { kind: "videoMaster" as const, title: "Master", videoMasterClips: ["a", "b"].map(id => ({ id, title: id, origin: "source" as const, role: "scene" as const, prompt: "test", duration: 5, modelId: "seedance-2-5", sourceUrl: "/original.mp4", outputUrl: "/generated.mp4" })) } },
+    ],
+    edges: ["a", "b"].map(id => ({ id: `${id}-video`, source: "video", target: "master", targetHandle: `master:${id}:reference-video-input`, data: { masterClipId: id, inputRole: "reference-video" as const, portType: "video" as const } })),
+  };
+  const next = applyCanvasPatch(graph, [{ type: "add_edge", id: "frame", source: "image", target: "master", targetHandle: "master:a:start-frame-input", data: { masterClipId: "a", inputRole: "start-frame", portType: "image" } }]);
+  assert.deepEqual(next.edges.map(edge => edge.id).sort(), ["b-video", "frame"]);
+  assert.equal(next.nodes.find(node => node.id === "master")?.data.videoMasterClips?.[0].sourceUrl, "/original.mp4");
+  assert.equal(next.nodes.find(node => node.id === "master")?.data.videoMasterClips?.[0].outputUrl, "/generated.mp4");
+});
+
+test("MCP batch mode switching follows operation order across edges and attachments", () => {
+  const graph = { nodes: [
+    { id: "source", position: { x: 0, y: 0 }, data: { kind: "source" as const, title: "Source" } },
+    { id: "generator", position: { x: 0, y: 0 }, data: { kind: "prompt" as const, title: "Video", modelId: "seedance-2-5" } },
+  ], edges: [] };
+  const connectFrame = { type: "add_edge" as const, id: "frame", source: "source", target: "generator", targetHandle: "start-frame-input", data: { inputRole: "start-frame" as const, portType: "image" as const } };
+  const attachVideo = { type: "update_node" as const, nodeId: "generator", data: { attachedReferences: [{ assetId: "video", url: "/video.mp4", title: "Video", role: "reference-video" as const }] } };
+  const videoLast = applyCanvasPatch(graph, [connectFrame, attachVideo]);
+  assert.equal(videoLast.edges.length, 0);
+  assert.equal(videoLast.nodes[1].data.attachedReferences?.[0].role, "reference-video");
+  const frameLast = applyCanvasPatch(graph, [attachVideo, connectFrame]);
+  assert.equal(frameLast.edges[0].id, "frame");
+  assert.deepEqual(frameLast.nodes[1].data.attachedReferences, []);
+});

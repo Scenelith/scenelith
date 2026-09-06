@@ -76,7 +76,8 @@ import { editReferenceMentionToken, referenceMentionToken } from "@/lib/referenc
 import { MAX_GENERATION_BATCH, settleWithConcurrency } from "@/lib/generation-queue";
 import { DEFAULT_ASSISTANT_MODEL_ID } from "@/lib/assistant-models";
 import { duplicateGraphSelection, generatorInputCapacity, generatorSourceAssetIds, normalizeEdgePorts, selectGraphNode, stableGraphEdges, stableGraphNodes, upsertGraphEdge } from "@/lib/canvas-graph";
-import { assetIdFromAssetUrl, compatibleMasterReferences, hydrateVideoMasterSourceClips, masterClipOriginalReference, nearestVideoMasterRatio, resolveVideoMasterSourceTarget, shouldIncludeAutomaticMasterVideoReference, videoMasterClipExportMedia, videoMasterClipPlaybackMedia, videoMasterClipThumbnail, videoMasterGenerationDuration, videoMasterModelsForScene, videoMasterProviderAspectRatio, videoMasterSourceRatio, videoMasterTimelineDuration, type VideoMasterDownloadLane } from "@/lib/video-master";
+import { assetIdFromAssetUrl, hydrateVideoMasterSourceClips, masterClipOriginalReference, nearestVideoMasterRatio, resolveVideoMasterSourceTarget, shouldIncludeAutomaticMasterVideoReference, videoMasterClipExportMedia, videoMasterClipPlaybackMedia, videoMasterClipThumbnail, videoMasterGenerationDuration, videoMasterModelsForScene, videoMasterProviderAspectRatio, videoMasterSourceRatio, videoMasterTimelineDuration, type VideoMasterDownloadLane } from "@/lib/video-master";
+import { reconcileGeneratorReferenceChanges } from "@/lib/generator-reference-modes";
 import { stopAllVideoPlayback } from "@/lib/video-playback-owner";
 import { findTikTokSlideshowSources, type TikTokSlideshowSource } from "@/lib/tiktok-slideshow-sources";
 import { useCanvasCollaboration } from "@/lib/use-canvas-collaboration";
@@ -658,44 +659,15 @@ function CanvasWorkspace({ initialProject, projects: initialProjects, initialWor
     nodesRef.current = next;
     setNodesState(next);
   }, []);
-  const setNodes = useCallback<Dispatch<SetStateAction<FrameNode[]>>>((action) => {
-    const previous = localNodesStateRef.current;
-    const next = assignCanvasNodeNumbers(typeof action === "function" ? action(previous) : action, previous);
-    if (next === previous) return;
-    localNodesStateRef.current = next;
-    nodesRef.current = next;
-    mutateCollaborativeGraphRef.current(
-      { nodes: stableGraphNodes(previous), edges: stableGraphEdges(localEdgesStateRef.current) },
-      { nodes: stableGraphNodes(next), edges: stableGraphEdges(localEdgesStateRef.current) },
-    );
-    markGraphCommitted();
-    setNodesState(next);
-  }, [markGraphCommitted]);
-  const setEdges = useCallback<Dispatch<SetStateAction<FrameEdge[]>>>((action) => {
-    const previous = localEdgesStateRef.current;
-    const next = typeof action === "function" ? action(previous) : action;
-    if (next === previous) return;
-    localEdgesStateRef.current = next;
-    edgesRef.current = next;
-    mutateCollaborativeGraphRef.current(
-      { nodes: stableGraphNodes(localNodesStateRef.current), edges: stableGraphEdges(previous) },
-      { nodes: stableGraphNodes(localNodesStateRef.current), edges: stableGraphEdges(next) },
-    );
-    markGraphCommitted();
-    setEdgesState(next);
-  }, [markGraphCommitted]);
-  const setEdgesLocal = useCallback<Dispatch<SetStateAction<FrameEdge[]>>>((action) => {
-    const previous = localEdgesStateRef.current;
-    const next = typeof action === "function" ? action(previous) : action;
-    if (next === previous) return;
-    localEdgesStateRef.current = next;
-    edgesRef.current = next;
-    setEdgesState(next);
-  }, []);
   const commitGraph = useCallback((nextNodes: FrameNode[], nextEdges: FrameEdge[]) => {
     const previousNodes = localNodesStateRef.current;
     const previousEdges = localEdgesStateRef.current;
-    nextNodes = assignCanvasNodeNumbers(nextNodes, previousNodes);
+    const reconciled = reconcileGeneratorReferenceChanges(
+      { nodes: previousNodes, edges: previousEdges },
+      { nodes: assignCanvasNodeNumbers(nextNodes, previousNodes), edges: nextEdges },
+    );
+    nextNodes = reconciled.graph.nodes;
+    nextEdges = reconciled.graph.edges;
     localNodesStateRef.current = nextNodes;
     localEdgesStateRef.current = nextEdges;
     nodesRef.current = nextNodes;
@@ -707,7 +679,27 @@ function CanvasWorkspace({ initialProject, projects: initialProjects, initialWor
     markGraphCommitted();
     setNodesState(nextNodes);
     setEdgesState(nextEdges);
+    setPreviewNode((current) => current ? nextNodes.find((node) => node.id === current.id) || current : current);
+    if (reconciled.disconnected) setNotice(`Reference mode changed · ${reconciled.disconnected} incompatible connection${reconciled.disconnected === 1 ? "" : "s"} disconnected`);
   }, [markGraphCommitted]);
+  const setNodes = useCallback<Dispatch<SetStateAction<FrameNode[]>>>((action) => {
+    const previous = localNodesStateRef.current;
+    const next = typeof action === "function" ? action(previous) : action;
+    if (next !== previous) commitGraph(next, localEdgesStateRef.current);
+  }, [commitGraph]);
+  const setEdges = useCallback<Dispatch<SetStateAction<FrameEdge[]>>>((action) => {
+    const previous = localEdgesStateRef.current;
+    const next = typeof action === "function" ? action(previous) : action;
+    if (next !== previous) commitGraph(localNodesStateRef.current, next);
+  }, [commitGraph]);
+  const setEdgesLocal = useCallback<Dispatch<SetStateAction<FrameEdge[]>>>((action) => {
+    const previous = localEdgesStateRef.current;
+    const next = typeof action === "function" ? action(previous) : action;
+    if (next === previous) return;
+    localEdgesStateRef.current = next;
+    edgesRef.current = next;
+    setEdgesState(next);
+  }, []);
   const loadProjectRecord = useCallback((projectId: string, expectedRevision?: number) => {
     const cached = projectCacheRef.current.get(projectId);
     if (cached && (!expectedRevision || cached.revision === expectedRevision || dirtyProjectIdsRef.current.has(projectId))) return Promise.resolve(cached);
@@ -2885,10 +2877,6 @@ function CanvasWorkspace({ initialProject, projects: initialProjects, initialWor
     const next = nodesRef.current.map((node) => node.id === nodeId ? { ...node, data: { ...node.data, ...data } } : node);
     nodesRef.current = next;
     setNodes(next);
-    setPreviewNode((current) => {
-      if (current?.id !== nodeId || Object.entries(data).every(([key, value]) => Object.is(current.data[key as keyof FrameNode["data"]], value))) return current;
-      return { ...current, data: { ...current.data, ...data } };
-    });
   }
 
   function selectCanvasNode(nodeId: string) {
@@ -3372,8 +3360,8 @@ function CanvasWorkspace({ initialProject, projects: initialProjects, initialWor
       personaId: undefined,
       variant: undefined,
     }] : [];
-    const compatibleReferences = compatibleMasterReferences(clipModelId || generatorNode?.data.modelId, [...original, ...connected, ...attached]);
-    return compatibleReferences.filter((reference, index, references) => references.findIndex((candidate) => {
+    const references = [...original, ...connected, ...attached];
+    return references.filter((reference, index, references) => references.findIndex((candidate) => {
       const candidateIdentity = candidate.edgeId || candidate.assetId || candidate.sourceNodeId || candidate.id;
       const referenceIdentity = reference.edgeId || reference.assetId || reference.sourceNodeId || reference.id;
       return candidateIdentity === referenceIdentity && candidate.role === reference.role;
@@ -3462,7 +3450,7 @@ function CanvasWorkspace({ initialProject, projects: initialProjects, initialWor
     const original = originalReference?.assetId && shouldIncludeAutomaticMasterVideoReference(masterModelId || generatorNode.data.modelId, explicitRoles)
       ? [{ assetId: originalReference.assetId, title: originalReference.title, role: originalReference.role, durationSeconds: originalReference.durationSeconds, isSceneSource: true }]
       : [];
-    return compatibleMasterReferences(masterModelId || generatorNode.data.modelId, [...original, ...connected, ...attached])
+    return [...original, ...connected, ...attached]
       .filter((entry, index, entries) => entries.findIndex((candidate) => candidate.assetId === entry.assetId && candidate.role === entry.role) === index)
       .map((entry, index) => ({ ...entry, token: referenceMentionToken(entry.title, index) }));
   }

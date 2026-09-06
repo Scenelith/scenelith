@@ -37,9 +37,10 @@ export function canvasGenerationModels() {
     supportsAudio: model.supportsAudio || false,
     ...(model.id.startsWith("seedance-2") ? { referenceModeRules: {
       mutuallyExclusiveRoleGroups: [["start-frame", "end-frame"], ["reference-image", "reference-video", "reference-audio"]],
+      connectionBehavior: "Connecting a new input automatically disconnects incompatible edges and attached references on that node or selected Master scene. The last explicitly connected mode wins; original timeline media is preserved.",
       endFrameRequiresStartFrame: true,
       frameModeAspectRatio: "adaptive",
-      guidance: "For an image plus motion video, use reference-image with reference-video. The prompt may request the reference image as the opening pose, but this does not guarantee an exact first frame. If exact start/end frames are required, use frame mode. Do not silently remove media or change reference roles to resolve a conflict; ask the user to choose.",
+      guidance: "For an image plus motion video, use reference-image with reference-video. The prompt may request the reference image as the opening pose, but this does not guarantee an exact first frame. If exact start/end frames are required, use frame mode. Connect the mode the user requested; incompatible inputs are visibly disconnected. Do not reclassify an image unless that matches the user's intent.",
     } } : {}),
     inputPorts: model.inputPorts || (model.mediaType === "image" && model.maxReferences > 0
       ? [{ id: "reference-image", label: "Reference images", kind: "image" as const, max: model.maxReferences }]

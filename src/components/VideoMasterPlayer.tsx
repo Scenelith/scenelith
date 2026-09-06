@@ -44,6 +44,7 @@ export function VideoMasterPlayer({ src, preloadSources = [], clipStart = 0, cli
 }) {
   const mediaRefs = useRef(new Map<string, HTMLVideoElement>());
   const commandRef = useRef(0);
+  const consumedPlayRequestRef = useRef<string | null>(null);
   const startedCommandRef = useRef(0);
   const completedCommandRef = useRef<number | null>(null);
   const retryTimerRef = useRef<number | null>(null);
@@ -302,6 +303,9 @@ export function VideoMasterPlayer({ src, preloadSources = [], clipStart = 0, cli
 
   useEffect(() => {
     if (!transportAttached || playRequestToken === undefined) return;
+    const requestKey = `${playbackKey}:${playRequestToken}`;
+    if (consumedPlayRequestRef.current === requestKey) return;
+    consumedPlayRequestRef.current = requestKey;
     const relativeTime = Math.max(0, Number(playRequestRelativeTime || 0));
     const live = videoPlaybackManager.getSnapshot();
     const issued = live.action === "play" && live.ownerId === playbackOwnerId && live.targetKey === playbackKey
@@ -415,7 +419,7 @@ export function VideoMasterPlayer({ src, preloadSources = [], clipStart = 0, cli
     {externalActions}
   </div>;
 
-  return <div className={`inline-video-player inline-video-scene controls-external ${playing ? "is-playing" : "is-paused"}`} data-playing={playing ? "true" : "false"} data-playback-key={playbackKey} data-media-pool-size={mediaSources.length} onClick={(event) => { if (!clickToToggle || (event.target as HTMLElement).closest("button,input,textarea,select,a")) return; event.preventDefault(); event.stopPropagation(); toggle(); }} onDoubleClick={(event) => { event.stopPropagation(); onDoubleClick?.(); }}>
+  return <div className={`inline-video-player inline-video-scene controls-external ${playing ? "is-playing" : "is-paused"}`} data-playing={playing ? "true" : "false"} data-playback-owner={playbackOwnerId} data-playback-key={playbackKey} data-media-pool-size={mediaSources.length} onClick={(event) => { if (!clickToToggle || (event.target as HTMLElement).closest("button,input,textarea,select,a")) return; event.preventDefault(); event.stopPropagation(); toggle(); }} onDoubleClick={(event) => { event.stopPropagation(); onDoubleClick?.(); }}>
     {backdropUrl && <span className="inline-video-backdrop" style={{ backgroundImage: `url("${backdropUrl}")` }} aria-hidden="true" />}
     {!transportAttached && backdropUrl && <img className="inline-video-deck inline-video-poster" data-active-deck="true" src={backdropUrl} alt="" loading="eager" decoding="async" draggable={false} aria-hidden="true" />}
     {mediaSources.map((source) => <video

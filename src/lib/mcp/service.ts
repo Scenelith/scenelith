@@ -1,3 +1,4 @@
+import { generatorReferenceChanges, reconcileGeneratorReferenceChanges } from "../generator-reference-modes";
 import { videoMasterSceneDirectory, videoMasterSceneRevision } from "./video-master-scenes";
 import { assignCanvasNodeNumbers, canvasNodeLabel, canvasNodeType } from "../../../collaboration/node-numbers.mjs";
 import {
@@ -217,11 +218,13 @@ export async function createMcpCanvas(principal: McpPrincipal, input: { workspac
 
 export function applyCanvasPatch(graphInput: ProjectGraph, operations: CanvasPatchOperation[]) {
   const graph = structuredClone(normalizeProjectGraph(graphInput));
+  const referenceChanges: ReturnType<typeof generatorReferenceChanges> = [];
   for (const operation of operations) {
     if (operation.type === "add_node") {
       const id = operation.id || crypto.randomUUID();
       if (graph.nodes.some((node) => node.id === id)) throw new Error(`Canvas node ${id} already exists`);
       graph.nodes = assignCanvasNodeNumbers([...graph.nodes, { id, type: operation.nodeType || "frameNode", position: operation.position, data: { ...operation.data, createdAt: new Date().toISOString() } } as FrameNode], graph.nodes);
+      referenceChanges.push(...generatorReferenceChanges({ nodes: [], edges: [] }, { nodes: [graph.nodes.at(-1)!], edges: [] }));
       continue;
     }
     if (operation.type === "update_node") {
@@ -234,6 +237,7 @@ export function applyCanvasPatch(graphInput: ProjectGraph, operations: CanvasPat
         ...(operation.data ? { data: { ...graph.nodes[index].data, ...operation.data } } : {}),
       };
       graph.nodes = assignCanvasNodeNumbers(graph.nodes, previousNodes);
+      referenceChanges.push(...generatorReferenceChanges({ nodes: previousNodes, edges: [] }, { nodes: graph.nodes, edges: [] }));
       continue;
     }
     if (operation.type === "remove_node") {
@@ -255,6 +259,7 @@ export function applyCanvasPatch(graphInput: ProjectGraph, operations: CanvasPat
         targetHandle: operation.targetHandle,
         data: operation.data,
       } as FrameEdge);
+      referenceChanges.push(...generatorReferenceChanges({ nodes: [], edges: [] }, { nodes: [], edges: [graph.edges.at(-1)!] }));
       continue;
     }
     if (operation.type === "remove_edge") {
@@ -264,7 +269,7 @@ export function applyCanvasPatch(graphInput: ProjectGraph, operations: CanvasPat
     }
     graph.viewport = operation.viewport;
   }
-  const normalized = normalizeProjectGraph(graph);
+  const normalized = reconcileGeneratorReferenceChanges(graphInput, normalizeProjectGraph(graph), referenceChanges).graph;
   if (normalized.nodes.length > 500 || normalized.edges.length > 1_000 || JSON.stringify(normalized).length > 2_000_000) {
     throw new Error("The resulting canvas exceeds its safe document limits");
   }
