@@ -92,3 +92,70 @@
   .actions { grid-template-columns: 1fr; }
   .allow { grid-row: 1; }
 }
+
+/* Consent is a readable account/access review, including on smaller screens. */
+.card { width: min(860px, 100%); border-radius: 16px; }
+.header { min-height: 56px; padding-inline: 28px; }
+.security { font-size: 11px; }
+.intro { padding: 26px 28px 20px; }
+.intro h1 { font-size: clamp(24px, 3.4vw, 30px); line-height: 1.18; }
+.intro p { margin-bottom: 8px; font-size: 11px; }
+.card form { padding: 0 28px 24px; }
+.accountSection { margin: 0 28px 22px; padding: 16px; border: 1px solid var(--color-mint-line); border-radius: 10px; background: var(--color-mint-soft); }
+.accountRow { display: flex; align-items: center; gap: 12px; }
+.accountAvatar { flex-shrink: 0; width: 40px; height: 40px; display: grid; place-items: center; border-radius: 50%; background: var(--color-ink-3); color: var(--color-mint); border: 1px solid var(--color-mint-line); }
+.accountIdentity { flex: 1; min-width: 0; }
+.accountIdentity > span { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; color: var(--color-text-muted); font-size: 11px; }
+.accountIdentity > span b { font-size: 10px; padding: 2px 6px; border-radius: 4px; background: var(--color-mint-soft); color: var(--color-mint); font-weight: 600; }
+.accountIdentity strong { display: block; margin-top: 3px; color: var(--color-text); font-size: 15px; font-weight: 600; overflow-wrap: anywhere; }
+.accountIdentity small { display: block; margin-top: 2px; color: var(--color-text-muted); font-size: 12px; overflow-wrap: anywhere; }
+.switchAccount { display: inline-flex; align-items: center; justify-content: center; gap: 7px; min-height: 36px; padding: 8px 10px; background: transparent; border: 1px solid var(--color-border); border-radius: 6px; color: var(--color-text-soft); font: inherit; font-size: 11px; cursor: pointer; }
+.switchAccount:hover { background: var(--color-ink-3); }
+.switchAccount:disabled { opacity: .6; cursor: wait; }
+.accountNote { margin: 12px 0 0; color: var(--color-text-muted); font-size: 12px; line-height: 1.5; }
+.workspaceField > span, .sectionLabel { font-size: 10px; }
+.workspaceField select { height: 42px; font-size: 13px; }
+.canvasAccessHead { margin-top: 14px; }
+.canvasAccessHead > span { font-size: 12px; }
+.accessMode button { min-height: 32px; font-size: 11px; padding-inline: 12px; }
+.accessSummary { margin: 6px 0 12px; color: var(--color-text-dim); font-size: 11px; line-height: 1.5; }
+.canvasChoices label { min-height: 42px; }
+.canvasChoices label strong { font-size: 12px; }
+.canvasChoices label small { font-size: 11px; }
+.libraryAccess { min-height: 60px; margin-top: 12px; }
+.libraryAccess strong { font-size: 12px; }
+.libraryAccess small { font-size: 11px; line-height: 1.45; }
+.permissionHeading { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-top: 22px; }
+.permissionHeading > small { color: var(--color-text-dim); font-size: 11px; }
+.permissions { margin-top: 10px; }
+.permission { min-height: 88px; padding: 14px 12px; gap: 9px; }
+.permission strong { font-size: 12px; }
+.permission small { font-size: 11px; line-height: 1.45; }
+.permission input { width: 16px; height: 16px; }
+.required { font-size: 10px; }
+.roleBoundary { margin-top: 12px; display: flex; align-items: flex-start; gap: 10px; padding: 12px; border: 1px solid var(--color-border); border-radius: 8px; color: var(--color-text-dim); }
+.roleBoundary > svg { flex-shrink: 0; margin-top: 1px; }
+.roleBoundary strong { font-size: 12px; font-weight: 600; color: var(--color-text-muted); }
+.roleBoundary p { margin: 4px 0 0; font-size: 11px; line-height: 1.45; }
+.callback { margin-top: 8px; font-size: 11px; padding-block: 12px; }
+.actions { margin-top: 16px; }
+.actions button { height: 44px; font-size: 13px; }
+.formError { font-size: 12px; }
+.card footer { padding: 14px 28px; font-size: 11px; line-height: 1.5; }
+.switchAccount:focus-visible, .workspaceField select:focus-visible, .actions button:focus-visible, .accessMode button:focus-visible { outline: 2px solid var(--color-mint); outline-offset: 3px; }
+@media (max-width: 680px) {
+  .card { border-radius: 0; }
+  .header { padding-inline: 16px; }
+  .intro, .card form { padding-left: 16px; padding-right: 16px; }
+  .accountSection { margin-inline: 16px; }
+  .accountRow { flex-wrap: wrap; }
+  .switchAccount { margin-left: 52px; }
+  .permission { min-height: 74px; }
+  .card footer { padding-inline: 16px; }
+}
+:global(html):has(.shell), :global(body):has(.shell) { height: auto; overflow: visible; }
+.shell { height: auto; min-height: 100dvh; overflow: visible; }
+@media (max-width: 680px) {
+  .accountRow { display: grid; grid-template-columns: 40px minmax(0, 1fr); }
+  .switchAccount { grid-column: 2; justify-self: start; margin-left: 0; }
+}

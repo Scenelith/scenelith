@@ -15,6 +15,7 @@ import {
   mcpProtectedResourceMetadata,
   registerMcpOAuthClient,
   revokeMcpOAuthToken,
+  switchMcpOAuthAccount,
   type McpPrincipal,
 } from "../src/lib/mcp/oauth";
 import {
@@ -171,6 +172,46 @@ async function registeredClient() {
   assert.equal(response.status, 201);
   return await response.json() as { client_id: string };
 }
+
+test("switching OAuth accounts preserves the verified client request and invalidates the old consent", async () => {
+  const client = await registeredClient();
+  const verifier = "b".repeat(64);
+  const input = { userId: "mcp-user", clientId: client.client_id, redirectUri: "http://127.0.0.1:49152/callback", responseType: "code",
+    codeChallenge: createHash("sha256").update(verifier).digest("base64url"), codeChallengeMethod: "S256", scope: "mcp:read canvas:write offline_access", state: "client-state&keep=1", resource };
+  const consent = await createMcpOAuthConsentRequest(input, oauthRequest);
+  await assert.rejects(() => switchMcpOAuthAccount("another-user", consent.id), /expired/);
+  const login = new URL(await switchMcpOAuthAccount("mcp-user", consent.id), origin);
+  assert.equal(login.pathname, "/login");
+  const next = new URL(login.searchParams.get("next")!, origin);
+  assert.equal(next.pathname, "/oauth/authorize");
+  assert.equal(next.searchParams.get("client_id"), client.client_id);
+  assert.equal(next.searchParams.get("redirect_uri"), input.redirectUri);
+  assert.equal(next.searchParams.get("state"), input.state);
+  assert.equal(next.searchParams.get("code_challenge"), input.codeChallenge);
+  assert.equal(next.searchParams.get("scope"), input.scope);
+  await assert.rejects(() => decideMcpOAuthConsent({ userId: "mcp-user", requestId: consent.id, allow: true, restrictToProjects: false, libraryAccess: true, scopes: ["mcp:read"] }), /expired/);
+  await assert.rejects(() => switchMcpOAuthAccount("mcp-user", consent.id), /expired/);
+});
+
+test("consent rechecks current workspace grants before issuing scopes and narrows Library permissions", async () => {
+  const client = await registeredClient();
+  const requestConsent = () => createMcpOAuthConsentRequest({ userId: "mcp-user", clientId: client.client_id, redirectUri: "http://127.0.0.1:49152/callback", responseType: "code",
+    codeChallenge: "a".repeat(43), codeChallengeMethod: "S256", scope: "mcp:read canvas:write automation:credentials library:write identity:write", resource }, oauthRequest);
+  const consent = await requestConsent();
+  assert.equal(consent.workspaces[0].role, "owner");
+  const approval = { userId: "mcp-user", requestId: consent.id, allow: true, restrictToProjects: false, libraryAccess: false, scopes: ["mcp:read", "canvas:write", "automation:credentials", "library:write", "identity:write"] as const };
+  await decideMcpOAuthConsent({ ...approval, scopes: [...approval.scopes] });
+  const readScopes = async (id: string) => {
+    const row = await db.prepare("SELECT granted_scopes_json FROM mcp_oauth_authorizations WHERE id = ?").get(id) as { granted_scopes_json: string[] | string };
+    return typeof row.granted_scopes_json === "string" ? JSON.parse(row.granted_scopes_json) : row.granted_scopes_json;
+  };
+  assert.deepEqual(await readScopes(consent.id), ["mcp:read", "canvas:write", "automation:credentials"]);
+  await assert.rejects(() => switchMcpOAuthAccount("mcp-user", consent.id), /expired/);
+  const removed = await requestConsent();
+  await db.prepare("DELETE FROM workspace_members WHERE user_id = 'mcp-user'").run();
+  await decideMcpOAuthConsent({ ...approval, requestId: removed.id, scopes: [...approval.scopes] });
+  assert.deepEqual(await readScopes(removed.id), ["mcp:read"]);
+});
 
 test("OAuth authorization uses PKCE, rotates refresh tokens, and supports revocation", async () => {
   const client = await registeredClient();
