@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import type { FrameNode, VideoMasterClip } from "../src/lib/types";
-import { assetIdFromAssetUrl, hydrateVideoMasterSourceClips, masterClipHasVideoReference, masterClipOriginalReference, modelSupportsVideoReference, moveUploadedMasterClipToLane, nearestVideoMasterRatio, reconciledVideoMasterClipDuration, reconciledVideoMasterGeneratedDuration, resolveVideoMasterSourceTarget, shouldIncludeAutomaticMasterVideoReference, useVideoMasterGeneratedOutput, videoMasterClipDownloadSource, videoMasterClipExportMedia, videoMasterDownloadAvailability, videoMasterClipPlaybackMedia, videoMasterClipThumbnail, videoMasterGeneratedOutputs, videoMasterGenerationDuration, videoMasterGenerationDurationChoices, videoMasterModelsForScene, videoMasterProviderAspectRatio, videoMasterTimelineDuration } from "../src/lib/video-master";
+import { assetIdFromAssetUrl, hydrateVideoMasterSourceClips, masterClipHasVideoReference, masterClipOriginalReference, modelSupportsVideoReference, moveUploadedMasterClipToLane, nearestVideoMasterRatio, reconciledVideoMasterClipDuration, reconciledVideoMasterGeneratedDuration, resolveVideoMasterSourceTarget, unsupportedMasterReferenceRoles, masterGenerationInputSummary, useVideoMasterGeneratedOutput, videoMasterClipDownloadSource, videoMasterClipExportMedia, videoMasterDownloadAvailability, videoMasterClipPlaybackMedia, videoMasterClipThumbnail, videoMasterGeneratedOutputs, videoMasterGenerationDuration, videoMasterGenerationDurationChoices, videoMasterModelsForScene, videoMasterProviderAspectRatio, videoMasterTimelineDuration } from "../src/lib/video-master";
 import { validateVideoMasterGenerationReferences, videoMasterTargetAcceptsAsset } from "../src/lib/video-master-validation";
 import type { ProjectGraph } from "../src/lib/types";
 import { coalesceContiguousVideoAssets, videoMasterExportRequestSchema } from "../src/lib/video-export";
@@ -70,10 +70,10 @@ test("Video Master exposes every video model when the scene has no video referen
   assert.deepEqual(videoMasterModelsForScene(models, uploadedClip).map((model) => model.id), ["text-video", "image-video", "reference-video"]);
 });
 
-test("Video Master exposes only models with a video input when ORIGINAL contains a reference", () => {
+test("Video Master keeps every model visible and reports incompatible explicit inputs", () => {
   const referencedClip = moveUploadedMasterClipToLane(uploadedClip, "original");
   assert.equal(masterClipHasVideoReference(referencedClip, referencedClip.attachedReferences), true);
-  assert.deepEqual(videoMasterModelsForScene(models, referencedClip, referencedClip.attachedReferences).map((model) => model.id), ["reference-video"]);
+  assert.deepEqual(videoMasterModelsForScene(models, referencedClip, referencedClip.attachedReferences).map((model) => model.id), ["text-video", "image-video", "reference-video"]);
   assert.equal(modelSupportsVideoReference(models[1]), false);
   assert.equal(modelSupportsVideoReference(models[2]), true);
 });
@@ -96,11 +96,6 @@ test("moving an uploaded clip to ORIGINAL attaches it as a scene video reference
 });
 
 test("Seedance frame mode excludes the implicit ORIGINAL video", () => {
-  assert.equal(shouldIncludeAutomaticMasterVideoReference("seedance-2-5", ["start-frame"]), false);
-  assert.equal(shouldIncludeAutomaticMasterVideoReference("seedance-2-fast", ["end-frame"]), false);
-  assert.equal(shouldIncludeAutomaticMasterVideoReference("seedance-2-5", ["reference-image"]), true);
-  assert.equal(shouldIncludeAutomaticMasterVideoReference("kling-3-motion", ["start-frame"]), true);
-  assert.equal(shouldIncludeAutomaticMasterVideoReference("seedance-2-5", ["reference-video"]), false);
   assert.equal(videoMasterProviderAspectRatio("seedance-2-5", "9:16", [{ role: "start-frame" }]), "adaptive");
   assert.equal(videoMasterProviderAspectRatio("seedance-2-5", "9:16", [{ role: "reference-image" }]), "9:16");
   assert.equal(videoMasterProviderAspectRatio("kling-3", "9:16", [{ role: "start-frame" }]), "9:16");
@@ -196,7 +191,7 @@ test("Video Master source validation rejects an adjacent scene asset", () => {
     targetSourceMetadataJson: JSON.stringify({ sourceAssetId: "full-video", segmentId: "scene-3" }),
     referenceAssetIds: [],
     referenceRoles: [],
-  }), "The selected scene video is missing from generation references");
+  }), undefined);
   assert.equal(validateVideoMasterGenerationReferences({
     graph,
     nodeId: "master",
@@ -434,4 +429,28 @@ test("legacy generated-duration edits cannot override an exact source segment ra
   assert.equal(videoMasterTimelineDuration(clip), 7.061);
   assert.equal(videoMasterGenerationDuration(model, clip), 8);
   assert.equal(videoMasterClipPlaybackMedia({ ...clip, outputUrl: "/api/assets/generated" }, "output").duration, 7.061);
+});
+
+test("ORIGINAL alone neither counts as a generation input nor hides image-only models", () => {
+  const clip = { ...uploadedClip, origin: "source" as const, attachedReferences: undefined };
+  assert.equal(masterClipHasVideoReference(clip, []), false);
+  assert.deepEqual(unsupportedMasterReferenceRoles(models[1], [{ role: "reference-video" }]), ["reference-video"]);
+  assert.deepEqual(unsupportedMasterReferenceRoles(models[2], [{ role: "reference-video" }]), []);
+  assert.equal(masterGenerationInputSummary([{ role: "reference-image" }]), "1 image · No video reference");
+});
+
+
+test("explicit ORIGINAL edges and attachments cannot be omitted even with frame inputs", () => {
+  const clip: VideoMasterClip = { id: "clip", title: "Scene", role: "scene", origin: "source", duration: 5, prompt: "Move", sourceNodeId: "source", sourceAssetId: "original", sourceUrl: "/api/assets/original" };
+  const graph: ProjectGraph = { nodes: [
+    { id: "source", type: "frameNode", position: { x: 0, y: 0 }, data: { kind: "source", title: "Source", mediaType: "video", assetId: "original" } },
+    { id: "master", type: "frameNode", position: { x: 0, y: 0 }, data: { kind: "videoMaster", title: "Master", videoMasterClips: [clip] } },
+  ], edges: [{ id: "edge", source: "source", target: "master", targetHandle: "master:clip:reference-video-input" }] };
+  const input = { graph, nodeId: "master", clipId: "clip", targetSourceAssetId: "original", referenceAssetIds: ["frame"], referenceRoles: ["start-frame"] };
+  assert.equal(validateVideoMasterGenerationReferences(input), "The selected scene video is missing from generation references");
+  assert.equal(validateVideoMasterGenerationReferences({ ...input, referenceAssetIds: ["original"], referenceRoles: ["reference-video"] }), undefined);
+  graph.edges = [];
+  assert.equal(validateVideoMasterGenerationReferences(input), undefined);
+  clip.attachedReferences = [{ assetId: "original", url: "/api/assets/original", title: "Original", role: "reference-video" }];
+  assert.equal(validateVideoMasterGenerationReferences(input), "The selected scene video is missing from generation references");
 });

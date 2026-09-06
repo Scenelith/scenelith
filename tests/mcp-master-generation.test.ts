@@ -6,7 +6,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { db, resetTestDatabase, closeRelationalPool } from "./postgres-test-db";
 import { saveBytes, readStorageObject } from "../src/lib/storage";
-import { getMcpCanvas, patchMcpCanvas, runMcpCanvasGeneration } from "../src/lib/mcp/service";
+import { getMcpCanvas, patchMcpCanvas, runMcpCanvasGeneration, configureMcpVideoMasterClip, inspectMcpCanvasNodeInputs, detachMcpCanvasReference, materializeMcpCanvasVideoSegment } from "../src/lib/mcp/service";
 import { videoMasterSceneRevision } from "../src/lib/mcp/video-master-scenes";
 import { videoMasterClipPlaybackMedia } from "../src/lib/video-master";
 import { canvasGenerationModels } from "../src/lib/mcp/canvas-capabilities";
@@ -122,7 +122,7 @@ test("changed scene inputs reject old tokens and are rechecked before reserving 
     await patchMcpCanvas(principal,{projectId:current.id,expectedRevision:current.revision,operations:[{type:"update_node",nodeId:"master",data:{videoMasterClips:master.data.videoMasterClips!.map(c=>c.id==="clip-a"?{...c,prompt:"Changed during preparation"}:c)}}]});
     return summary;
   });
-  await assert.rejects(runMcpCanvasGeneration(principal,input),(error:any)=>error.code==="SCENE_REVISION_CONFLICT");
+  await assert.rejects(runMcpCanvasGeneration(principal,input),(error: unknown)=>(error as { code: string }).code==="SCENE_REVISION_CONFLICT");
   assert.equal(reserve.mock.callCount(),0);
   assert.equal((await db.prepare("SELECT count(*) AS count FROM generations").get() as {count:number}).count,0);
 });
@@ -153,7 +153,7 @@ for (const changeTarget of [false,true]) test(`live collaboration retries metada
   try{
     const input=await request();
     if(changeTarget){
-      await assert.rejects(runMcpCanvasGeneration(principal,input),(error:any)=>error.code==="SCENE_REVISION_CONFLICT");
+      await assert.rejects(runMcpCanvasGeneration(principal,input),(error: unknown)=>(error as { code: string }).code==="SCENE_REVISION_CONFLICT");
       assert.equal(reserve.mock.callCount(),0);
     }else{
       const result=await runMcpCanvasGeneration(principal,input);assert.ok("generationId" in result);
@@ -232,4 +232,80 @@ test("MCP rejects mixed Seedance modes before admission and preserves explicitly
   const rules=canvasGenerationModels().find(m=>m.id==="seedance-2-5")!.referenceModeRules!;
   assert.equal(rules.frameModeAspectRatio,"adaptive");
   assert.deepEqual(rules.mutuallyExclusiveRoleGroups,[["start-frame","end-frame"],["reference-image","reference-video","reference-audio"]]);
+});
+
+
+test("removing a scene video connection stays disconnected across model changes, inspection and dispatch", async () => {
+  let input = await request();
+  await patchMcpCanvas(principal, { ...input, operations: [{ type: "remove_edge", edgeId: "scene-reference" }] });
+  input = await request();
+  await configureMcpVideoMasterClip(principal, { ...input, modelId: "grok-video-1-5" });
+  input = await request();
+  await configureMcpVideoMasterClip(principal, { ...input, modelId: "seedance-2-5" });
+  const inspected = await inspectMcpCanvasNodeInputs(principal, { projectId: "scene-canvas", nodeId: "master", clipId: "clip-a" });
+  assert.deepEqual(inspected.references, []);
+  assert.equal(inspected.generationInputSummary, "No images · No video reference");
+  input = await request();
+  const result = await runMcpCanvasGeneration(principal, input);
+  assert.ok("generationId" in result);
+  const payload = await dispatch(result.generationId);
+  assert.deepEqual(payload.references, []);
+  assert.ok(payload.targetSourceAssetId, "ORIGINAL remains available for the timeline and result provenance");
+  const current = await getMcpCanvas(principal, "scene-canvas");
+  assert.equal(current.graph.edges.length, 0);
+  assert.equal(current.graph.nodes[1].data.videoMasterClips![0].sourceUrl, graph.nodes[1].data.videoMasterClips![0].sourceUrl);
+});
+
+test("switching to Grok rejects incompatible connections until explicitly disconnected and preserves the other scene", async () => {
+  const input = await request();
+  await assert.rejects(configureMcpVideoMasterClip(principal, { ...input, modelId: "grok-video-1-5" }), (error: unknown) => (error as {code: string}).code === "INCOMPATIBLE_MODEL_INPUTS");
+  const unchanged = await getMcpCanvas(principal, "scene-canvas");
+  assert.equal(unchanged.revision, input.expectedRevision);
+  const changed = await configureMcpVideoMasterClip(principal, { ...input, modelId: "grok-video-1-5", disconnectIncompatibleReferences: true });
+  assert.equal(changed.graph.edges.length, 0);
+  assert.equal(changed.graph.nodes[1].data.videoMasterClips![0].modelId, "grok-video-1-5");
+  assert.deepEqual(changed.graph.nodes[1].data.videoMasterClips![1], graph.nodes[1].data.videoMasterClips![1]);
+  const result = await runMcpCanvasGeneration(principal, await request());
+  assert.ok("generationId" in result);
+  assert.deepEqual((await dispatch(result.generationId)).references, []);
+});
+
+test("detach reference removes a matching scene edge without deleting ORIGINAL or another role", async () => {
+  let input = await request();
+  await materializeMcpCanvasVideoSegment(principal, { ...input, sourceNodeId: "source", segmentId: "segment-a" });
+  const inspected = await inspectMcpCanvasNodeInputs(principal, { projectId: "scene-canvas", nodeId: "master", clipId: "clip-a" });
+  assert.equal(inspected.references.length, 1);
+  input = await request();
+  const result = await detachMcpCanvasReference(principal, { ...input, assetId: inspected.references[0].assetId, role: "reference-video" });
+  assert.equal(result.graph.edges.length, 0);
+  assert.equal(result.graph.nodes[1].data.videoMasterClips![0].sourceUrl, graph.nodes[1].data.videoMasterClips![0].sourceUrl);
+  const reread = await inspectMcpCanvasNodeInputs(principal, { projectId: "scene-canvas", nodeId: "master", clipId: "clip-a" });
+  assert.deepEqual(reread.references, []);
+});
+
+
+test("explicit disconnect preserves the same asset in another role and every other scene", async () => {
+  const current = await getMcpCanvas(principal, "scene-canvas");
+  const master = current.graph.nodes.find((node) => node.id === "master")!;
+  const refs = [{ assetId: "shared-fixture", url: "/api/assets/shared-fixture", title: "Shared", role: "reference-image" as const }, { assetId: "shared-fixture", url: "/api/assets/shared-fixture", title: "Shared", role: "reference-video" as const }];
+  await patchMcpCanvas(principal, { projectId: current.id, expectedRevision: current.revision, operations: [{ type: "update_node", nodeId: "master", data: { videoMasterClips: master.data.videoMasterClips!.map((clip) => ({ ...clip, attachedReferences: refs })) } }] });
+  const before = await getMcpCanvas(principal, "scene-canvas");
+  const second = before.graph.nodes.find((node) => node.id === "master")!.data.videoMasterClips![1];
+  const result = await configureMcpVideoMasterClip(principal, { ...(await request()), modelId: "grok-video-1-5", disconnectIncompatibleReferences: true });
+  const clips = result.graph.nodes.find((node) => node.id === "master")!.data.videoMasterClips!;
+  assert.deepEqual(clips[0].attachedReferences, [refs[0]]);
+  assert.deepEqual(clips[1], second);
+});
+
+
+test("an unresolved optional scene input blocks dispatch instead of disappearing", async () => {
+  const input = await request();
+  await patchMcpCanvas(principal, { ...input, operations: [
+    { type: "add_node", id: "pending-image", position: { x: 0, y: 0 }, data: { kind: "prompt", title: "Pending image", mediaType: "image", modelId: "nano-banana-2" } },
+    { type: "add_edge", id: "pending-input", source: "pending-image", target: "master", targetHandle: "master:clip-a:reference-image-input", data: { masterClipId: "clip-a", inputRole: "reference-image", portType: "image" } },
+  ] });
+  const inspected = await inspectMcpCanvasNodeInputs(principal, { projectId: "scene-canvas", nodeId: "master", clipId: "clip-a" });
+  assert.ok(inspected.unresolvedReferences.some((reference) => reference.sourceNodeId === "pending-image"));
+  await assert.rejects(runMcpCanvasGeneration(principal, await request()), /connected scene input has no ready asset/);
+  assert.equal(reserve.mock.callCount(), 0);
 });

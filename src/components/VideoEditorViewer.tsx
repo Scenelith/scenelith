@@ -3,12 +3,13 @@
 import { useEffect, useId, useMemo, useRef, useState, type ReactNode } from "react";
 import { ArrowLeft, ArrowRightLeft, Check, ChevronDown, Download, ImageIcon, Images, Link2, Play, Plus, Trash2, UserRound, Video, Volume2, X } from "lucide-react";
 import type { FrameNode, PersonaRecord, VideoMasterClip, VideoSceneSegment } from "@/lib/types";
-import { moveUploadedMasterClipToLane, nearestVideoMasterRatio, reconciledVideoMasterClipDuration, reconciledVideoMasterGeneratedDuration, useVideoMasterGeneratedOutput as applyVideoMasterGeneratedOutput, videoMasterClipPlaybackMedia, videoMasterClipThumbnail, videoMasterGeneratedOutputs, videoMasterGenerationDuration, videoMasterGenerationDurationChoices, videoMasterModelsForScene, videoMasterSourceRatio, videoMasterTimelineDuration, type VideoMasterDownloadLane, type VideoMasterGeneratedOutput } from "@/lib/video-master";
-import { assetThumbnailUrl, CanvasVideoPlayer, GeneratorReferencePreview, generatorModelCreditDescription, generatorRatiosFor, generatorReferenceRoleLabels, VideoMasterGenerationControls, VideoMasterTimeline, type GeneratorModelOption, type SelectOption } from "./FrameNode";
+import { unsupportedMasterReferenceRoles, masterGenerationInputSummary, moveUploadedMasterClipToLane, nearestVideoMasterRatio, reconciledVideoMasterClipDuration, reconciledVideoMasterGeneratedDuration, useVideoMasterGeneratedOutput as applyVideoMasterGeneratedOutput, videoMasterClipPlaybackMedia, videoMasterClipThumbnail, videoMasterGeneratedOutputs, videoMasterGenerationDuration, videoMasterGenerationDurationChoices, videoMasterModelsForScene, videoMasterSourceRatio, videoMasterTimelineDuration, type VideoMasterDownloadLane, type VideoMasterGeneratedOutput } from "@/lib/video-master";
+import { assetThumbnailUrl, CanvasVideoPlayer, GeneratorReferencePreview, generatorModelCreditDescription, generatorResolutionsFor, generatorRatiosFor, generatorReferenceRoleLabels, VideoMasterGenerationControls, VideoMasterTimeline, type GeneratorModelOption, type SelectOption } from "./FrameNode";
 import { VideoSceneTimeline } from "./VideoSceneTimeline";
 import { incompatibleReferenceRoles } from "@/lib/generator-reference-modes";
 import { videoPlaybackManager } from "@/lib/video-playback-owner";
 import { editorPlaybackUrl } from "@/lib/editor-media";
+import { generationCreditCost } from "@/lib/generation-pricing";
 import { VideoMasterPlayer } from "@/components/VideoMasterPlayer";
 
 type Lane = "output" | "original";
@@ -49,6 +50,7 @@ export function VideoEditorViewer({
   personas = [],
   onDisconnectMasterReference,
   onGenerateMasterClip,
+  onChangeMasterModel,
   onDownloadMaster,
   onDeleteNode,
 }: {
@@ -66,6 +68,7 @@ export function VideoEditorViewer({
   masterReferenceLibrary?: VideoEditorReference[];
   personas?: PersonaRecord[];
   onDisconnectMasterReference?: (reference: VideoEditorReference) => void;
+  onChangeMasterModel?: (clipId: string, modelId: string) => void;
   onGenerateMasterClip?: (clipId: string) => void;
   onDownloadMaster?: (lane: VideoMasterDownloadLane, scope: "scene" | "video") => Promise<boolean>;
   onDeleteNode?: () => void;
@@ -87,7 +90,7 @@ export function VideoEditorViewer({
       <button type="button" className="video-editor-viewer-close" aria-label="Close editor" onClick={onClose}><X size={17} /></button>
       <div className="video-editor-viewer-body">
         {isMaster
-          ? <MasterFullscreenEditor node={node} onUpdateNode={onUpdateNode} onUpload={onUploadMasterClips} models={models} referencesForClip={masterReferences} referenceLibrary={masterReferenceLibrary} personas={personas} onDisconnectReference={onDisconnectMasterReference} onGenerateClip={onGenerateMasterClip} onDownload={onDownloadMaster} onDeleteNode={onDeleteNode} onClose={onClose} />
+          ? <MasterFullscreenEditor node={node} onUpdateNode={onUpdateNode} onUpload={onUploadMasterClips} models={models} referencesForClip={masterReferences} referenceLibrary={masterReferenceLibrary} personas={personas} onDisconnectReference={onDisconnectMasterReference} onGenerateClip={onGenerateMasterClip} onChangeMasterModel={onChangeMasterModel} onDownload={onDownloadMaster} onDeleteNode={onDeleteNode} onClose={onClose} />
           : isSourceEditor
             ? <SourceFullscreenEditor node={node} onUpdateNode={onUpdateNode} onExtractSegment={onExtractSegment} onCaptureFrame={onCaptureFrame} />
             : <ClipFullscreenPlayer node={node} url={url} videoStart={videoStart} videoEnd={videoEnd} />}
@@ -165,7 +168,7 @@ function SourceFullscreenEditor({ node, onUpdateNode, onExtractSegment, onCaptur
   </div>;
 }
 
-function MasterFullscreenEditor({ node, onUpdateNode, onUpload, models, referencesForClip, referenceLibrary, personas, onDisconnectReference, onGenerateClip, onDownload, onDeleteNode, onClose }: {
+function MasterFullscreenEditor({ node, onUpdateNode, onUpload, models, referencesForClip, referenceLibrary, personas, onDisconnectReference, onGenerateClip, onChangeMasterModel, onDownload, onDeleteNode, onClose }: {
   node: FrameNode;
   onUpdateNode: (patch: Partial<FrameNode["data"]>) => void;
   onUpload: (files: File[]) => void;
@@ -175,6 +178,7 @@ function MasterFullscreenEditor({ node, onUpdateNode, onUpload, models, referenc
   personas: PersonaRecord[];
   onDisconnectReference?: (reference: VideoEditorReference) => void;
   onGenerateClip?: (clipId: string) => void;
+  onChangeMasterModel?: (clipId: string, modelId: string) => void;
   onDownload?: (lane: VideoMasterDownloadLane, scope: "scene" | "video") => Promise<boolean>;
   onDeleteNode?: () => void;
   onClose: () => void;
@@ -216,7 +220,14 @@ function MasterFullscreenEditor({ node, onUpdateNode, onUpload, models, referenc
   const timelineDuration = videoMasterTimelineDuration(selectedClip);
   const generationDuration = videoMasterGenerationDuration(selectedModel, selectedClip);
   const generatedAudioEnabled = selectedClip?.generateAudio ?? selectedModel?.defaultGenerateAudio ?? false;
-  const resolutions = selectedModel?.resolutions?.length ? selectedModel.resolutions : ["720p"];
+  const hasVideoInput = selectedReferences.some((reference) => reference.role === "reference-video" || reference.role === "motion-video");
+  const resolutions = generatorResolutionsFor(selectedModel, hasVideoInput);
+  const runResolution = resolutions.includes(selectedClip?.resolution || "") ? selectedClip!.resolution! : resolutions.includes(selectedModel?.defaultResolution || "") ? selectedModel!.defaultResolution! : resolutions[0] || "720P";
+  const runCredits = selectedModel ? generationCreditCost(selectedModel.id, runResolution, String(generationDuration || timelineDuration || 5), selectedReferences.length, {
+    generateAudio: generatedAudioEnabled, hasVideoInput,
+    inputVideoDurationSeconds: selectedReferences.filter((reference) => reference.role === "reference-video" || reference.role === "motion-video").reduce((sum, reference) => sum + Math.max(0, Number(reference.durationSeconds || 0)), 0),
+  }) : 0;
+  const unsupportedInputs = unsupportedMasterReferenceRoles(selectedModel, selectedReferences);
   const ratioOptions: SelectOption[] = selectedClip ? [
     { value: "original", label: `Original · ${originalRatio}`, description: "Match this source clip", glyphValue: "original" },
     ...selectedRatios.filter((ratio) => /^\d+:\d+$/.test(ratio)).map((ratio) => ({ value: ratio, label: ratio, glyphValue: ratio })),
@@ -224,12 +235,12 @@ function MasterFullscreenEditor({ node, onUpdateNode, onUpload, models, referenc
   const modelOptions: SelectOption[] = availableModels.map((model) => ({
     value: model.id,
     label: model.label,
-    description: generatorModelCreditDescription(model, {
+    description: unsupportedMasterReferenceRoles(model, selectedReferences).length ? `Requires disconnecting ${unsupportedMasterReferenceRoles(model, selectedReferences).map((role) => role.replaceAll("-", " ")).join(", ")}` : generatorModelCreditDescription(model, {
       duration: String(videoMasterGenerationDuration(model, selectedClip) || timelineDuration),
       referenceCount: selectedReferences.length,
       generateAudio: model.id === selectedModel?.id ? generatedAudioEnabled : model.defaultGenerateAudio,
       hasVideoInput: selectedReferences.some((reference) => reference.role === "reference-video" || reference.role === "motion-video"),
-      inputVideoDurationSeconds: timelineDuration,
+      inputVideoDurationSeconds: selectedReferences.filter((reference) => reference.role === "reference-video" || reference.role === "motion-video").reduce((sum, reference) => sum + (reference.durationSeconds || 0), 0),
     }),
   }));
   const durationOptions: SelectOption[] = videoMasterGenerationDurationChoices(selectedModel, selectedClip).map((duration) => ({
@@ -378,10 +389,6 @@ function MasterFullscreenEditor({ node, onUpdateNode, onUpload, models, referenc
 
   const detachReference = (reference: VideoEditorReference) => {
     if (!selectedClip) return;
-    if (!reference.sourceNodeId && !reference.edgeId && reference.role === "reference-video" && reference.assetId && (reference.assetId === selectedClip.sourceAssetId || reference.url === selectedClip.sourceUrl)) {
-      updateSelectedClip(moveUploadedMasterClipToLane(selectedClip, "output"));
-      return;
-    }
     if (reference.sourceNodeId || reference.edgeId) onDisconnectReference?.(reference);
     if (reference.assetId) updateSelectedClip({ attachedReferences: (selectedClip.attachedReferences || []).filter((item) => !(item.assetId === reference.assetId && (!reference.role || item.role === reference.role))) });
   };
@@ -526,6 +533,7 @@ function MasterFullscreenEditor({ node, onUpdateNode, onUpload, models, referenc
             onChange={(event) => updateSelectedClip({ prompt: event.target.value })}
           />
         </div>}
+        {selectedClip && <div className="master-generation-input-summary video-editor-input-summary" aria-label="Generation inputs">{masterGenerationInputSummary(selectedReferences)} · {runCredits.toLocaleString("en-US")} credits</div>}
         {selectedClip && <VideoMasterGenerationControls
           className="video-editor-viewer-master-controls"
           clipId={selectedClip.id}
@@ -533,25 +541,21 @@ function MasterFullscreenEditor({ node, onUpdateNode, onUpload, models, referenc
           setOpenMenu={setOpenGeneratorMenu}
           modelValue={selectedModel?.id || ""}
           modelOptions={modelOptions}
-          onModelChange={(value) => {
-            const model = availableModels.find((candidate) => candidate.id === value);
-            if (!model) return;
-            updateSelectedClip({ modelId: model.id, resolution: model.defaultResolution || model.resolutions?.[0] || selectedClip.resolution, generationDuration: videoMasterGenerationDuration(model, selectedClip), generateAudio: model.supportsAudio ? selectedClip.generateAudio ?? model.defaultGenerateAudio ?? false : false });
-          }}
+          onModelChange={(value) => onChangeMasterModel?.(selectedClip.id, value)}
           ratioValue={selectedClip.aspectRatioMode === "custom" ? selectedRatio : "original"}
           ratioOptions={ratioOptions}
           onRatioChange={(value) => updateSelectedClip(value === "original" ? { aspectRatioMode: "original", aspectRatio: originalRatio } : { aspectRatioMode: "custom", aspectRatio: value })}
           durationValue={durationOptions.length ? String(generationDuration || selectedModel?.defaultDuration || selectedModel?.durations?.[0] || "5") : undefined}
           durationOptions={durationOptions}
           onDurationChange={(value) => updateSelectedClip({ generationDuration: Number(value) })}
-          qualityValue={selectedClip.resolution || selectedModel?.defaultResolution || resolutions[0]}
+          qualityValue={runResolution}
           qualityOptions={resolutions.map((resolution) => ({ value: resolution, label: resolution }))}
           onQualityChange={(value) => updateSelectedClip({ resolution: value })}
           supportsAudio={Boolean(selectedModel?.supportsAudio)}
           audioEnabled={generatedAudioEnabled}
           onToggleAudio={() => updateSelectedClip({ generateAudio: !generatedAudioEnabled })}
-          runDisabled={!selectedClip.prompt.trim() || masterHasActiveGeneration || missingRequiredInputs.length > 0}
-          runTitle={missingRequiredInputs.length ? `Connect ${missingRequiredInputs.map((port) => port.label).join(" and ")}` : masterHasActiveGeneration ? "Another scene is generating" : "Run generation"}
+          runDisabled={unsupportedMasterReferenceRoles(selectedModel, selectedReferences).length > 0 || !selectedClip.prompt.trim() || masterHasActiveGeneration || missingRequiredInputs.length > 0}
+          runTitle={unsupportedInputs.length ? `Disconnect unsupported inputs: ${unsupportedInputs.join(", ")}` : missingRequiredInputs.length ? `Connect ${missingRequiredInputs.map((port) => port.label).join(" and ")}` : masterHasActiveGeneration ? "Another scene is generating" : `Run generation · ${masterGenerationInputSummary(selectedReferences)}`}
           runBusy={masterBusy}
           onRun={() => onGenerateClip?.(selectedClip.id)}
         />}

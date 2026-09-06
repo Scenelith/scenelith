@@ -212,6 +212,11 @@ export function normalizeEdgePorts(edges: FrameEdge[], graphNodes: FrameNode[]):
           ...edge.data,
           portType,
           ...(!isText && targetKind === "prompt" ? { inputRole } : {}),
+          ...(!isText && targetKind === "videoMaster" && edge.targetHandle?.startsWith("master:") ? {
+            masterClipId: edge.data?.masterClipId || edge.targetHandle.split(":")[1],
+            inputRole: edge.data?.inputRole || edge.targetHandle.split(":").slice(2).join(":").replace(/-input$/, "") as GeneratorInputRole,
+            sourceSegmentId: edge.data?.sourceSegmentId || (edge.sourceHandle?.startsWith("segment-output:") ? edge.sourceHandle.slice("segment-output:".length) : undefined),
+          } : {}),
           ...(automationKind ? { automationKind, automationSourceNodeId, automationSlideIndex } : {}),
         },
       };

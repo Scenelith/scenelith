@@ -99,7 +99,7 @@ import {
   type AutomationOverlapPolicy,
   type AutomationTriggerType,
 } from "@/lib/automation-workflows/triggers";
-import { assetIdFromAssetUrl, moveUploadedMasterClipToLane, nearestVideoMasterRatio, shouldIncludeAutomaticMasterVideoReference, useVideoMasterGeneratedOutput as applyVideoMasterGeneratedOutput, videoMasterClipExportMedia, videoMasterGenerationDuration, videoMasterProviderAspectRatio, videoMasterSourceRatio } from "@/lib/video-master";
+import { assetIdFromAssetUrl, moveUploadedMasterClipToLane, nearestVideoMasterRatio, unsupportedMasterReferenceRoles, masterGenerationInputSummary, useVideoMasterGeneratedOutput as applyVideoMasterGeneratedOutput, videoMasterClipExportMedia, videoMasterGenerationDuration, videoMasterProviderAspectRatio, videoMasterSourceRatio } from "@/lib/video-master";
 import { validateVideoMasterGenerationReferences } from "@/lib/video-master-validation";
 import { captureVideoFrameAsset, materializeVideoSegmentAsset, type VideoDerivativeSource } from "@/lib/video-derivatives";
 import { createScenelithDocument, parseScenelithDocument, projectGraphFromScenelithDocument } from "@/lib/scenelith-document";
@@ -713,7 +713,7 @@ function inspectVideoMasterClipInputsFromGraph(graph: ProjectGraph, nodeId: stri
     const segment = edge.data?.sourceSegmentId ? source.data.videoSegments?.find((candidate) => candidate.id === edge.data?.sourceSegmentId) : undefined;
     const assetIds = segment?.clipAssetId || edge.data?.clipAssetId ? [String(segment?.clipAssetId || edge.data?.clipAssetId)] : generatorSourceAssetIds(source);
     return assetIds.map((assetId) => ({
-      assetId, title: segment?.label || edge.data?.sourceSegmentLabel || source.data.title, role: canonicalReferenceRole(edge.data?.inputRole, edge.data?.portType || source.data.mediaType), purpose: "canvas" as const,
+      assetId, title: segment?.label || edge.data?.sourceSegmentLabel || source.data.title, role: canonicalReferenceRole(edge.data?.inputRole || edge.targetHandle?.split(":").pop()?.replace(/-input$/, ""), edge.data?.portType || source.data.mediaType), purpose: "canvas" as const,
       durationSeconds: segment ? Math.max(.1, segment.end - segment.start) : Number(source.data.videoDurationSeconds || source.data.duration || 0) || undefined,
       sourceNodeId: source.id, sourceSegmentId: segment?.id || edge.data?.sourceSegmentId,
     }));
@@ -721,21 +721,21 @@ function inspectVideoMasterClipInputsFromGraph(graph: ProjectGraph, nodeId: stri
   const attached: Omit<McpCanvasInputReference, "token">[] = (clip.attachedReferences || []).map((reference) => ({
     assetId: reference.assetId, title: reference.title, role: canonicalReferenceRole(reference.role, reference.role), purpose: reference.personaId ? "identity" : "upload", durationSeconds: reference.durationSeconds,
   }));
-  const explicitRoles = [...connected, ...attached].map((reference) => reference.role);
   const sourceSegment = graph.nodes.find((candidate) => candidate.id === clip.sourceNodeId)?.data.videoSegments?.find((candidate) => candidate.id === clip.sourceSegmentId);
   const sourceAssetId = sourceSegment?.clipAssetId || clip.sourceClipAssetId || (!clip.sourceSegmentId ? clip.sourceAssetId || assetIdFromAssetUrl(clip.sourceUrl) : undefined);
-  const implicit = sourceAssetId && shouldIncludeAutomaticMasterVideoReference(clip.modelId, explicitRoles)
-    ? [{ assetId: sourceAssetId, title: clip.title, role: "reference-video" as const, purpose: "canvas" as const, durationSeconds: Math.max(.1, clip.duration), sourceNodeId: clip.sourceNodeId, sourceSegmentId: clip.sourceSegmentId }]
-    : [];
-  const unique = [...implicit, ...connected, ...attached].filter((reference, index, references) => references.findIndex((candidate) => candidate.assetId === reference.assetId && candidate.role === reference.role) === index);
+  const unique = [...connected, ...attached].filter((reference, index, references) => references.findIndex((candidate) => candidate.assetId === reference.assetId && candidate.role === reference.role) === index);
   const references: McpCanvasInputReference[] = unique.map((reference, index) => ({ ...reference, token: referenceMentionToken(reference.title, index) }));
-  const unresolvedReferences = clip.sourceSegmentId && !sourceAssetId ? [{ sourceNodeId: clip.sourceNodeId, sourceSegmentId: clip.sourceSegmentId, reason: "The Video Master source scene must be materialized before generation" }] : [];
+  const unresolvedReferences = edges.filter((edge) => !connected.some((reference) => reference.sourceNodeId === edge.source && reference.sourceSegmentId === edge.data?.sourceSegmentId)).map((edge) => ({
+    sourceNodeId: edge.source, sourceSegmentId: edge.data?.sourceSegmentId, reason: "A connected scene input has no ready asset. Prepare it or disconnect it before generation.",
+  }));
+  if (clip.sourceSegmentId && !sourceAssetId) unresolvedReferences.push({ sourceNodeId: clip.sourceNodeId || "", sourceSegmentId: clip.sourceSegmentId, reason: "ORIGINAL must be prepared for scene provenance before generation; this does not connect it as a model input" });
   return { node, clip, connectedText: null, references, unresolvedReferences, targetSourceAssetId: sourceAssetId };
 }
 
-export async function inspectMcpCanvasNodeInputs(principal: McpPrincipal, input: { projectId: string; nodeId: string }) {
+export async function inspectMcpCanvasNodeInputs(principal: McpPrincipal, input: { projectId: string; nodeId: string; clipId?: string }) {
   const canvas = await getMcpCanvas(principal, input.projectId);
-  return { canvasId: canvas.id, revision: canvas.revision, ...inspectCanvasNodeInputsFromGraph(canvas.graph, input.nodeId) };
+  const inspected = input.clipId ? inspectVideoMasterClipInputsFromGraph(canvas.graph, input.nodeId, input.clipId) : inspectCanvasNodeInputsFromGraph(canvas.graph, input.nodeId);
+  return { canvasId: canvas.id, revision: canvas.revision, ...inspected, generationInputSummary: masterGenerationInputSummary(inspected.references) };
 }
 
 async function persistCanvasIntelligenceResult(principal: McpPrincipal, input: {
@@ -949,7 +949,7 @@ export async function runMcpCanvasGeneration(principal: McpPrincipal, input: {
       { storage_path: string; mime_type: string; kind: string; role: string | null; metadata_json: string | null } | undefined;
     if (!asset) throw Object.assign(new Error(`${reference.token} is no longer available`), { status: 404 });
     const requestedRole = canonicalReferenceRole(reference.role, asset.mime_type.split("/")[0]);
-    const role = model.id === "kling-3-motion"
+    const role = !masterClip && model.id === "kling-3-motion"
       ? requestedRole === "reference-image" ? "start-frame" : requestedRole === "motion-video" ? "reference-video" : requestedRole
       : requestedRole;
     const expectedMime = role === "motion-video" || role === "reference-video" ? "video/" : role === "reference-audio" ? "audio/" : "image/";
@@ -963,6 +963,7 @@ export async function runMcpCanvasGeneration(principal: McpPrincipal, input: {
   }));
   if (references.length > model.maxReferences) throw new Error(`${model.label} accepts at most ${model.maxReferences} reference inputs`);
   const allowedRoles = new Set((model.inputPorts || []).map((port) => port.id));
+  if (masterClip && references.some((reference) => !allowedRoles.has(reference.role))) throw Object.assign(new Error(`Disconnect unsupported inputs before running ${model.label}: ${references.filter((reference) => !allowedRoles.has(reference.role)).map((reference) => reference.role).join(", ")}`), { code: "INCOMPATIBLE_MODEL_INPUTS", status: 400 });
   const normalizedReferences = references.map((reference, index) => ({
     ...reference,
     role: allowedRoles.has(reference.role) ? reference.role : model.inputPorts?.[Math.min(index, Math.max(0, model.inputPorts.length - 1))]?.id || reference.role,
@@ -1016,7 +1017,7 @@ export async function runMcpCanvasGeneration(principal: McpPrincipal, input: {
   const duration = model.durationSource === "reference-video" && inputVideoDurationSeconds > 0 ? String(Math.ceil(inputVideoDurationSeconds)) : selectedDuration;
   const targetSourceAssetId = "targetSourceAssetId" in inspected ? inspected.targetSourceAssetId : undefined;
   if (masterClip && (masterClip.sourceAssetId || masterClip.sourceSegmentId)) {
-    if (!targetSourceAssetId) throw Object.assign(new Error("The Video Master source scene must be materialized before generation"), { status: 409 });
+    if (!targetSourceAssetId) throw Object.assign(new Error("ORIGINAL must be prepared for scene provenance before generation; this does not connect it as a model input"), { status: 409 });
     const targetSource = await db.prepare("SELECT metadata_json FROM assets WHERE id = ?").get(targetSourceAssetId) as { metadata_json: string | null } | undefined;
     const sourceError = targetSource ? validateVideoMasterGenerationReferences({
       graph: canvas.graph, nodeId: inspected.node.id, clipId: masterClip.id, targetSourceAssetId, targetSourceMetadataJson: targetSource.metadata_json,
@@ -1362,7 +1363,7 @@ export async function attachMcpCanvasReference(principal: McpPrincipal, input: {
     const metadata = JSON.parse(asset.metadata_json || "{}") as { duration?: number | string; durationSeconds?: number | string };
     durationSeconds = Number(metadata.durationSeconds || metadata.duration || 0) || undefined;
   } catch {}
-  const attached = clip?.attachedReferences || node.data.attachedReferences || [];
+  const attached = (clip ? clip.attachedReferences : node.data.attachedReferences) || [];
   if (attached.some((reference) => reference.assetId === asset.id && reference.role === input.role)) return current;
   const variant: "reference" | "before" | "after" | undefined = asset.role === "reference" || asset.role === "before" || asset.role === "after" ? asset.role : undefined;
   const next = [...attached, {
@@ -1387,10 +1388,20 @@ export async function detachMcpCanvasReference(principal: McpPrincipal, input: {
   const node = current.graph.nodes.find((candidate) => candidate.id === input.nodeId);
   const clip = input.clipId && node?.data.kind === "videoMaster" ? node.data.videoMasterClips?.find((candidate) => candidate.id === input.clipId) : undefined;
   if (!node || (input.clipId && !clip)) throw Object.assign(new Error("Canvas node or Video Master scene not found"), { status: 404 });
-  const attached = clip?.attachedReferences || node.data.attachedReferences || [];
+  const attached = (clip ? clip.attachedReferences : node.data.attachedReferences) || [];
   const next = attached.filter((reference) => !(reference.assetId === input.assetId && (!input.role || reference.role === input.role)));
-  if (next.length === attached.length) return current;
-  return await patchMcpCanvas(principal, { projectId: input.projectId, expectedRevision: input.expectedRevision, operations: [{ type: "update_node", nodeId: node.id, data: clip
+  const edges = current.graph.edges.filter((edge) => {
+    if (edge.target !== node.id || (clip && edge.data?.masterClipId !== clip.id && !String(edge.targetHandle || "").startsWith(`master:${clip.id}:`))) return false;
+    const source = current.graph.nodes.find((candidate) => candidate.id === edge.source);
+    if (!source) return false;
+    const role = canonicalReferenceRole(edge.data?.inputRole || edge.targetHandle?.split(":").pop()?.replace(/-input$/, ""), edge.data?.portType || source.data.mediaType);
+    if (input.role && role !== input.role) return false;
+    const segment = source.data.videoSegments?.find((candidate) => candidate.id === edge.data?.sourceSegmentId);
+    const assets = segment ? [segment.clipAssetId, edge.data?.clipAssetId] : generatorSourceAssetIds(source);
+    return assets.includes(input.assetId);
+  });
+  if (next.length === attached.length && !edges.length) return current;
+  return await patchMcpCanvas(principal, { projectId: input.projectId, expectedRevision: input.expectedRevision, operations: [...edges.map((edge) => ({ type: "remove_edge" as const, edgeId: edge.id })), { type: "update_node", nodeId: node.id, data: clip
     ? { videoMasterClips: node.data.videoMasterClips?.map((candidate) => candidate.id === clip.id ? { ...candidate, attachedReferences: next } : candidate), videoMasterSelectedClipId: clip.id }
     : { attachedReferences: next } }] });
 }
@@ -1488,7 +1499,7 @@ export async function createMcpVideoMaster(principal: McpPrincipal, input: {
 export async function configureMcpVideoMasterClip(principal: McpPrincipal, input: {
   projectId: string; expectedRevision: number; nodeId: string; clipId: string;
   title?: string; role?: "hook" | "scene" | "cta"; prompt?: string; modelId?: string; aspectRatio?: string;
-  aspectRatioMode?: "original" | "custom"; resolution?: string; duration?: number; generateAudio?: boolean; sequenceIndex?: number;
+  aspectRatioMode?: "original" | "custom"; resolution?: string; duration?: number; generateAudio?: boolean; sequenceIndex?: number; disconnectIncompatibleReferences?: boolean;
 }) {
   const current = await getMcpCanvas(principal, input.projectId);
   if (current.revision !== input.expectedRevision) throw Object.assign(new Error(`Canvas changed. Read it again and use revision ${current.revision}.`), { code: "CANVAS_REVISION_CONFLICT", status: 409, currentRevision: current.revision });
@@ -1498,7 +1509,11 @@ export async function configureMcpVideoMasterClip(principal: McpPrincipal, input
   const provider = generationProvider();
   const model = provider.getModel(input.modelId || clip.modelId || "seedance-2-fast");
   if (model.mediaType !== "video") throw new Error("Video Master scenes require a video model");
-  const hasVideoInput = Boolean(clip.sourceAssetId || clip.sourceClipAssetId || current.graph.edges.some((edge) => edge.target === node.id && edge.data?.masterClipId === clip.id && (edge.data?.inputRole === "reference-video" || edge.data?.inputRole === "motion-video")));
+  const sceneEdges = current.graph.edges.filter((edge) => edge.target === node.id && (edge.data?.masterClipId === clip.id || String(edge.targetHandle || "").startsWith(`master:${clip.id}:`)) && edge.data?.portType !== "text");
+  const references = [...(clip.attachedReferences || []), ...sceneEdges.map((edge) => ({ role: canonicalReferenceRole(edge.data?.inputRole || edge.targetHandle?.split(":").pop()?.replace(/-input$/, ""), edge.data?.portType) }))];
+  const unsupported = unsupportedMasterReferenceRoles(model, references);
+  if (unsupported.length && !input.disconnectIncompatibleReferences) throw Object.assign(new Error(`${model.label} does not support ${unsupported.join(", ")}. Choose another model or set disconnect_incompatible_references=true to disconnect these inputs. ORIGINAL and generated outputs will be preserved.`), { code: "INCOMPATIBLE_MODEL_INPUTS", status: 400 });
+  const hasVideoInput = references.some((reference) => !unsupported.includes(reference.role || "reference-image") && (reference.role === "reference-video" || reference.role === "motion-video"));
   const resolutions = provider.allowedResolutions(model, hasVideoInput);
   const resolution = resolutions.includes(input.resolution || clip.resolution || "") ? (input.resolution || clip.resolution)! : model.defaultResolution || resolutions[0];
   if (!resolution) throw new Error(`${model.label} has no compatible resolution`);
@@ -1515,7 +1530,7 @@ export async function configureMcpVideoMasterClip(principal: McpPrincipal, input
     ...(input.prompt !== undefined ? { prompt: input.prompt.slice(0, model.maxPromptLength || 30_000) } : {}),
     modelId: model.id, resolution, aspectRatio, aspectRatioMode: ratioMode, generationDuration,
     generateAudio: model.supportsAudio ? input.generateAudio ?? candidate.generateAudio ?? model.defaultGenerateAudio ?? false : false,
-    attachedReferences: candidate.attachedReferences?.filter((reference) => model.inputPorts?.some((port) => port.id === reference.role)),
+    attachedReferences: candidate.attachedReferences?.filter((reference) => model.inputPorts?.some((port) => port.id === (reference.role || "reference-image"))),
   } : candidate);
   if (input.sequenceIndex !== undefined) {
     const sourceIndex = nextClips.findIndex((candidate) => candidate.id === clip.id);
@@ -1523,8 +1538,8 @@ export async function configureMcpVideoMasterClip(principal: McpPrincipal, input
     const [moved] = nextClips.splice(sourceIndex, 1);
     nextClips.splice(targetIndex, 0, moved);
   }
-  nextClips = nextClips.map((candidate, sequenceIndex) => ({ ...candidate, sequenceIndex }));
-  return await patchMcpCanvas(principal, { projectId: input.projectId, expectedRevision: input.expectedRevision, operations: [{ type: "update_node", nodeId: node.id, data: { videoMasterClips: nextClips, videoMasterSelectedClipId: clip.id, modelId: model.id, duration: String(generationDuration), resolution: resolution as FrameNodeData["resolution"], aspectRatio: aspectRatio as FrameNodeData["aspectRatio"], prompt: input.prompt ?? clip.prompt } }] });
+  if (input.sequenceIndex !== undefined) nextClips = nextClips.map((candidate, sequenceIndex) => ({ ...candidate, sequenceIndex }));
+  return await patchMcpCanvas(principal, { projectId: input.projectId, expectedRevision: input.expectedRevision, operations: [...sceneEdges.filter((edge) => unsupported.includes(canonicalReferenceRole(edge.data?.inputRole || edge.targetHandle?.split(":").pop()?.replace(/-input$/, ""), edge.data?.portType))).map((edge) => ({ type: "remove_edge" as const, edgeId: edge.id })), { type: "update_node", nodeId: node.id, data: { videoMasterClips: nextClips, videoMasterSelectedClipId: clip.id, modelId: model.id, duration: String(generationDuration), resolution: resolution as FrameNodeData["resolution"], aspectRatio: aspectRatio as FrameNodeData["aspectRatio"], prompt: input.prompt ?? clip.prompt } }] });
 }
 
 type McpLibraryAssetRow = {

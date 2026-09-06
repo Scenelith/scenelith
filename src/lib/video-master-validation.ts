@@ -1,4 +1,5 @@
 import type { ProjectGraph } from "./types";
+import { normalizeEdgePorts } from "./canvas-graph";
 import { resolveVideoMasterSourceTarget } from "./video-master";
 
 type AssetLineage = {
@@ -51,8 +52,12 @@ export function validateVideoMasterGenerationReferences(input: {
   if (!input.targetSourceAssetId || !videoMasterTargetAcceptsAsset(input.graph, input.nodeId, input.clipId, input.targetSourceAssetId, input.targetSourceMetadataJson)) {
     return "The generation source does not match the selected Video Master scene";
   }
-  const usesFrameMode = input.referenceRoles.some((role) => role === "start-frame" || role === "end-frame");
-  const exactSourceIsSent = input.referenceAssetIds.some((assetId, index) => assetId === input.targetSourceAssetId && input.referenceRoles[index] === "reference-video");
-  if (!usesFrameMode && !exactSourceIsSent) return "The selected scene video is missing from generation references";
+  const sourceIsConnected = normalizeEdgePorts(input.graph.edges, input.graph.nodes).some((edge) => edge.target === input.nodeId
+    && (edge.data?.masterClipId === input.clipId || String(edge.targetHandle || "").startsWith(`master:${input.clipId}:`))
+    && (edge.data?.inputRole === "reference-video" || edge.data?.inputRole === "motion-video")
+    && edge.source === target.clip.sourceNodeId && edge.data?.sourceSegmentId === target.clip.sourceSegmentId)
+    || Boolean(target.clip.attachedReferences?.some((reference) => (reference.role === "reference-video" || reference.role === "motion-video") && reference.assetId === target.sourceAssetId));
+  const exactSourceIsSent = input.referenceAssetIds.some((assetId, index) => assetId === input.targetSourceAssetId && ["reference-video", "motion-video"].includes(input.referenceRoles[index]));
+  if (sourceIsConnected && !exactSourceIsSent) return "The selected scene video is missing from generation references";
   return undefined;
 }
