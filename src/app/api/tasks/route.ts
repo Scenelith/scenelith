@@ -40,9 +40,10 @@ export async function GET() {
   const auth = await requireApiUser();
   if (auth.response) return auth.response;
 
-  const generations = await db.prepare(`SELECT g.*, p.name AS project_name
+  const generations = await db.prepare(`SELECT g.*, p.name AS project_name, dispatch.payload_json::jsonb ->> 'targetClipId' AS target_clip_id
     FROM generations g
     JOIN projects p ON p.id = g.project_id
+    LEFT JOIN generation_dispatch_jobs dispatch ON dispatch.generation_id = g.id
     WHERE g.requested_by_user_id = ?
       AND (lower(g.status) NOT IN ('completed','complete','succeeded','success','fail','failed','error','cancelled','canceled')
         OR g.updated_at >= ?)
@@ -51,7 +52,7 @@ export async function GET() {
     LIMIT 32`).all(auth.user.id, new Date(Date.now() - 48 * 60 * 60_000).toISOString()) as Array<{
       id: string; project_id: string; project_name: string; node_id: string; status: string; media_type: string;
       model_id: string; operation: string; output_url: string | null; output_asset_id: string | null; error: string | null;
-      credit_cost: number; created_at: string; updated_at: string;
+      credit_cost: number; created_at: string; updated_at: string; target_clip_id: string | null;
     }>;
 
   const automations = await db.prepare(`SELECT job.*, project.name AS project_name
@@ -88,6 +89,7 @@ export async function GET() {
     projectId: row.project_id,
     projectName: row.project_name,
     nodeId: row.node_id,
+    targetClipId: row.target_clip_id || undefined,
     title: row.operation === "edit" ? "Image edit" : row.media_type === "video" ? "Video generation" : "Image generation",
     status: generationTaskStatus(row.status),
     stageLabel: generationStageLabel(row),

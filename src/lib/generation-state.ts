@@ -73,6 +73,9 @@ async function updateGenerationNode(generation: GenerationStateRow, changes: {
     if (nodeIndex < 0) return graph;
 
     const node = graph.nodes[nodeIndex] as FrameNode;
+    // Repeated delivery must be idempotent, including legacy jobs without a saved target.
+    if (changes.outputUrl && node.data.kind === "videoMaster" && node.data.videoMasterClips?.some((clip) =>
+      clip.outputUrl === changes.outputUrl || clip.generatedOutputs?.some((item) => item.url === changes.outputUrl))) return graph;
     const output = changes.outputUrl ? {
       url: changes.outputUrl,
       assetId: changes.assetId,
@@ -97,12 +100,13 @@ async function updateGenerationNode(generation: GenerationStateRow, changes: {
         [output.assetId]: [...(node.data.editReferencesByAssetId?.[node.data.assetId] || [])],
       }
       : node.data.editReferencesByAssetId;
-    const targetClipId = node.data.videoMasterGeneratingClipId || persistedTargetClipId;
+    const targetClipId = persistedTargetClipId || node.data.videoMasterGeneratingClipId;
     if (output && node.data.kind === "videoMaster" && targetClipId) {
       const clipId = targetClipId;
       const clips = node.data.videoMasterClips || [];
       if (clips.some((clip) => clip.id === clipId)) {
         const targetClip = clips.find((clip) => clip.id === clipId);
+        const completesActiveScene = !node.data.videoMasterGeneratingClipId || node.data.videoMasterGeneratingClipId === clipId;
         const timelineDuration = videoMasterTimelineDuration(targetClip);
         const physicalDuration = Number(changes.durationSeconds || 0);
         const generatedDuration = physicalDuration > 0
@@ -134,11 +138,13 @@ async function updateGenerationNode(generation: GenerationStateRow, changes: {
             generatedOutputs: undefined,
             activeGeneratedOutputIndex: undefined,
             generatedAt: generation.created_at,
-            status: "ready" as const,
-            queueReason: undefined,
-            generationError: undefined,
             videoMasterClips: nextClips,
-            videoMasterGeneratingClipId: undefined,
+            ...(completesActiveScene ? {
+              status: "ready" as const,
+              queueReason: undefined,
+              generationError: undefined,
+              videoMasterGeneratingClipId: undefined,
+            } : {}),
           },
         };
         return graph;

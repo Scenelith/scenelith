@@ -6,6 +6,7 @@ import { assignCanvasNodeNumbers } from "../../collaboration/node-numbers.mjs";
 import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState, type CSSProperties, type Dispatch, type SetStateAction } from "react";
 import dynamic from "next/dynamic";
 import { MasterModelSwitchDialog } from "./MasterModelSwitchDialog";
+import { restoreVideoMasterTask } from "@/lib/video-master-task-state";
 import {
   BaseEdge,
   Controls,
@@ -1001,6 +1002,11 @@ function CanvasWorkspace({ initialProject, projects: initialProjects, initialWor
           const task = latestByNode.get(node.id);
           if (!task) return node;
           const taskSignature = `${task.status}:${task.updatedAt}:${task.assetId || task.outputUrl || ""}`;
+          if (node.data.kind === "videoMaster") {
+            const restored = restoreVideoMasterTask(node, task);
+            if (restored !== node) changed = true;
+            return restored;
+          }
           if ((task.status === "completed" || task.status === "failed") && restoredTaskStateRef.current[task.id] === taskSignature) return node;
           if (task.status === "queued" || task.status === "running") {
             const status = task.status === "queued" ? "queued" as const : "working" as const;
