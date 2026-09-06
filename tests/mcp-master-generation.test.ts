@@ -298,6 +298,58 @@ test("explicit disconnect preserves the same asset in another role and every oth
 });
 
 
+test("a source-based Grok scene keeps only its image across detach, configure and source preparation", async () => {
+  await addSceneImage("reference-image", true);
+  await materializeMcpCanvasVideoSegment(principal, { ...(await request()), sourceNodeId: "source", segmentId: "segment-a" });
+  const before = await getMcpCanvas(principal, "scene-canvas");
+  const originalClip = before.graph.nodes.find((node) => node.id === "master")!.data.videoMasterClips![0];
+  await detachMcpCanvasReference(principal, { ...(await request()), assetId: originalClip.sourceClipAssetId!, role: "reference-video" });
+  for (let attempt = 0; attempt < 2; attempt++) {
+    await configureMcpVideoMasterClip(principal, { ...(await request()), modelId: "grok-video-1-5", duration: 6, resolution: "720P", aspectRatio: "9:16", disconnectIncompatibleReferences: true });
+    await materializeMcpCanvasVideoSegment(principal, { ...(await request()), sourceNodeId: "source", segmentId: "segment-a" });
+    const saved = await getMcpCanvas(principal, "scene-canvas");
+    const clip = saved.graph.nodes.find((node) => node.id === "master")!.data.videoMasterClips![0];
+    assert.equal(clip.modelId, "grok-video-1-5");
+    assert.equal(saved.videoMasterScenes.find((scene) => scene.clipId === "clip-a")!.modelId, "grok-video-1-5");
+    assert.equal(clip.sourceClipAssetId, originalClip.sourceClipAssetId);
+    const inputs = await inspectMcpCanvasNodeInputs(principal, { projectId: "scene-canvas", nodeId: "master", clipId: "clip-a" });
+    assert.deepEqual(inputs.references.map((reference) => reference.role), ["reference-image"]);
+    assert.ok(!saved.graph.edges.some((edge) => edge.data?.masterClipId === "clip-a" && edge.data?.inputRole === "reference-video"));
+  }
+  assert.equal(reserve.mock.callCount(), 0);
+});
+
+for (const mutation of ["model", "edge"] as const) test(`MCP reports a conflict if another client overwrites scene ${mutation} while saving`, async () => {
+  const { createServer } = await import("node:http");
+  const initial = await getMcpCanvas(principal, "scene-canvas");
+  let live = { graph: initial.graph, revision: initial.revision, stateVector: "initial", updatedAt: new Date().toISOString() };
+  const server = createServer(async (req, res) => {
+    if (req.method === "PUT") {
+      let body = ""; for await (const chunk of req) body += chunk;
+      const input = JSON.parse(body);
+      live = { ...live, graph: input.graph, revision: live.revision + 1, stateVector: "saved" };
+      // Reproduce the old browser reacting to the freshly received MCP change.
+      if (mutation === "model") live.graph.nodes.find((node) => node.id === "master")!.data.videoMasterClips![0].modelId = "seedance-2-fast";
+      else live.graph.edges.push({ ...graph.edges[0], id: "old-client-recreated-video", hidden: true });
+      live.revision++;
+    }
+    res.setHeader("content-type", "application/json"); res.end(JSON.stringify(live));
+  });
+  await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
+  const previousUrl = process.env.COLLABORATION_INTERNAL_URL, previousSecret = process.env.COLLABORATION_INTERNAL_SECRET;
+  process.env.COLLABORATION_INTERNAL_URL = `http://127.0.0.1:${(server.address() as { port: number }).port}`;
+  process.env.COLLABORATION_INTERNAL_SECRET = "local-scene-conflict-test";
+  try {
+    await assert.rejects(configureMcpVideoMasterClip(principal, { ...(await request()), modelId: "grok-video-1-5", disconnectIncompatibleReferences: true }),
+      (error: unknown) => (error as { code: string }).code === "SCENE_CONFIGURATION_CONFLICT");
+    assert.equal(reserve.mock.callCount(), 0);
+  } finally {
+    if (previousUrl === undefined) delete process.env.COLLABORATION_INTERNAL_URL; else process.env.COLLABORATION_INTERNAL_URL = previousUrl;
+    if (previousSecret === undefined) delete process.env.COLLABORATION_INTERNAL_SECRET; else process.env.COLLABORATION_INTERNAL_SECRET = previousSecret;
+    await new Promise<void>((resolve, reject) => server.close((error) => error ? reject(error) : resolve()));
+  }
+});
+
 test("an unresolved optional scene input blocks dispatch instead of disappearing", async () => {
   const input = await request();
   await patchMcpCanvas(principal, { ...input, operations: [

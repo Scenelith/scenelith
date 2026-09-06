@@ -1,13 +1,19 @@
 import { SignJWT } from "jose";
 import { requireApiUser } from "@/lib/auth";
 import { db, userCanAccessProject, workspaceRoleForUser } from "@/lib/postgres-db";
+import { assertCanvasClientVersion, CANVAS_CLIENT_VERSION } from "../../../../../collaboration/client-version.mjs";
 
 export const runtime = "nodejs";
 
 export async function POST(request: Request) {
   const auth = await requireApiUser();
   if (auth.response) return auth.response;
-  const body = await request.json().catch(() => null) as { projectId?: string } | null;
+  const body = await request.json().catch(() => null) as { projectId?: string; clientVersion?: unknown } | null;
+  try {
+    assertCanvasClientVersion(body?.clientVersion);
+  } catch {
+    return Response.json({ error: "Canvas was updated. Refresh this page before editing.", code: "CANVAS_CLIENT_OUTDATED" }, { status: 426, headers: { "cache-control": "no-store" } });
+  }
   const projectId = String(body?.projectId || "");
   if (!projectId || !await userCanAccessProject(auth.user.id, projectId)) {
     return Response.json({ error: "Canvas not found" }, { status: 404 });
@@ -23,6 +29,7 @@ export async function POST(request: Request) {
   if (collaborationDocument?.compacting) return Response.json({ error: "Canvas checkpoint is in progress" }, { status: 503 });
   const documentEpoch = Math.max(1, Number(collaborationDocument?.epoch || 1));
   const token = await new SignJWT({
+    clientVersion: CANVAS_CLIENT_VERSION,
     projectId,
     documentEpoch,
     workspaceId: project.workspace_id,

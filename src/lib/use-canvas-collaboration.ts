@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { HocuspocusProvider } from "@hocuspocus/provider";
 import * as Y from "yjs";
+import { CANVAS_CLIENT_VERSION } from "../../collaboration/client-version.mjs";
 import { isLocalCanvasOrigin, patchGraphInYDoc, readGraphFromYDoc } from "./collaboration-document";
 import type { ProjectGraph, UserRecord } from "./types";
 
@@ -22,7 +23,7 @@ async function fetchToken(projectId: string): Promise<CollaborationSession> {
   const response = await fetch("/api/collaboration/token", {
     method: "POST",
     headers: { "content-type": "application/json" },
-    body: JSON.stringify({ projectId }),
+    body: JSON.stringify({ projectId, clientVersion: CANVAS_CLIENT_VERSION }),
   });
   const body = await response.json().catch(() => ({})) as { token?: string; documentEpoch?: number; error?: string };
   if (!response.ok || !body.token) throw new Error(body.error || "Could not authorize collaboration");

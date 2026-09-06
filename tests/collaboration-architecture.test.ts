@@ -57,6 +57,9 @@ test("deleted canvases are tombstoned and cannot be recreated by a stale realtim
 });
 
 test("realtime authorization is enforced after authentication", () => {
+  assert.match(tokenRoute, /assertCanvasClientVersion\(body\?\.clientVersion\)/);
+  assert.match(tokenRoute, /clientVersion: CANVAS_CLIENT_VERSION/);
+  assert.match(server, /assertCanvasClientVersion\(verified\.payload\.clientVersion\)/);
   assert.match(tokenRoute, /const permission = role === "owner" \|\| role === "member" \? "write" : "read"/);
   assert.match(server, /connectionConfig\.readOnly = context\.permission !== "write"/);
   assert.match(server, /context\?\.permission !== "write"/);
