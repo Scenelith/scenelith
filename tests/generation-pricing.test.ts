@@ -73,3 +73,11 @@ test("Seedance launch quotes include the exact reference duration", () => {
   assert.equal(generationCreditCost("seedance-2-5", "720P", "6", 2, { hasVideoInput: true, inputVideoDurationSeconds: 5.3 }), 430);
   assert.equal(generationCreditCost("seedance-2-5", "720P", "6", 1), 378);
 });
+
+
+test("WAN continuation duration already describes the total output", () => {
+  assert.equal(generationCreditCost("wan-2-7", "720P", "6", 1, { hasVideoInput: true, inputVideoDurationSeconds: 4 }), 96);
+  assert.equal(generationCreditCost("wan-2-7", "1080P", "6", 1, { hasVideoInput: true, inputVideoDurationSeconds: 4 }), 144);
+  assert.equal(generationCreditCost("seedance-2-5", "720P", "6", 1, { hasVideoInput: true, inputVideoDurationSeconds: 4 }), 380);
+  assert.equal(generationCreditCost("kling-3-motion", "720P", "6", 1, { hasVideoInput: true, inputVideoDurationSeconds: 4 }), 80);
+});
