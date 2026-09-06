@@ -2,6 +2,7 @@
 
 /* eslint-disable @next/next/no-img-element */
 
+import type { VideoMasterExportAudioMode } from "@/lib/video-export";
 import { incompatibleReferenceRoles } from "@/lib/generator-reference-modes";
 import { canvasNodeLabel } from "../../collaboration/node-numbers.mjs";
 import { createContext, memo, useContext, useEffect, useLayoutEffect, useMemo, useRef, useState, useSyncExternalStore, type CSSProperties, type Dispatch, type DragEvent as ReactDragEvent, type PointerEvent as ReactPointerEvent, type ReactNode, type SetStateAction } from "react";
@@ -1211,7 +1212,7 @@ export type GeneratorNodeActions = {
   captureVideoFrame: (nodeId: string, time: number) => Promise<void>;
   extractVideoSegment: (nodeId: string, segment: VideoSceneSegment, clientX: number, clientY: number) => void;
   openPreview: (nodeId: string, media?: { url: string; start?: number; end?: number; title?: string }) => void;
-  downloadMasterMedia: (nodeId: string, lane: VideoMasterDownloadLane, scope: "scene" | "video") => Promise<boolean>;
+  downloadMasterMedia: (nodeId: string, lane: VideoMasterDownloadLane, scope: "scene" | "video", audioMode?: VideoMasterExportAudioMode) => Promise<boolean>;
   openEdit: (nodeId: string) => void;
   addToIdentity: (personaId: string, role: "reference" | "before" | "after", sourceAssetId: string) => Promise<{ alreadyAdded?: boolean }>;
   createIdentityFromAsset: (name: string, role: "reference" | "before" | "after", sourceAssetId: string) => Promise<void>;
@@ -1451,6 +1452,8 @@ function FrameNodeCardComponent({ id, data, selected }: NodeProps<FrameNode>) {
   const [videoMasterSeekRequest, setVideoMasterSeekRequest] = useState<{ clipId: string; time: number; version: number } | null>(null);
   const [videoMasterDownloadBusy, setVideoMasterDownloadBusy] = useState(false);
   const [videoMasterExportScope, setVideoMasterExportScope] = useState<"scene" | "video">("video");
+  const [videoMasterExportBelow, setVideoMasterExportBelow] = useState(false);
+  const [videoMasterExportAudio, setVideoMasterExportAudio] = useState<VideoMasterExportAudioMode>("selected");
   const [videoMasterExportLane, setVideoMasterExportLane] = useState<VideoMasterDownloadLane>("original");
   const videoMasterRootRef = useRef<HTMLElement | null>(null);
   const videoMasterSelectedClipRef = useRef(selectedMasterClip?.id || "");
@@ -2406,7 +2409,9 @@ function FrameNodeCardComponent({ id, data, selected }: NodeProps<FrameNode>) {
     const outputDownloads = videoMasterDownloadAvailability(clips, "output", selectedClip?.id);
     const masterDownloadOpen = openGeneratorMenu === "master-download";
     const exportAvailability = videoMasterExportLane === "original" ? originalDownloads : outputDownloads;
-    const exportReady = videoMasterExportScope === "scene" ? exportAvailability.selected : exportAvailability.all;
+    const originalAudioAvailable = videoMasterExportScope === "scene" ? originalDownloads.selected : originalDownloads.all;
+    const exportReady = (videoMasterExportScope === "scene" ? exportAvailability.selected : exportAvailability.all)
+      && (videoMasterExportAudio !== "original" || originalAudioAvailable);
     const exportDuration = clips.reduce((sum, clip) => sum + videoMasterClipPlaybackMedia(clip, videoMasterExportLane, {
       output: videoMasterExportLane === "output",
       original: videoMasterExportLane === "original",
@@ -2725,7 +2730,7 @@ function FrameNodeCardComponent({ id, data, selected }: NodeProps<FrameNode>) {
       if (videoMasterDownloadBusy) return;
       setVideoMasterDownloadBusy(true);
       try {
-        const downloaded = await generator.downloadMasterMedia(id, videoMasterExportLane, videoMasterExportScope);
+        const downloaded = await generator.downloadMasterMedia(id, videoMasterExportLane, videoMasterExportScope, videoMasterExportAudio);
         if (downloaded) setOpenGeneratorMenu(null);
       } finally {
         setVideoMasterDownloadBusy(false);
@@ -2734,6 +2739,7 @@ function FrameNodeCardComponent({ id, data, selected }: NodeProps<FrameNode>) {
     const toggleMasterDownload = () => {
       const opening = !masterDownloadOpen;
       if (opening) {
+        setVideoMasterExportBelow((videoMasterRootRef.current?.getBoundingClientRect().top ?? 0) < 360);
         videoPlaybackManager.pause(videoMasterPlaybackOwnerId);
         setVideoMasterSequencePlaying(false);
         const currentAvailability = videoMasterExportLane === "original" ? originalDownloads : outputDownloads;
@@ -2761,11 +2767,12 @@ function FrameNodeCardComponent({ id, data, selected }: NodeProps<FrameNode>) {
         <button type="button" title="Open Video Master editor" onClick={(event) => { event.preventDefault(); event.stopPropagation(); openMasterPreview(); }}><Expand size={15} /></button>
         <div className={`video-master-download-control ${masterDownloadOpen ? "is-open" : ""}`} onDoubleClick={(event) => { event.preventDefault(); event.stopPropagation(); }}>
           <button type="button" disabled={videoMasterDownloadBusy || (!originalDownloads.selected && !outputDownloads.selected)} title="Export video" aria-label="Export Video Master" aria-expanded={masterDownloadOpen} onPointerDown={(event) => { event.preventDefault(); event.stopPropagation(); }} onClick={(event) => { event.preventDefault(); event.stopPropagation(); toggleMasterDownload(); }}>{videoMasterDownloadBusy ? <span className="generator-spinner" /> : <Download size={15} />}</button>
-          {masterDownloadOpen && <div className={`video-master-download-menu ${videoMasterDownloadBusy ? "is-busy" : ""}`} onPointerDown={(event) => event.stopPropagation()}>
+          {masterDownloadOpen && <div className={`video-master-download-menu ${videoMasterExportBelow ? "opens-below" : ""} ${videoMasterDownloadBusy ? "is-busy" : ""}`} onPointerDown={(event) => event.stopPropagation()}>
             <header><span>EXPORT VIDEO</span><small>{videoMasterDownloadBusy ? "Rendering…" : "MP4"}</small></header>
             <div className="video-master-export-settings">
-              <label><span>Range</span><div><select value={videoMasterExportScope} disabled={videoMasterDownloadBusy} onChange={(event) => { const scope = event.target.value as "scene" | "video"; setVideoMasterExportScope(scope); const laneAvailability = videoMasterExportLane === "original" ? originalDownloads : outputDownloads; const laneReady = scope === "scene" ? laneAvailability.selected : laneAvailability.all; if (!laneReady) { const originalReady = scope === "scene" ? originalDownloads.selected : originalDownloads.all; setVideoMasterExportLane(originalReady ? "original" : "output"); } }}><option value="video" disabled={!originalDownloads.all && !outputDownloads.all}>Full video</option><option value="scene">{selectedClip?.title || "Current scene"}</option></select><ChevronDown size={11} /></div></label>
-              <label><span>Version</span><div><select value={videoMasterExportLane} disabled={videoMasterDownloadBusy} onChange={(event) => setVideoMasterExportLane(event.target.value as VideoMasterDownloadLane)}><option value="original" disabled={!(videoMasterExportScope === "scene" ? originalDownloads.selected : originalDownloads.all)}>Original{videoMasterExportScope === "video" ? ` · ${originalDownloads.availableCount}/${originalDownloads.totalCount}` : ""}</option><option value="output" disabled={!(videoMasterExportScope === "scene" ? outputDownloads.selected : outputDownloads.all)}>Output{videoMasterExportScope === "video" ? ` · ${outputDownloads.availableCount}/${outputDownloads.totalCount}` : ""}</option></select><ChevronDown size={11} /></div></label>
+              <label><span>Range</span><div><select aria-label="Range" value={videoMasterExportScope} disabled={videoMasterDownloadBusy} onChange={(event) => { const scope = event.target.value as "scene" | "video"; setVideoMasterExportScope(scope); const laneAvailability = videoMasterExportLane === "original" ? originalDownloads : outputDownloads; const laneReady = scope === "scene" ? laneAvailability.selected : laneAvailability.all; if (!laneReady) { const originalReady = scope === "scene" ? originalDownloads.selected : originalDownloads.all; setVideoMasterExportLane(originalReady ? "original" : "output"); } }}><option value="video" disabled={!originalDownloads.all && !outputDownloads.all}>Full video</option><option value="scene">{selectedClip?.title || "Current scene"}</option></select><ChevronDown size={11} /></div></label>
+              <label><span>Version</span><div><select aria-label="Version" value={videoMasterExportLane} disabled={videoMasterDownloadBusy} onChange={(event) => setVideoMasterExportLane(event.target.value as VideoMasterDownloadLane)}><option value="original" disabled={!(videoMasterExportScope === "scene" ? originalDownloads.selected : originalDownloads.all)}>Original{videoMasterExportScope === "video" ? ` · ${originalDownloads.availableCount}/${originalDownloads.totalCount}` : ""}</option><option value="output" disabled={!(videoMasterExportScope === "scene" ? outputDownloads.selected : outputDownloads.all)}>Output{videoMasterExportScope === "video" ? ` · ${outputDownloads.availableCount}/${outputDownloads.totalCount}` : ""}</option></select><ChevronDown size={11} /></div></label>
+              <label><span>Audio</span><div><select aria-label="Audio" value={videoMasterExportAudio} disabled={videoMasterDownloadBusy} onChange={(event) => setVideoMasterExportAudio(event.target.value as VideoMasterExportAudioMode)}><option value="selected">Selected version</option><option value="original" disabled={!originalAudioAvailable}>{originalAudioAvailable ? "Original audio" : "Original unavailable"}</option><option value="none">No audio</option></select><ChevronDown size={11} /></div></label>
             </div>
             <div className="video-master-export-summary"><Clapperboard size={14} /><span><strong>{videoMasterExportScope === "video" ? (videoMasterExportLane === "original" ? "Original timeline" : "Generated timeline") : selectedClip?.title || "Current scene"}</strong><small>{videoMasterExportScope === "video" ? `${clips.length} scenes · ${formatVideoTime(exportDuration)}` : `${videoMasterExportLane === "original" ? "Original" : "Output"} · MP4`}</small></span></div>
             {videoMasterDownloadBusy && <div className="video-master-export-progress" aria-label="Rendering video" />}

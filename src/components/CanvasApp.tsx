@@ -6,6 +6,7 @@ import { assignCanvasNodeNumbers } from "../../collaboration/node-numbers.mjs";
 import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState, type CSSProperties, type Dispatch, type SetStateAction } from "react";
 import dynamic from "next/dynamic";
 import { MasterModelSwitchDialog } from "./MasterModelSwitchDialog";
+import type { VideoMasterExportAudioMode } from "@/lib/video-export";
 import { restoreVideoMasterTask } from "@/lib/video-master-task-state";
 import {
   BaseEdge,
@@ -2982,7 +2983,7 @@ function CanvasWorkspace({ initialProject, projects: initialProjects, initialWor
     return body.asset;
   }
 
-  async function downloadMasterMedia(nodeId: string, lane: VideoMasterDownloadLane, scope: "scene" | "video") {
+  async function downloadMasterMedia(nodeId: string, lane: VideoMasterDownloadLane, scope: "scene" | "video", audioMode: VideoMasterExportAudioMode = "selected") {
     const master = nodesRef.current.find((node) => node.id === nodeId && node.data.kind === "videoMaster");
     const clips = [...(master?.data.videoMasterClips || [])].sort((left, right) => Number(left.sequenceIndex ?? 0) - Number(right.sequenceIndex ?? 0));
     const selected = clips.find((clip) => clip.id === master?.data.videoMasterSelectedClipId) || clips[0];
@@ -3002,7 +3003,7 @@ function CanvasWorkspace({ initialProject, projects: initialProjects, initialWor
         let source = exportMedia.source;
         let start = exportMedia.start;
         let end = exportMedia.end;
-        if (lane === "original" && clip.sourceNodeId && clip.sourceSegmentId && (scope === "scene" || !source)) {
+        if (lane === "original" && clip.sourceNodeId && clip.sourceSegmentId && !source) {
           const materialized = await materializeVideoSegment(clip.sourceNodeId, clip.sourceSegmentId);
           source = { url: materialized.url, assetId: materialized.id };
           start = 0;
@@ -3012,37 +3013,42 @@ function CanvasWorkspace({ initialProject, projects: initialProjects, initialWor
         if (!source?.url || !assetId) throw new Error(lane === "output"
           ? `Generate ${clip.title} before downloading its OUTPUT`
           : `${clip.title} has no ORIGINAL video`);
+        let audio: { id: string; start: number; end: number } | undefined;
+        if (audioMode === "original") {
+          const original = videoMasterClipExportMedia(clip, "original", sourceNode);
+          if (!original.source && clip.sourceNodeId && clip.sourceSegmentId) {
+            const materialized = await materializeVideoSegment(clip.sourceNodeId, clip.sourceSegmentId);
+            original.source = { url: materialized.url, assetId: materialized.id };
+            original.start = 0;
+            original.end = materialized.durationSeconds;
+          }
+          const originalId = original.source?.assetId || assetIdFromAssetUrl(original.source?.url || "");
+          if (!originalId) throw new Error(`${clip.title} has no original audio source`);
+          audio = { id: originalId, start: original.start, end: original.end };
+        }
         const sceneNumber = Math.max(1, Number(clip.sequenceIndex ?? index) + 1);
         const cleanTitle = String(clip.title || `Scene ${sceneNumber}`).replace(/[^a-z0-9_-]+/gi, "-").replace(/^-+|-+$/g, "").toLowerCase() || `scene-${sceneNumber}`;
-        return { id: assetId, url: source.url, start, end, name: `${String(sceneNumber).padStart(2, "0")}-${cleanTitle}-${lane}.mp4` };
+        return { id: assetId, start, end, audio, name: `${String(sceneNumber).padStart(2, "0")}-${cleanTitle}-${lane}.mp4` };
       }));
 
-      if (scope === "scene") {
-        const anchor = document.createElement("a");
-        anchor.href = assetDownloadUrl(assets[0].url);
-        anchor.download = assets[0].name;
-        document.body.appendChild(anchor);
-        anchor.click();
-        anchor.remove();
-      } else {
-        const response = await fetch("/api/assets/export", {
-          method: "POST",
-          headers: { "content-type": "application/json" },
-          body: JSON.stringify({ projectId: project.id, filename: `video-master-${lane}`, assets: assets.map(({ id, start, end }) => ({ id, start, end })) }),
-        });
-        if (!response.ok) {
-          const body = (await response.json().catch(() => ({}))) as { error?: string };
-          throw new Error(body.error || "Could not render the video export");
-        }
-        const exportUrl = URL.createObjectURL(await response.blob());
-        const anchor = document.createElement("a");
-        anchor.href = exportUrl;
-        anchor.download = `video-master-${lane}.mp4`;
-        document.body.appendChild(anchor);
-        anchor.click();
-        anchor.remove();
-        window.setTimeout(() => URL.revokeObjectURL(exportUrl), 1_000);
+      const filename = scope === "scene" ? assets[0].name : `video-master-${lane}.mp4`;
+      const response = await fetch("/api/assets/export", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ projectId: project.id, filename, audioMode, assets: assets.map(({ id, start, end, audio }) => ({ id, start, end, audio })) }),
+      });
+      if (!response.ok) {
+        const body = (await response.json().catch(() => ({}))) as { error?: string };
+        throw new Error(body.error || "Could not render the video export");
       }
+      const exportUrl = URL.createObjectURL(await response.blob());
+      const anchor = document.createElement("a");
+      anchor.href = exportUrl;
+      anchor.download = filename;
+      document.body.appendChild(anchor);
+      anchor.click();
+      anchor.remove();
+      window.setTimeout(() => URL.revokeObjectURL(exportUrl), 1_000);
       setNotice(scope === "video" ? `Full ${lane.toUpperCase()} video exported` : `${lane.toUpperCase()} scene downloaded`);
       return true;
     } catch (error) {
