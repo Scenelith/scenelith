@@ -108,11 +108,12 @@ export function generationCreditCost(modelId: string, resolution: string, durati
     const referenceVideoSeconds = Math.max(1, options.inputVideoDurationSeconds || outputSeconds);
     return Math.ceil(rate * referenceVideoSeconds);
   }
-  const perSecond = options.hasVideoInput && seedanceWithVideoCreditsPerSecond[canonicalId]
+  const billsInputDuration = Boolean(options.hasVideoInput && seedanceWithVideoCreditsPerSecond[canonicalId]);
+  const perSecond = billsInputDuration
     ? seedanceWithVideoCreditsPerSecond[canonicalId]
     : videoCreditsPerSecond[canonicalId];
   if (perSecond) {
-    const billedSeconds = outputSeconds + (options.hasVideoInput ? Math.max(0, options.inputVideoDurationSeconds || 0) : 0);
+    const billedSeconds = outputSeconds + (billsInputDuration ? Math.max(0, options.inputVideoDurationSeconds || 0) : 0);
     return Math.ceil(configuredValue(perSecond, normalizedResolution) * billedSeconds);
   }
   throw new Error("Credit pricing is not configured for this model");
