@@ -1871,10 +1871,5 @@ select.panel-input { color-scheme: dark; }
 .master-model-switch-backdrop { z-index: 150; }
 .master-model-switch-backdrop .modal { display: grid; gap: 16px; max-width: min(520px, calc(100vw - 32px)); }
 .master-model-switch-backdrop p { margin: 0; color: var(--color-text-soft); line-height: 1.5; }
-.master-generation-input-summary { font-size: 12px; color: var(--color-text-soft); padding: 4px 0 8px; }
 
-.video-editor-input-summary { position: absolute; left: 50%; transform: translateX(-50%); bottom: 72px; z-index: 4; background: rgba(16, 18, 23, .9); border-radius: 8px; padding: 6px 10px; white-space: nowrap; }
 .master-model-switch-inputs { margin: 12px 0; padding-left: 20px; max-height: 220px; overflow: auto; }
-
-.master-canvas-input-summary { position:absolute; z-index:7; left:18px; bottom:51px; padding:4px 8px; border-radius:6px; background:rgba(16,18,23,.85); pointer-events:none; }
-.video-editor-input-summary { bottom:88px; z-index:7; max-width:calc(100% - 32px); white-space:normal; text-align:center; }

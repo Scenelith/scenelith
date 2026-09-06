@@ -3,7 +3,7 @@
 import { useEffect, useId, useMemo, useRef, useState, type ReactNode } from "react";
 import { ArrowLeft, ArrowRightLeft, Check, ChevronDown, Download, ImageIcon, Images, Link2, Play, Plus, Trash2, UserRound, Video, Volume2, X } from "lucide-react";
 import type { FrameNode, PersonaRecord, VideoMasterClip, VideoSceneSegment } from "@/lib/types";
-import { unsupportedMasterReferenceRoles, masterGenerationInputSummary, moveUploadedMasterClipToLane, nearestVideoMasterRatio, reconciledVideoMasterClipDuration, reconciledVideoMasterGeneratedDuration, useVideoMasterGeneratedOutput as applyVideoMasterGeneratedOutput, videoMasterClipPlaybackMedia, videoMasterClipThumbnail, videoMasterGeneratedOutputs, videoMasterGenerationDuration, videoMasterGenerationDurationChoices, videoMasterModelsForScene, videoMasterSourceRatio, videoMasterTimelineDuration, type VideoMasterDownloadLane, type VideoMasterGeneratedOutput } from "@/lib/video-master";
+import { unsupportedMasterReferenceRoles, moveUploadedMasterClipToLane, nearestVideoMasterRatio, reconciledVideoMasterClipDuration, reconciledVideoMasterGeneratedDuration, useVideoMasterGeneratedOutput as applyVideoMasterGeneratedOutput, videoMasterClipPlaybackMedia, videoMasterClipThumbnail, videoMasterGeneratedOutputs, videoMasterGenerationDuration, videoMasterGenerationDurationChoices, videoMasterModelsForScene, videoMasterSourceRatio, videoMasterTimelineDuration, type VideoMasterDownloadLane, type VideoMasterGeneratedOutput } from "@/lib/video-master";
 import { assetThumbnailUrl, CanvasVideoPlayer, GeneratorReferencePreview, generatorModelCreditDescription, generatorResolutionsFor, generatorRatiosFor, generatorReferenceRoleLabels, VideoMasterGenerationControls, VideoMasterTimeline, type GeneratorModelOption, type SelectOption } from "./FrameNode";
 import { VideoSceneTimeline } from "./VideoSceneTimeline";
 import { incompatibleReferenceRoles } from "@/lib/generator-reference-modes";
@@ -533,7 +533,6 @@ function MasterFullscreenEditor({ node, onUpdateNode, onUpload, models, referenc
             onChange={(event) => updateSelectedClip({ prompt: event.target.value })}
           />
         </div>}
-        {selectedClip && <div className="master-generation-input-summary video-editor-input-summary" aria-label="Generation inputs">{masterGenerationInputSummary(selectedReferences)} · {runCredits.toLocaleString("en-US")} credits</div>}
         {selectedClip && <VideoMasterGenerationControls
           className="video-editor-viewer-master-controls"
           clipId={selectedClip.id}
@@ -555,7 +554,7 @@ function MasterFullscreenEditor({ node, onUpdateNode, onUpload, models, referenc
           audioEnabled={generatedAudioEnabled}
           onToggleAudio={() => updateSelectedClip({ generateAudio: !generatedAudioEnabled })}
           runDisabled={unsupportedMasterReferenceRoles(selectedModel, selectedReferences).length > 0 || !selectedClip.prompt.trim() || masterHasActiveGeneration || missingRequiredInputs.length > 0}
-          runTitle={unsupportedInputs.length ? `Disconnect unsupported inputs: ${unsupportedInputs.join(", ")}` : missingRequiredInputs.length ? `Connect ${missingRequiredInputs.map((port) => port.label).join(" and ")}` : masterHasActiveGeneration ? "Another scene is generating" : `Run generation · ${masterGenerationInputSummary(selectedReferences)}`}
+          runTitle={unsupportedInputs.length ? `Disconnect unsupported inputs: ${unsupportedInputs.join(", ")}` : missingRequiredInputs.length ? `Connect ${missingRequiredInputs.map((port) => port.label).join(" and ")}` : masterHasActiveGeneration ? "Another scene is generating" : `Run ${runCredits.toLocaleString("en-US")} credits`}
           runBusy={masterBusy}
           onRun={() => onGenerateClip?.(selectedClip.id)}
         />}
