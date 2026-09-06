@@ -179,3 +179,9 @@ Consent shows available workspaces, canvases and actions using the current editi
 `get_canvas.videoMasterScenes` lists each Master's scene number, title, `clipId`, source range and `generationRevision`. Pass the selected scene's `clipId` as `clip_id` and `generationRevision` as `expected_scene_revision` to `run_canvas_generation`, alongside `expected_revision`. This guards the scene's actual inputs while tolerating unrelated canvas changes. Older clients without the scene revision retain strict canvas revision checks.
 
 The server prepares missing exact scene clips and shorter generation references automatically. It rechecks source cuts, prompt, model and references before admission, and leaves other scenes and playback untouched. Poll the returned generation ID. `GENERATION_ALREADY_RUNNING` returns the active Master's `generationId` and does not reserve another generation; a new request after completion can start a new billable run.
+
+### Seedance reference modes
+
+Seedance 2.x, including 2.5, accepts either start/end frames or multimodal image/video/audio references. `get_canvas_capabilities` exposes `referenceModeRules`. An image and a motion video can be used together as `reference-image` and `reference-video`; using the image as an opening pose through the prompt does not guarantee an exact first frame. Strict frame mode uses `start-frame` (optionally `end-frame`) and automatically sends `adaptive` to the provider, leaving the saved Canvas ratio unchanged. The MCP and provider adapter apply the same rule as the Master UI.
+
+Mixed modes are rejected locally with `INCOMPATIBLE_REFERENCE_MODES` before generation admission. Agents must not delete references or change their roles merely to bypass this error: resolve the user's intent first. See the [official Seedance 2.5 input contract](https://docs.kie.ai/market/bytedance/seedance-2-5).

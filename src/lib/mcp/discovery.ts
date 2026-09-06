@@ -62,6 +62,10 @@ Use Automation tools for repeatable workflows and runs, not for direct Canvas gr
 
 Read \`get_canvas\` and resolve the Master from \`nodeDirectory\`. In \`videoMasterScenes\`, select that node's scene by number/title and keep its \`clipId\` and \`generationRevision\`. Call \`run_canvas_generation\` with \`clip_id\`, \`expected_scene_revision\` and the canvas revision. Source clips are prepared automatically; do not manually materialize scenes first. Unrelated node/layout/history updates do not invalidate the scene revision, but source cuts, model, prompt and references do. Poll the returned generation ID. If \`GENERATION_ALREADY_RUNNING\` is returned, poll its \`generationId\` instead of launching again. A new generation after completion is a new billable request.
 
+### Seedance reference modes
+
+Seedance 2.x (including 2.5) supports either strict \`start-frame\` / \`end-frame\` inputs or multimodal \`reference-image\` + \`reference-video\` + \`reference-audio\`. These modes cannot be mixed. For a person's image plus source motion, use multimodal references and describe each role in the prompt; requesting the image as the opening pose does not guarantee an exact first frame. If exact frame matching is required, use frame mode; the provider aspect ratio is automatically \`adaptive\`. Read \`referenceModeRules\` in the model capabilities. Never delete a video reference or reclassify a start image just to make a request pass: explain the tradeoff and let the user choose when their intent is ambiguous. An \`INCOMPATIBLE_REFERENCE_MODES\` error is local validation before provider submission, not a provider rejection.
+
 ### Build and run an Automation
 
 1. Read \`scenelith://automation/guide\`; call \`get_automation_capabilities\`
