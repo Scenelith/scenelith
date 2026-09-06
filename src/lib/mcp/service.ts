@@ -1539,7 +1539,17 @@ export async function configureMcpVideoMasterClip(principal: McpPrincipal, input
     nextClips.splice(targetIndex, 0, moved);
   }
   if (input.sequenceIndex !== undefined) nextClips = nextClips.map((candidate, sequenceIndex) => ({ ...candidate, sequenceIndex }));
-  return await patchMcpCanvas(principal, { projectId: input.projectId, expectedRevision: input.expectedRevision, operations: [...sceneEdges.filter((edge) => unsupported.includes(canonicalReferenceRole(edge.data?.inputRole || edge.targetHandle?.split(":").pop()?.replace(/-input$/, ""), edge.data?.portType))).map((edge) => ({ type: "remove_edge" as const, edgeId: edge.id })), { type: "update_node", nodeId: node.id, data: { videoMasterClips: nextClips, videoMasterSelectedClipId: clip.id, modelId: model.id, duration: String(generationDuration), resolution: resolution as FrameNodeData["resolution"], aspectRatio: aspectRatio as FrameNodeData["aspectRatio"], prompt: input.prompt ?? clip.prompt } }] });
+  const updated = await patchMcpCanvas(principal, { projectId: input.projectId, expectedRevision: input.expectedRevision, operations: [...sceneEdges.filter((edge) => unsupported.includes(canonicalReferenceRole(edge.data?.inputRole || edge.targetHandle?.split(":").pop()?.replace(/-input$/, ""), edge.data?.portType))).map((edge) => ({ type: "remove_edge" as const, edgeId: edge.id })), { type: "update_node", nodeId: node.id, data: { videoMasterClips: nextClips, videoMasterSelectedClipId: clip.id, modelId: model.id, duration: String(generationDuration), resolution: resolution as FrameNodeData["resolution"], aspectRatio: aspectRatio as FrameNodeData["aspectRatio"], prompt: input.prompt ?? clip.prompt } }] });
+  const savedNode = updated.graph.nodes.find((candidate) => candidate.id === node.id);
+  const savedClip = savedNode?.data.videoMasterClips?.find((candidate) => candidate.id === clip.id);
+  const savedEdges = updated.graph.edges.filter((edge) => edge.target === node.id && (edge.data?.masterClipId === clip.id || String(edge.targetHandle || "").startsWith(`master:${clip.id}:`)) && edge.data?.portType !== "text");
+  const savedReferences = [...(savedClip?.attachedReferences || []), ...savedEdges.map((edge) => ({ role: canonicalReferenceRole(edge.data?.inputRole || edge.targetHandle?.split(":").pop()?.replace(/-input$/, ""), edge.data?.portType) }))];
+  if (!savedClip || savedClip.modelId !== model.id || unsupportedMasterReferenceRoles(model, savedReferences).length) {
+    throw Object.assign(new Error("Scene settings changed in another Canvas session while saving. Refresh open Canvas tabs, read the scene again and retry."), {
+      code: "SCENE_CONFIGURATION_CONFLICT", status: 409, currentRevision: updated.revision,
+    });
+  }
+  return updated;
 }
 
 type McpLibraryAssetRow = {

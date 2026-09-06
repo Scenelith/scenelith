@@ -4,6 +4,7 @@ import { HocuspocusProvider } from "@hocuspocus/provider";
 import WebSocket from "ws";
 import * as Y from "yjs";
 import { argument, root } from "./selfhost-operations.mjs";
+import { CANVAS_CLIENT_VERSION } from "../collaboration/client-version.mjs";
 
 const baseUrl = (argument("--url") || "http://localhost").replace(/\/$/, "");
 const phase = argument("--phase") || "seed";
@@ -34,7 +35,7 @@ function authenticated(cookie, options = {}) {
 async function collaborationToken(cookie, projectId) {
   const { body } = await jsonRequest("/api/collaboration/token", authenticated(cookie, {
     method: "POST",
-    body: JSON.stringify({ projectId }),
+    body: JSON.stringify({ projectId, clientVersion: CANVAS_CLIENT_VERSION }),
   }));
   if (!body.token) fail("collaboration token is missing");
   return body.token;

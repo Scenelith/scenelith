@@ -7,6 +7,7 @@ import { Server } from "@hocuspocus/server";
 import { Redis } from "@hocuspocus/extension-redis";
 import { graphSummary, numberDocumentNodes, readGraph, readNodeNumberingState, writeGraph } from "./document-codec.mjs";
 import { assertCollaborationMigrationsCurrent } from "./migration-runner.mjs";
+import { assertCanvasClientVersion } from "./client-version.mjs";
 
 const required = [
   "COLLABORATION_DATABASE_URL",
@@ -67,6 +68,8 @@ async function verifyCollaborationToken(token, documentName) {
     audience: "frameflow-collaboration",
   });
   if (verified.payload.projectId !== documentName || !verified.payload.sub) throw new Error("Not authorized");
+  // Also reject already-issued tokens from a tab running pre-deploy code.
+  assertCanvasClientVersion(verified.payload.clientVersion);
   const stored = await pool.query(
     `SELECT document.epoch, document.compacting,
        EXISTS (SELECT 1 FROM collaboration_document_tombstones WHERE document_name = $1) AS deleted

@@ -5,6 +5,7 @@ import { HocuspocusProvider } from "@hocuspocus/provider";
 import WebSocket from "ws";
 import * as Y from "yjs";
 import { argument, root } from "./selfhost-operations.mjs";
+import { CANVAS_CLIENT_VERSION } from "../collaboration/client-version.mjs";
 
 const baseUrl = (argument("--url") || "http://localhost").replace(/\/$/, "");
 const statePath = resolve(root, argument("--state") || ".selfhost-e2e-state.json");
@@ -34,7 +35,7 @@ async function collaborationToken() {
   const response = await fetch(`${baseUrl}/api/collaboration/token`, {
     method: "POST",
     headers: { cookie: state.cookie, "content-type": "application/json" },
-    body: JSON.stringify({ projectId: state.projectId }),
+    body: JSON.stringify({ projectId: state.projectId, clientVersion: CANVAS_CLIENT_VERSION }),
   });
   const body = await response.json().catch(() => ({}));
   if (!response.ok || !body.token) fail(`collaboration token returned ${response.status}`);
