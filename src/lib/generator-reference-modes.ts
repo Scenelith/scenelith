@@ -17,9 +17,10 @@ function edgeInput(edge: FrameEdge) {
   return { nodeId: edge.target, clipId: edge.data?.masterClipId || match?.[1], role: edge.data?.inputRole || match?.[2] || edge.targetHandle?.replace(/-input$/, "") };
 }
 
-/** Reconcile only explicit additions/role changes, never a read or media refresh. */
-export function reconcileGeneratorReferenceChanges(previous: ProjectGraph, next: ProjectGraph) {
-  const additions: Array<{ nodeId: string; clipId?: string; role?: string }> = [];
+type ReferenceChange = { nodeId: string; clipId?: string; role?: string; edgeId?: string; assetId?: string };
+
+export function generatorReferenceChanges(previous: ProjectGraph, next: ProjectGraph): ReferenceChange[] {
+  const additions: ReferenceChange[] = [];
   const previousNodes = new Map(previous.nodes.map((node) => [node.id, node]));
   const previousEdges = new Map(previous.edges.map((edge) => [edge.id, edge]));
   for (const node of next.nodes) {
@@ -29,7 +30,7 @@ export function reconcileGeneratorReferenceChanges(previous: ProjectGraph, next:
       ? (node.data.videoMasterClips || []).map((clip) => ({ clipId: clip.id, refs: clip.attachedReferences || [], old: before?.data.videoMasterClips?.find((item) => item.id === clip.id)?.attachedReferences || [] }))
       : [{ clipId: undefined, refs: node.data.attachedReferences || [], old: before?.data.attachedReferences || [] }];
     for (const target of targets) for (const ref of target.refs) {
-      if (!target.old.some((old) => old.assetId === ref.assetId && (old.role || "reference-image") === (ref.role || "reference-image"))) additions.push({ nodeId: node.id, clipId: target.clipId, role: ref.role || "reference-image" });
+      if (!target.old.some((old) => old.assetId === ref.assetId && (old.role || "reference-image") === (ref.role || "reference-image"))) additions.push({ nodeId: node.id, clipId: target.clipId, role: ref.role || "reference-image", assetId: ref.assetId });
     }
   }
   for (const edge of next.edges) {
@@ -37,7 +38,18 @@ export function reconcileGeneratorReferenceChanges(previous: ProjectGraph, next:
     if (!input) continue;
     const before = previousEdges.get(edge.id);
     if (before === edge) continue;
-    if (!before || before.source !== edge.source || before.sourceHandle !== edge.sourceHandle || JSON.stringify(edgeInput(before)) !== JSON.stringify(input)) additions.push(input);
+    if (!before || before.source !== edge.source || before.sourceHandle !== edge.sourceHandle || JSON.stringify(edgeInput(before)) !== JSON.stringify(input)) additions.push({ ...input, edgeId: edge.id });
+  }
+  return additions;
+}
+
+/** Reconcile only explicit additions/role changes, never a read or media refresh. */
+export function reconcileGeneratorReferenceChanges(previous: ProjectGraph, next: ProjectGraph, changeOrder?: ReferenceChange[]) {
+  const additions = generatorReferenceChanges(previous, next);
+  if (changeOrder) {
+    const key = (change: ReferenceChange) => JSON.stringify([change.nodeId, change.clipId, change.role, change.edgeId, change.assetId]);
+    const order = new Map(changeOrder.map((change, index) => [key(change), index]));
+    additions.sort((left, right) => (order.get(key(left)) ?? -1) - (order.get(key(right)) ?? -1));
   }
   let nodes = next.nodes;
   let edges = next.edges;
