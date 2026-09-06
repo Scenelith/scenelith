@@ -1,4 +1,5 @@
 import type { FrameNode, VideoMasterClip } from "./types";
+import { incompatibleReferenceRoles } from "./generator-reference-modes";
 import { editorThumbnailUrl } from "./editor-media";
 
 type VideoReferenceModel = {
@@ -80,18 +81,8 @@ const frameReferenceRoles = new Set(["start-frame", "end-frame"]);
  */
 export function shouldIncludeAutomaticMasterVideoReference(modelId: string | undefined, roles: Array<string | undefined>) {
   if (roles.some((role) => videoReferenceRoles.has(String(role || "")))) return false;
-  if (String(modelId || "").startsWith("seedance-2") && roles.some((role) => frameReferenceRoles.has(String(role || "")))) return false;
+  if (roles.some((role) => incompatibleReferenceRoles(modelId, role).includes("reference-video"))) return false;
   return true;
-}
-
-export function compatibleMasterReferences<T extends { role?: string }>(modelId: string | undefined, references: T[]) {
-  const id = String(modelId || "");
-  const hasFrames = references.some((reference) => frameReferenceRoles.has(String(reference.role || "")));
-  if (!hasFrames) return references;
-  if (id.startsWith("seedance-2")) return references.filter((reference) => frameReferenceRoles.has(String(reference.role || "")));
-  if (id === "wan-2-7") return references.filter((reference) => reference.role !== "reference-video");
-  if (id === "veo-3-1-fast") return references.filter((reference) => reference.role !== "reference-image");
-  return references;
 }
 
 export function videoMasterProviderAspectRatio(modelId: string | undefined, requestedRatio: string, references: VideoReference[]) {

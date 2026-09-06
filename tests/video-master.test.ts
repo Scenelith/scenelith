@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import type { FrameNode, VideoMasterClip } from "../src/lib/types";
-import { assetIdFromAssetUrl, compatibleMasterReferences, hydrateVideoMasterSourceClips, masterClipHasVideoReference, masterClipOriginalReference, modelSupportsVideoReference, moveUploadedMasterClipToLane, nearestVideoMasterRatio, reconciledVideoMasterClipDuration, reconciledVideoMasterGeneratedDuration, resolveVideoMasterSourceTarget, shouldIncludeAutomaticMasterVideoReference, useVideoMasterGeneratedOutput, videoMasterClipDownloadSource, videoMasterClipExportMedia, videoMasterDownloadAvailability, videoMasterClipPlaybackMedia, videoMasterClipThumbnail, videoMasterGeneratedOutputs, videoMasterGenerationDuration, videoMasterGenerationDurationChoices, videoMasterModelsForScene, videoMasterProviderAspectRatio, videoMasterTimelineDuration } from "../src/lib/video-master";
+import { assetIdFromAssetUrl, hydrateVideoMasterSourceClips, masterClipHasVideoReference, masterClipOriginalReference, modelSupportsVideoReference, moveUploadedMasterClipToLane, nearestVideoMasterRatio, reconciledVideoMasterClipDuration, reconciledVideoMasterGeneratedDuration, resolveVideoMasterSourceTarget, shouldIncludeAutomaticMasterVideoReference, useVideoMasterGeneratedOutput, videoMasterClipDownloadSource, videoMasterClipExportMedia, videoMasterDownloadAvailability, videoMasterClipPlaybackMedia, videoMasterClipThumbnail, videoMasterGeneratedOutputs, videoMasterGenerationDuration, videoMasterGenerationDurationChoices, videoMasterModelsForScene, videoMasterProviderAspectRatio, videoMasterTimelineDuration } from "../src/lib/video-master";
 import { validateVideoMasterGenerationReferences, videoMasterTargetAcceptsAsset } from "../src/lib/video-master-validation";
 import type { ProjectGraph } from "../src/lib/types";
 import { coalesceContiguousVideoAssets, videoMasterExportRequestSchema } from "../src/lib/video-export";
@@ -95,17 +95,12 @@ test("moving an uploaded clip to ORIGINAL attaches it as a scene video reference
   assert.deepEqual(restoredClip.attachedReferences, []);
 });
 
-test("Seedance frame mode excludes the implicit ORIGINAL video and incompatible multimodal inputs", () => {
+test("Seedance frame mode excludes the implicit ORIGINAL video", () => {
   assert.equal(shouldIncludeAutomaticMasterVideoReference("seedance-2-5", ["start-frame"]), false);
   assert.equal(shouldIncludeAutomaticMasterVideoReference("seedance-2-fast", ["end-frame"]), false);
   assert.equal(shouldIncludeAutomaticMasterVideoReference("seedance-2-5", ["reference-image"]), true);
   assert.equal(shouldIncludeAutomaticMasterVideoReference("kling-3-motion", ["start-frame"]), true);
   assert.equal(shouldIncludeAutomaticMasterVideoReference("seedance-2-5", ["reference-video"]), false);
-  assert.deepEqual(compatibleMasterReferences("seedance-2-5", [
-    { role: "start-frame", id: "frame" },
-    { role: "reference-video", id: "video" },
-    { role: "reference-image", id: "image" },
-  ]), [{ role: "start-frame", id: "frame" }]);
   assert.equal(videoMasterProviderAspectRatio("seedance-2-5", "9:16", [{ role: "start-frame" }]), "adaptive");
   assert.equal(videoMasterProviderAspectRatio("seedance-2-5", "9:16", [{ role: "reference-image" }]), "9:16");
   assert.equal(videoMasterProviderAspectRatio("kling-3", "9:16", [{ role: "start-frame" }]), "9:16");

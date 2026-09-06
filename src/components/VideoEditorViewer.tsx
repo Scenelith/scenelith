@@ -1,11 +1,12 @@
 "use client";
 
-import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
+import { useEffect, useId, useMemo, useRef, useState, type ReactNode } from "react";
 import { ArrowLeft, ArrowRightLeft, Check, ChevronDown, Download, ImageIcon, Images, Link2, Play, Plus, Trash2, UserRound, Video, Volume2, X } from "lucide-react";
 import type { FrameNode, PersonaRecord, VideoMasterClip, VideoSceneSegment } from "@/lib/types";
-import { masterClipOriginalReference, moveUploadedMasterClipToLane, nearestVideoMasterRatio, reconciledVideoMasterClipDuration, reconciledVideoMasterGeneratedDuration, useVideoMasterGeneratedOutput as applyVideoMasterGeneratedOutput, videoMasterClipPlaybackMedia, videoMasterClipThumbnail, videoMasterGeneratedOutputs, videoMasterGenerationDuration, videoMasterGenerationDurationChoices, videoMasterModelsForScene, videoMasterSourceRatio, videoMasterTimelineDuration, type VideoMasterDownloadLane, type VideoMasterGeneratedOutput } from "@/lib/video-master";
+import { moveUploadedMasterClipToLane, nearestVideoMasterRatio, reconciledVideoMasterClipDuration, reconciledVideoMasterGeneratedDuration, useVideoMasterGeneratedOutput as applyVideoMasterGeneratedOutput, videoMasterClipPlaybackMedia, videoMasterClipThumbnail, videoMasterGeneratedOutputs, videoMasterGenerationDuration, videoMasterGenerationDurationChoices, videoMasterModelsForScene, videoMasterSourceRatio, videoMasterTimelineDuration, type VideoMasterDownloadLane, type VideoMasterGeneratedOutput } from "@/lib/video-master";
 import { assetThumbnailUrl, CanvasVideoPlayer, GeneratorReferencePreview, generatorModelCreditDescription, generatorRatiosFor, generatorReferenceRoleLabels, VideoMasterGenerationControls, VideoMasterTimeline, type GeneratorModelOption, type SelectOption } from "./FrameNode";
 import { VideoSceneTimeline } from "./VideoSceneTimeline";
+import { incompatibleReferenceRoles } from "@/lib/generator-reference-modes";
 import { videoPlaybackManager } from "@/lib/video-playback-owner";
 import { editorPlaybackUrl } from "@/lib/editor-media";
 import { VideoMasterPlayer } from "@/components/VideoMasterPlayer";
@@ -196,7 +197,9 @@ function MasterFullscreenEditor({ node, onUpdateNode, onUpload, models, referenc
   const [referencePersonaId, setReferencePersonaId] = useState("");
   const [referencePersonaPickerOpen, setReferencePersonaPickerOpen] = useState(false);
   const playbackTargetRef = useRef(`${node.data.videoMasterSelectedClipId || clips[0]?.id || ""}:output`);
-  const playbackOwnerId = `video-master:${node.id}`;
+  const playerInstanceId = useId();
+  const playbackOwnerId = `video-master-editor:${node.id}:${playerInstanceId}`;
+  useEffect(() => () => { videoPlaybackManager.stop(playbackOwnerId); }, [playbackOwnerId]);
   const selectedClip = clips.find((clip) => clip.id === selectedClipId) || clips[0];
   const selectedIndex = Math.max(0, clips.findIndex((clip) => clip.id === selectedClip?.id));
   const playbackDurations = clips.map((clip) => videoMasterClipPlaybackMedia(clip, selectedLane, laneVisibility).duration);
@@ -204,14 +207,7 @@ function MasterFullscreenEditor({ node, onUpdateNode, onUpload, models, referenc
   const selectedOffset = playbackDurations.slice(0, selectedIndex).reduce((sum, duration) => sum + duration, 0);
   const selectedMedia = videoMasterClipPlaybackMedia(selectedClip, selectedLane, laneVisibility);
   const selectedReferences = selectedClip ? referencesForClip(selectedClip.id) : [];
-  const originalSceneReference = masterClipOriginalReference(selectedClip);
-  const displayReferences = originalSceneReference ? selectedReferences.filter((reference) => !(reference.role === "reference-video" && (
-    Boolean(reference.assetId && reference.assetId === originalSceneReference.assetId)
-    || reference.url === originalSceneReference.url
-  ))) : selectedReferences;
-  const visibleSceneReferences: VideoEditorReference[] = originalSceneReference
-    ? [{ ...originalSceneReference, mediaType: "video", removable: false }, ...displayReferences]
-    : displayReferences;
+  const visibleSceneReferences: VideoEditorReference[] = selectedReferences;
   const availableModels = videoMasterModelsForScene(models, selectedClip, selectedReferences);
   const selectedModel = availableModels.find((model) => model.id === selectedClip?.modelId) || availableModels[0] || models.find((model) => model.mediaType === "video");
   const selectedRatios = generatorRatiosFor(selectedModel, selectedClip?.resolution, selectedReferences.length > 0).filter((ratio) => ratio !== "source");
@@ -255,7 +251,9 @@ function MasterFullscreenEditor({ node, onUpdateNode, onUpload, models, referenc
     || (reference.removable === false && reference.role === "reference-video" && port.id === originalSceneVideoPortId));
   const activePortReferences = activeReferencePort ? referencesForPort(activeReferencePort) : [];
   const attachedReferences = selectedClip?.attachedReferences || [];
-  const attachedReferenceIds = new Set(attachedReferences.map((reference) => reference.assetId));
+  const excludedReferenceRoles = incompatibleReferenceRoles(selectedModel?.id, activeReferencePort?.id);
+  const compatibleReferenceCount = selectedReferences.filter((reference) => !excludedReferenceRoles.includes(reference.role || "reference-image")).length;
+  const attachedReferenceIds = new Set(attachedReferences.filter((reference) => (reference.role || "reference-image") === activeReferencePort?.id).map((reference) => reference.assetId));
   const attachedPersonaId = attachedReferences.find((reference) => reference.personaId && personas.some((persona) => persona.id === reference.personaId))?.personaId || "";
   const selectedReferencePersona = personas.find((persona) => persona.id === referencePersonaId)
     || personas.find((persona) => persona.id === attachedPersonaId)
@@ -391,10 +389,10 @@ function MasterFullscreenEditor({ node, onUpdateNode, onUpload, models, referenc
   const attachPersonaAsset = (persona: PersonaRecord, asset: PersonaRecord["assets"][number]) => {
     if (!selectedClip || activeReferencePort?.kind !== "image") return;
     if (attachedReferenceIds.has(asset.id)) {
-      updateSelectedClip({ attachedReferences: attachedReferences.filter((reference) => reference.assetId !== asset.id) });
+      updateSelectedClip({ attachedReferences: attachedReferences.filter((reference) => reference.assetId !== asset.id || (reference.role || "reference-image") !== activeReferencePort.id) });
       return;
     }
-    if (selectedReferences.length >= maxReferences) return;
+    if (compatibleReferenceCount >= maxReferences) return;
     const siblings = persona.assets.filter((item) => item.role === asset.role);
     updateSelectedClip({ attachedReferences: [...attachedReferences, {
       assetId: asset.id,
@@ -411,7 +409,7 @@ function MasterFullscreenEditor({ node, onUpdateNode, onUpload, models, referenc
     if (!selectedClip || activeReferencePort?.kind !== "image") return;
     const additions = persona.assets
       .filter((asset) => asset.role === variant && !attachedReferenceIds.has(asset.id))
-      .slice(0, Math.max(0, maxReferences - selectedReferences.length))
+      .slice(0, Math.max(0, maxReferences - compatibleReferenceCount))
       .map((asset, index) => ({ assetId: asset.id, url: asset.url, thumbnailUrl: asset.thumbnailUrl, title: `${persona.name} · ${variant} ${index + 1}`, personaId: persona.id, variant, role: activeReferencePort.id as NonNullable<VideoMasterClip["attachedReferences"]>[number]["role"] }));
     if (additions.length) updateSelectedClip({ attachedReferences: [...attachedReferences, ...additions] });
   };
@@ -426,10 +424,10 @@ function MasterFullscreenEditor({ node, onUpdateNode, onUpload, models, referenc
         return <div className="generator-reference-row" key={`${reference.role}:${reference.id}`}><GeneratorReferencePreview reference={reference} /><span><strong>{reference.title}</strong><small>{roleLabel}{durationLabel}</small></span>{reference.removable !== false && <button type="button" aria-label={`Detach ${reference.title}`} onClick={(event) => { event.preventDefault(); event.stopPropagation(); detachReference(reference); }}><X size={12} /></button>}</div>;
       })}</div>}
       {!activePortReferences.length && <div className="generator-reference-empty"><Images size={17} /><span>Nothing connected to this input.</span></div>}
-      {availableReferences.some((reference) => (reference.mediaType || "image") === activeReferencePort.kind) && <><div className="generator-reference-divider"><span>CANVAS</span></div><div className="generator-reference-list video-editor-viewer-reference-canvas-grid">{availableReferences.filter((reference) => (reference.mediaType || "image") === activeReferencePort.kind).map((reference) => <button type="button" key={reference.id} disabled={!reference.assetId || selectedReferences.length >= maxReferences} onClick={(event) => { event.preventDefault(); event.stopPropagation(); attachReference(reference, activeReferencePort); }}><span>{activeReferencePort.kind === "video" ? <Video size={12} /> : activeReferencePort.kind === "audio" ? <Volume2 size={12} /> : <img src={assetThumbnailUrl(reference.thumbnailUrl || reference.url)} alt="" />}</span><strong>{reference.title}</strong><Plus size={10} /></button>)}</div></>}
+      {availableReferences.some((reference) => (reference.mediaType || "image") === activeReferencePort.kind) && <><div className="generator-reference-divider"><span>CANVAS</span></div><div className="generator-reference-list video-editor-viewer-reference-canvas-grid">{availableReferences.filter((reference) => (reference.mediaType || "image") === activeReferencePort.kind).map((reference) => <button type="button" key={reference.id} disabled={!reference.assetId || compatibleReferenceCount >= maxReferences} onClick={(event) => { event.preventDefault(); event.stopPropagation(); attachReference(reference, activeReferencePort); }}><span>{activeReferencePort.kind === "video" ? <Video size={12} /> : activeReferencePort.kind === "audio" ? <Volume2 size={12} /> : <img src={assetThumbnailUrl(reference.thumbnailUrl || reference.url)} alt="" />}</span><strong>{reference.title}</strong><Plus size={10} /></button>)}</div></>}
       {activeReferencePort.kind === "image" && <><div className="generator-reference-divider"><span>IDENTITY LIBRARY</span></div><div className="generator-reference-list nowheel">
         {personas.length > 0 && <div className={`generator-persona-picker ${referencePersonaPickerOpen ? "is-open" : ""}`}><button type="button" className="generator-persona-picker-trigger" aria-expanded={referencePersonaPickerOpen} onClick={(event) => { event.preventDefault(); event.stopPropagation(); setReferencePersonaPickerOpen((open) => !open); }}><span className="generator-persona-picker-avatar">{selectedReferencePersona?.avatarUrl ? <img src={selectedReferencePersona.avatarUrl} alt="" /> : <UserRound size={14} />}</span><span><small>Selected identity</small><strong>{selectedReferencePersona?.name || "Choose identity"}</strong></span><ChevronDown size={13} /></button>{referencePersonaPickerOpen && <div className="generator-persona-picker-options nowheel">{personas.map((persona) => <button type="button" className={selectedReferencePersona?.id === persona.id ? "is-selected" : ""} key={persona.id} onClick={(event) => { event.preventDefault(); event.stopPropagation(); setReferencePersonaId(persona.id); setReferencePersonaPickerOpen(false); }}><span className="generator-persona-picker-avatar">{persona.avatarUrl ? <img src={persona.avatarUrl} alt="" /> : <UserRound size={14} />}</span><span><strong>{persona.name}</strong><small>{persona.assets.length} photos</small></span>{selectedReferencePersona?.id === persona.id && <Check size={12} />}</button>)}</div>}</div>}
-        {selectedReferencePersona && <div className="generator-persona-option">{(["reference", "before", "after"] as const).map((variant) => { const assets = selectedReferencePersona.assets.filter((asset) => asset.role === variant); if (!assets.length) return null; return <div className="generator-persona-state" key={variant}><header><span>{variant === "reference" ? "identity" : variant}</span><button type="button" disabled={!assets.some((asset) => !attachedReferenceIds.has(asset.id)) || selectedReferences.length >= maxReferences} onClick={(event) => { event.preventDefault(); event.stopPropagation(); attachPersonaVariant(selectedReferencePersona, variant); }}>Add available</button></header><div>{assets.map((asset, index) => { const active = attachedReferenceIds.has(asset.id); return <button type="button" className={active ? "is-attached" : ""} disabled={!active && selectedReferences.length >= maxReferences} key={asset.id} onClick={(event) => { event.preventDefault(); event.stopPropagation(); attachPersonaAsset(selectedReferencePersona, asset); }}><img src={asset.thumbnailUrl || asset.url} alt="" /><span>{String(index + 1).padStart(2, "0")}</span>{active && <Check size={9} />}</button>; })}</div></div>; })}</div>}
+        {selectedReferencePersona && <div className="generator-persona-option">{(["reference", "before", "after"] as const).map((variant) => { const assets = selectedReferencePersona.assets.filter((asset) => asset.role === variant); if (!assets.length) return null; return <div className="generator-persona-state" key={variant}><header><span>{variant === "reference" ? "identity" : variant}</span><button type="button" disabled={!assets.some((asset) => !attachedReferenceIds.has(asset.id)) || compatibleReferenceCount >= maxReferences} onClick={(event) => { event.preventDefault(); event.stopPropagation(); attachPersonaVariant(selectedReferencePersona, variant); }}>Add available</button></header><div>{assets.map((asset, index) => { const active = attachedReferenceIds.has(asset.id); return <button type="button" className={active ? "is-attached" : ""} disabled={!active && compatibleReferenceCount >= maxReferences} key={asset.id} onClick={(event) => { event.preventDefault(); event.stopPropagation(); attachPersonaAsset(selectedReferencePersona, asset); }}><img src={asset.thumbnailUrl || asset.url} alt="" /><span>{String(index + 1).padStart(2, "0")}</span>{active && <Check size={9} />}</button>; })}</div></div>; })}</div>}
       </div></>}
     </div>
   </div>;

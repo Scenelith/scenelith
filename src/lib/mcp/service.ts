@@ -1,3 +1,4 @@
+import { reconcileGeneratorReferenceChanges } from "../generator-reference-modes";
 import { videoMasterSceneDirectory, videoMasterSceneRevision } from "./video-master-scenes";
 import { assignCanvasNodeNumbers, canvasNodeLabel, canvasNodeType } from "../../../collaboration/node-numbers.mjs";
 import {
@@ -264,7 +265,7 @@ export function applyCanvasPatch(graphInput: ProjectGraph, operations: CanvasPat
     }
     graph.viewport = operation.viewport;
   }
-  const normalized = normalizeProjectGraph(graph);
+  const normalized = reconcileGeneratorReferenceChanges(graphInput, normalizeProjectGraph(graph)).graph;
   if (normalized.nodes.length > 500 || normalized.edges.length > 1_000 || JSON.stringify(normalized).length > 2_000_000) {
     throw new Error("The resulting canvas exceeds its safe document limits");
   }

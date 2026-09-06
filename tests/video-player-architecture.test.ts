@@ -345,7 +345,7 @@ test("fullscreen editors are manual and canvas hover playback has an immediate l
 test("an open fullscreen editor owns playback and suppresses its canvas player", () => {
   assert.match(frameNode, /const previewOwnsPlayback = generator\?\.activePreviewNodeId === id;/);
   assert.match(frameNode, /playbackOwnerId=\{videoMasterPlaybackOwnerId\}/);
-  assert.match(editorViewer, /const playbackOwnerId = `video-master:\$\{node\.id\}`/);
+  assert.match(editorViewer, /const playbackOwnerId = `video-master-editor:\$\{node\.id\}:\$\{playerInstanceId\}`/);
   assert.match(frameNode, /active=\{Boolean\(selected && !previewOwnsPlayback\)\}/);
   assert.doesNotMatch(frameNode, /key=\{`\$\{selectedClip\.id\}:\$\{videoMasterSelectedLane\}`\}/);
   assert.match(canvasApp, /activePreviewNodeId: previewNode\?\.id \|\| null/);
@@ -612,9 +612,6 @@ test("the fullscreen Video Master keeps node actions, scene references and outpu
   assert.match(editorViewer, /referencesForClip\(selectedClip\.id\)/);
   assert.match(editorViewer, /generator-reference-menu video-editor-viewer-reference-menu/);
   assert.match(editorViewer, /<label>INPUTS<\/label>/);
-  assert.match(editorViewer, /masterClipOriginalReference\(selectedClip\)/);
-  assert.match(editorViewer, /const displayReferences = originalSceneReference \? selectedReferences\.filter/);
-  assert.match(editorViewer, /\[\{ \.\.\.originalSceneReference, mediaType: "video", removable: false \}, \.\.\.displayReferences\]/);
   assert.match(editorViewer, /Scene source/);
   assert.match(editorViewer, /Video reference/);
   assert.match(editorViewer, /IDENTITY LIBRARY/);
