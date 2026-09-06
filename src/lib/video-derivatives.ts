@@ -71,12 +71,12 @@ export async function captureVideoFrameAsset(input: { source: VideoDerivativeSou
   return await job;
 }
 
-async function existingSegment(projectId: string, sourceAssetId: string, start: number, end: number) {
+async function existingSegment(projectId: string, sourceAssetId: string, segmentId: string, start: number, end: number) {
   const rows = await db.prepare("SELECT id, metadata_json FROM assets WHERE project_id = ? AND kind = 'video_segment' ORDER BY created_at DESC").all(projectId) as Array<{ id: string; metadata_json: string }>;
   for (const row of rows) {
     try {
-      const metadata = JSON.parse(row.metadata_json || "{}") as { sourceAssetId?: string; start?: number; end?: number };
-      if (metadata.sourceAssetId === sourceAssetId && Math.abs(Number(metadata.start) - start) < .000001 && Math.abs(Number(metadata.end) - end) < .000001) return { id: row.id, url: `/api/assets/${row.id}`, durationSeconds: end - start };
+      const metadata = JSON.parse(row.metadata_json || "{}") as { sourceAssetId?: string; segmentId?: string; start?: number; end?: number };
+      if (metadata.sourceAssetId === sourceAssetId && metadata.segmentId === segmentId && Math.abs(Number(metadata.start) - start) < .000001 && Math.abs(Number(metadata.end) - end) < .000001) return { id: row.id, url: `/api/assets/${row.id}`, durationSeconds: end - start };
     } catch {}
   }
   return null;
@@ -86,11 +86,11 @@ export async function materializeVideoSegmentAsset(input: { source: VideoDerivat
   const start = Math.round(input.start * 1_000_000) / 1_000_000;
   const end = Math.round(input.end * 1_000_000) / 1_000_000;
   if (start < 0 || end <= start || end - start > 30) throw new Error("Choose a video segment between 0 and 30 seconds");
-  const key = `${input.projectId}:${input.source.id}:${start.toFixed(6)}:${end.toFixed(6)}`;
+  const key = `${input.projectId}:${input.source.id}:${input.segmentId}:${start.toFixed(6)}:${end.toFixed(6)}`;
   const running = segmentJobs.get(key);
   if (running) return await running;
   const job = (async () => {
-    const existing = await existingSegment(input.projectId, input.source.id, start, end);
+    const existing = await existingSegment(input.projectId, input.source.id, input.segmentId, start, end);
     if (existing) return existing;
     const workDir = await mkdtemp(join(tmpdir(), "scenelith-segment-"));
     try {

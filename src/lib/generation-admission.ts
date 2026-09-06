@@ -31,13 +31,14 @@ export type GenerationAdmissionInput = {
   generateAudio: boolean;
   hasVideoInput: boolean;
   inputVideoDurationSeconds: number;
+  beforeAdmit?: () => Promise<void>;
   targetClipId?: string;
   targetSourceAssetId?: string;
 };
 
 export type GenerationAdmissionResult =
   | { ok: true; generationId: string; status: "queued"; queuePosition: number | null; creditCost: number }
-  | { ok: false; status: 402 | 404 | 429 | 500; error: string; code: string; retryAfterMs?: number; concurrency?: number; requiredCredits?: number };
+  | { ok: false; status: 402 | 404 | 409 | 429 | 500; error: string; code: string; retryAfterMs?: number; concurrency?: number; requiredCredits?: number; generationId?: string };
 
 export function generationDispatchPayload(input: GenerationAdmissionInput): GenerationDispatchPayload {
   return {
@@ -83,6 +84,15 @@ export async function admitGeneration(input: GenerationAdmissionInput): Promise<
   const concurrency = (await usage.summary(workspaceId)).generationConcurrency;
   const admitted = await db.transaction(async () => {
     await db.prepare("SELECT pg_advisory_xact_lock(hashtextextended(?, 0))").get(`generation-admission:${workspaceId}`);
+    // One active request per Master prevents retries (and simultaneous UI/MCP
+    // launches) from reserving credits twice or racing the Master's output state.
+    if (input.targetClipId) {
+      const existing = await db.prepare(`SELECT id FROM generations WHERE project_id = ? AND node_id = ?
+        AND lower(status) NOT IN ('failed','fail','error','cancelled','canceled','completed','complete','succeeded','success')
+        AND output_url IS NULL AND output_asset_id IS NULL LIMIT 1`).get(input.projectId, input.nodeId) as { id: string } | undefined;
+      if (existing) return { existingGenerationId: existing.id };
+    }
+    await input.beforeAdmit?.();
     const active = await db.prepare(`SELECT COUNT(*) AS count FROM generations g
       WHERE g.usage_workspace_id = ?
         AND lower(g.status) NOT IN ('failed','fail','error','cancelled','canceled','completed','complete','succeeded','success')
@@ -112,6 +122,9 @@ export async function admitGeneration(input: GenerationAdmissionInput): Promise<
     );
     return true;
   })();
+
+  if (typeof admitted === "object") return { ok: false, status: 409, code: "GENERATION_ALREADY_RUNNING",
+    error: "This Video Master already has an active generation. Poll generationId instead of starting another one.", generationId: admitted.existingGenerationId };
 
   if (!admitted) {
     return {

@@ -58,6 +58,10 @@ Use Automation tools for repeatable workflows and runs, not for direct Canvas gr
 4. Later use \`add_identity_references\` to add more approved Library images to valid groups
 5. Use \`place_canvas_identity\` with one valid variant only if that group should be present in a Canvas graph
 
+### Generate one Video Master scene
+
+Read \`get_canvas\` and resolve the Master from \`nodeDirectory\`. In \`videoMasterScenes\`, select that node's scene by number/title and keep its \`clipId\` and \`generationRevision\`. Call \`run_canvas_generation\` with \`clip_id\`, \`expected_scene_revision\` and the canvas revision. Source clips are prepared automatically; do not manually materialize scenes first. Unrelated node/layout/history updates do not invalidate the scene revision, but source cuts, model, prompt and references do. Poll the returned generation ID. If \`GENERATION_ALREADY_RUNNING\` is returned, poll its \`generationId\` instead of launching again. A new generation after completion is a new billable request.
+
 ### Build and run an Automation
 
 1. Read \`scenelith://automation/guide\`; call \`get_automation_capabilities\`

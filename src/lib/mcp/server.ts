@@ -161,7 +161,7 @@ function previewToolResult(result: { asset: Record<string, unknown>; previewBase
 }
 
 function toolError(error: unknown): CallToolResult {
-  const value = error as { code?: unknown; status?: unknown; scope?: unknown; currentRevision?: unknown; currentDraftVersionId?: unknown; retryAfterMs?: unknown; requiredCredits?: unknown; validation?: unknown };
+  const value = error as { code?: unknown; status?: unknown; scope?: unknown; currentRevision?: unknown; currentDraftVersionId?: unknown; retryAfterMs?: unknown; requiredCredits?: unknown; generationId?: unknown; validation?: unknown };
   const payload = {
     error: error instanceof Error ? error.message : "Scenelith could not complete this action",
     ...(typeof value?.code === "string" ? { code: value.code } : {}),
@@ -169,6 +169,7 @@ function toolError(error: unknown): CallToolResult {
     ...(typeof value?.scope === "string" ? { requiredScope: value.scope } : {}),
     ...(typeof value?.currentRevision === "number" ? { currentRevision: value.currentRevision } : {}),
     ...(typeof value?.currentDraftVersionId === "string" ? { currentDraftVersionId: value.currentDraftVersionId } : {}),
+    ...(typeof value?.generationId === "string" ? { generationId: value.generationId } : {}),
     ...(typeof value?.retryAfterMs === "number" ? { retryAfterMs: value.retryAfterMs } : {}),
     ...(typeof value?.requiredCredits === "number" ? { requiredCredits: value.requiredCredits } : {}),
     ...(value?.validation && typeof value.validation === "object" ? { validation: value.validation } : {}),
@@ -849,11 +850,11 @@ export function createScenelithMcpServer(principal: McpPrincipal, origin: string
   if (principalHasScope(principal, "generation:run") && principalHasScope(principal, "canvas:write")) {
     server.registerTool("run_canvas_generation", {
       title: "Run canvas generation",
-      description: "Start the configured Image or Video Generator node with its exact Assistant text, local prompt, model settings and typed asset references. This consumes credits or provider resources and returns a durable generation ID for get_canvas_generation.",
-      inputSchema: z.object({ canvas_id: z.string().min(1), expected_revision: z.number().int().nonnegative(), node_id: z.string().min(1), clip_id: z.string().min(1).max(200).optional(), generation_count: z.number().int().min(1).max(8).optional() }).strict(),
+      description: "Start a Generator or one Video Master scene. For a Master pass clip_id and expected_scene_revision from get_canvas.videoMasterScenes: unrelated canvas edits will not block it. Exact source scene clips are prepared automatically, including duration trims. This consumes credits or provider resources. Poll the returned generation ID; GENERATION_ALREADY_RUNNING also supplies the existing ID.",
+      inputSchema: z.object({ canvas_id: z.string().min(1), expected_revision: z.number().int().nonnegative(), node_id: z.string().min(1), clip_id: z.string().min(1).max(200).optional(), expected_scene_revision: z.string().regex(/^[a-f0-9]{64}$/).optional(), generation_count: z.number().int().min(1).max(8).optional() }).strict(),
       annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: true },
-    }, ({ canvas_id, expected_revision, node_id, clip_id, generation_count }) => safeTool(
-      () => runMcpCanvasGeneration(principal, { projectId: canvas_id, expectedRevision: expected_revision, nodeId: node_id, clipId: clip_id, generationCount: generation_count }),
+    }, ({ canvas_id, expected_revision, node_id, clip_id, expected_scene_revision, generation_count }) => safeTool(
+      () => runMcpCanvasGeneration(principal, { projectId: canvas_id, expectedRevision: expected_revision, nodeId: node_id, clipId: clip_id, expectedSceneRevision: expected_scene_revision, generationCount: generation_count }),
       (result) => ({ result }),
     ));
 
