@@ -1,7 +1,7 @@
 /**
- * Scenelith generation credits mirror Kie.ai credits one-for-one.
- * Kie currently values one provider credit at $0.005. Fractional provider
- * charges are rounded up because workspace balances use whole credits.
+ * Model quotes use a provider-credit-aligned rate table. Fractional estimates
+ * are rounded up to whole units. A quote is not measured provider consumption;
+ * the edition usage authority owns reservations, charges and refunds.
  */
 
 const imageCredits: Record<string, Record<string, number>> = {

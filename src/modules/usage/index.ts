@@ -14,3 +14,14 @@ export async function usageSummary(workspaceId: string) {
 export async function teamUsageEntitlement(workspaceId: string) {
   return await editionUsage.teamEntitlement(workspaceId);
 }
+
+/** Reporting must never turn an accepted generation into a failed/retried request. */
+export async function taskCreditUsage(tasks: import("./contracts").UsageTaskReference[]) {
+  if (!tasks.length || !editionUsage.authority.taskCreditUsage) return {};
+  try {
+    return await editionUsage.authority.taskCreditUsage(tasks);
+  } catch {
+    console.error("[usage:task-report-unavailable]");
+    return {};
+  }
+}

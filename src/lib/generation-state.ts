@@ -8,7 +8,7 @@ import {
   publicGenerationErrorMessage,
   timeoutGeneration,
 } from "./generation-lifecycle";
-import { usageAuthority } from "@/modules/usage";
+import { usageAuthority, taskCreditUsage } from "@/modules/usage";
 import { optimizeMp4ForStreaming, probeVideoMetadata, type VideoMetadata } from "./media-probe";
 import { putStorageObject, safeExtension } from "./storage";
 import type { FrameNode, ProjectGraph } from "./types";
@@ -301,7 +301,9 @@ async function generatedAssetDurationSeconds(assetId: string | null) {
 }
 
 export async function generationClientState(generation: GenerationStateRow) {
+  const charges = await taskCreditUsage([{ id: generation.id, kind: "generation" }]);
   return {
+    creditUsage: charges[`generation:${generation.id}`],
     id: generation.id,
     status: generation.status,
     queuePosition: await queuedGenerationPosition(generation.id),

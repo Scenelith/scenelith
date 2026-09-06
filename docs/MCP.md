@@ -187,3 +187,7 @@ Seedance 2.x, including 2.5, accepts either start/end frames or multimodal image
 Legacy or imported mixed modes are rejected locally with `INCOMPATIBLE_REFERENCE_MODES` before generation admission. Agents must not delete references or change their roles merely to bypass this error: resolve the user's intent first. See the [official Seedance 2.5 input contract](https://docs.kie.ai/market/bytedance/seedance-2-5).
 
 Connecting a new frame or multimodal reference automatically disconnects incompatible edges and attached references on the same generator or Master scene. The last explicitly connected mode wins. Other scenes, ORIGINAL media and output history remain unchanged. Media metadata refreshes do not choose a mode or disconnect references. The UI persists this as one graph operation and shows a notice; MCP returns the updated graph.
+
+### Generation credit reporting
+
+`creditCost` is the launch quote, not measured provider consumption. Metered editions also return `creditUsage` from `run_canvas_generation`, `get_canvas_generation`, and the Tasks API. Use `unitLabel` to name the account credits, `reservedCredits` for a pending reservation, `chargedCredits` for settled spend, and `refundedCredits` for credits actually returned to the balance. Expired subscription units, when applicable, are reported separately as `expiredCredits`. A failed task does not by itself prove a refund; use its account usage record. If the report is absent or unavailable, do not infer actual spend from the quote. Unmetered editions omit account credit usage.

@@ -1,3 +1,4 @@
+import { taskCreditUsage } from "@/modules/usage";
 import { requireApiUser } from "@/lib/auth";
 import { db, userCanAccessProject } from "@/lib/postgres-db";
 import { publicGenerationErrorMessage } from "@/lib/generation-lifecycle";
@@ -80,6 +81,7 @@ export async function GET() {
   for (const row of generations) {
     if (await userCanAccessProject(auth.user.id, row.project_id)) visibleGenerations.push(row);
   }
+  const creditUsage = await taskCreditUsage(visibleGenerations.map((row) => ({ id: row.id, kind: "generation" })));
   const generationTasks: BackgroundTaskRecord[] = visibleGenerations.map((row) => ({
     id: row.id,
     kind: "generation",
@@ -96,6 +98,7 @@ export async function GET() {
     outputUrl: row.output_asset_id ? `/api/assets/${row.output_asset_id}` : row.output_url,
     assetId: row.output_asset_id,
     creditCost: Number(row.credit_cost || 0),
+    creditUsage: creditUsage[`generation:${row.id}`],
     error: row.error ? publicGenerationErrorMessage(row.error) : null,
     createdAt: row.created_at,
     updatedAt: row.updated_at,
@@ -124,6 +127,7 @@ export async function GET() {
   for (const row of workflowRuns) {
     if (await userCanAccessProject(auth.user.id, row.project_id)) visibleWorkflowRuns.push(row);
   }
+  const workflowCreditUsage = await taskCreditUsage(visibleWorkflowRuns.map((row) => ({ id: row.id, kind: "workflow" })));
   const workflowTasks: BackgroundTaskRecord[] = visibleWorkflowRuns.map((row) => ({
     id: row.id,
     kind: "automation",
@@ -135,6 +139,7 @@ export async function GET() {
     stageLabel: row.stage_label,
     progress: Math.max(0, Math.min(100, Number(row.progress || 0))),
     creditCost: Number(row.charged_credits || 0),
+    creditUsage: workflowCreditUsage[`workflow:${row.id}`],
     error: row.error,
     createdAt: row.created_at,
     updatedAt: row.updated_at,
