@@ -489,6 +489,8 @@ button { color: inherit; }
 .video-master-download-control { position: relative; display: grid; place-items: center; }
 .video-master-download-menu { width: 224px; padding: 11px; position: absolute; z-index: 40; right: -43px; bottom: calc(100% + 9px); display: flex; flex-direction: column; gap: 10px; border: 1px solid #343638; border-radius: 11px; background: #171819; box-shadow: 0 18px 42px rgba(0,0,0,.52); color: var(--color-text); backdrop-filter: none; animation: generator-toolbar-in .16s cubic-bezier(.16,1,.3,1); }
 .video-master-download-menu::before { content: ""; width: 8px; height: 8px; position: absolute; right: 52px; bottom: -5px; border-right: 1px solid #343638; border-bottom: 1px solid #343638; background: #171819; transform: rotate(45deg); }
+.video-master-download-menu.opens-below { top:calc(100% + 9px); bottom:auto; }
+.video-master-download-menu.opens-below::before { top:-5px; bottom:auto; transform:rotate(225deg); }
 .video-master-download-menu > header { min-height: 21px; display: flex; align-items: center; justify-content: space-between; gap: 10px; }
 .video-master-download-menu > header span { color: #d7dad6; font: 780 8px/1 ui-monospace,monospace; letter-spacing: .1em; }
 .video-master-download-menu > header small { min-width: 0; overflow: hidden; color: var(--color-text-dim); font-size: 7px; text-overflow: ellipsis; white-space: nowrap; }
