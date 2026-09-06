@@ -2,6 +2,7 @@ import { createHmac, timingSafeEqual } from "node:crypto";
 import { requireInstanceSecret } from "@/platform/secrets";
 import { readStorageObject } from "./storage";
 import { acquireKieGenerationPermit } from "./kie-rate-limit";
+import { videoMasterProviderAspectRatio } from "./video-master";
 
 const apiBase = "https://api.kie.ai";
 const uploadApiBase = "https://kieai.redpandaai.co";
@@ -352,7 +353,7 @@ export function buildKieInput(modelId: string, input: Omit<StartInput, "modelId"
     return { prompt, negative_prompt: negativePrompt, aspect_ratio: ratio };
   }
   if (model.id.startsWith("seedance-2")) {
-    return { prompt, first_frame_url: roleUrls("start-frame")[0], last_frame_url: roleUrls("end-frame")[0], reference_image_urls: roleUrls("reference-image"), reference_video_urls: roleUrls("reference-video"), reference_audio_urls: roleUrls("reference-audio"), return_last_frame: false, generate_audio: Boolean(input.generateAudio), resolution: resolution?.toLowerCase(), aspect_ratio: ratio, duration, ...(model.id === "seedance-2-5" ? { output_format: "mp4" } : {}), web_search: false };
+    return { prompt, first_frame_url: roleUrls("start-frame")[0], last_frame_url: roleUrls("end-frame")[0], reference_image_urls: roleUrls("reference-image"), reference_video_urls: roleUrls("reference-video"), reference_audio_urls: roleUrls("reference-audio"), return_last_frame: false, generate_audio: Boolean(input.generateAudio), resolution: resolution?.toLowerCase(), aspect_ratio: videoMasterProviderAspectRatio(model.id, ratio, uploadedReferences), duration, ...(model.id === "seedance-2-5" ? { output_format: "mp4" } : {}), web_search: false };
   }
   if (model.id === "kling-3") {
     const imageUrls = [...roleUrls("start-frame"), ...roleUrls("end-frame")].slice(0, 2);

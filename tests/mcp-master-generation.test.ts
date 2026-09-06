@@ -9,6 +9,8 @@ import { saveBytes, readStorageObject } from "../src/lib/storage";
 import { getMcpCanvas, patchMcpCanvas, runMcpCanvasGeneration } from "../src/lib/mcp/service";
 import { videoMasterSceneRevision } from "../src/lib/mcp/video-master-scenes";
 import { videoMasterClipPlaybackMedia } from "../src/lib/video-master";
+import { canvasGenerationModels } from "../src/lib/mcp/canvas-capabilities";
+import { buildKieInput } from "../src/lib/kie";
 import { usageAuthority } from "../src/modules/usage";
 import type { McpPrincipal } from "../src/lib/mcp/oauth";
 import type { ProjectGraph } from "../src/lib/types";
@@ -178,4 +180,56 @@ test("a stale derivative from an old scene with identical cuts is rebuilt with c
   const payload=await dispatch(result.generationId);assert.notEqual(payload.targetSourceAssetId,staleId);
   const row=await db.prepare("SELECT metadata_json FROM assets WHERE id=?").get(payload.targetSourceAssetId) as {metadata_json:string};
   assert.equal(JSON.parse(row.metadata_json).segmentId,"segment-a");
+});
+
+async function addSceneImage(role: "start-frame" | "reference-image", keepVideo: boolean) {
+  const sharp = (await import("sharp")).default;
+  const bytes = await sharp({create:{width:64,height:96,channels:3,background:"red"}}).png().toBuffer();
+  const stored = await saveBytes(bytes,"scene-test","portrait.png","image/png");
+  await db.prepare("INSERT INTO assets (id,workspace_id,project_id,kind,role,filename,storage_path,mime_type,metadata_json,created_at) VALUES ('portrait','scene-space','scene-canvas','library_image','library','portrait.png',?,'image/png','{}',?)").run(stored.reference,new Date().toISOString());
+  graph.nodes.push({id:"portrait-node",type:"frameNode",position:{x:0,y:900},data:{kind:"image",title:"Portrait",mediaType:"image",assetId:"portrait",imageUrl:"/api/assets/portrait"}});
+  if (!keepVideo) graph.edges=[];
+  graph.edges.push({id:"portrait-edge",source:"portrait-node",target:"master",targetHandle:`master:clip-a:${role}-input`,data:{portType:"image",inputRole:role,masterClipId:"clip-a"}});
+  await db.prepare("UPDATE projects SET graph_json=? WHERE id='scene-canvas'").run(JSON.stringify(graph));
+}
+
+test("MCP Seedance first-frame requests use adaptive through dispatch without changing the saved scene ratio",async()=>{
+  await addSceneImage("start-frame",false);
+  const result=await runMcpCanvasGeneration(principal,await request());
+  const payload=await dispatch(result.generationId);
+  assert.equal(payload.aspectRatio,"adaptive");
+  assert.deepEqual(payload.references.map((r:{role:string})=>r.role),["start-frame"]);
+  const provider=buildKieInput("seedance-2-5",payload,[{assetUrl:"https://example.test/portrait.png",role:"start-frame",label:"portrait"}]);
+  assert.equal(provider.aspect_ratio,"adaptive");
+  assert.equal(provider.first_frame_url,"https://example.test/portrait.png");
+  assert.deepEqual(provider.reference_video_urls,[]);
+  const canvas=await getMcpCanvas(principal,"scene-canvas");
+  assert.equal(canvas.graph.nodes.find(n=>n.id==="master")!.data.videoMasterClips![0].aspectRatio,"9:16");
+  assert.equal(reserve.mock.callCount(),1);
+});
+
+test("MCP Seedance multimodal requests retain both image and scene video and the selected ratio",async()=>{
+  await addSceneImage("reference-image",true);
+  const result=await runMcpCanvasGeneration(principal,await request());
+  const payload=await dispatch(result.generationId);
+  assert.equal(payload.aspectRatio,"9:16");
+  assert.deepEqual(payload.references.map((r:{role:string})=>r.role),["reference-video","reference-image"]);
+  const provider=buildKieInput("seedance-2-5",payload,payload.references.map((r:{role:string,label:string},i:number)=>({assetUrl:`https://example.test/media-${i}`,role:r.role,label:r.label})));
+  assert.equal(provider.first_frame_url,undefined);
+  assert.deepEqual(provider.reference_image_urls,["https://example.test/media-1"]);
+  assert.deepEqual(provider.reference_video_urls,["https://example.test/media-0"]);
+  assert.equal(provider.aspect_ratio,"9:16");
+});
+
+test("MCP rejects mixed Seedance modes before admission and preserves explicitly connected references",async()=>{
+  await addSceneImage("start-frame",true);
+  const edges=graph.edges.map(e=>({id:e.id,role:e.data?.inputRole}));
+  await assert.rejects(runMcpCanvasGeneration(principal,await request()),(error:{code?:string,message?:string})=>error.code==="INCOMPATIBLE_REFERENCE_MODES" && Boolean(error.message?.includes("before provider submission")));
+  assert.equal(reserve.mock.callCount(),0);
+  assert.equal((await db.prepare("SELECT COUNT(*) AS count FROM generations").get() as {count:number}).count,0);
+  const current=await getMcpCanvas(principal,"scene-canvas");
+  assert.deepEqual(current.graph.edges.map(e=>({id:e.id,role:e.data?.inputRole})),edges);
+  const rules=canvasGenerationModels().find(m=>m.id==="seedance-2-5")!.referenceModeRules!;
+  assert.equal(rules.frameModeAspectRatio,"adaptive");
+  assert.deepEqual(rules.mutuallyExclusiveRoleGroups,[["start-frame","end-frame"],["reference-image","reference-video","reference-audio"]]);
 });

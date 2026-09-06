@@ -313,3 +313,16 @@ test("Kie webhook HMAC verifies task id and rejects stale timestamps", () => {
   assert.equal(verifyKieWebhook("task-1", new Headers({ "X-Webhook-Timestamp": stale, "X-Webhook-Signature": staleSignature })), false);
   delete process.env.KIE_WEBHOOK_HMAC_KEY;
 });
+
+
+test("Seedance provider frame requests adapt to the image even when a caller passes a fixed ratio", () => {
+  for (const modelId of ["seedance-2", "seedance-2-fast", "seedance-2-mini", "seedance-2-5"]) {
+    for (const withEnd of [false, true]) {
+      const refs = [{assetUrl:"https://cdn.test/start.png",label:"start",role:"start-frame"}, ...(withEnd ? [{assetUrl:"https://cdn.test/end.png",label:"end",role:"end-frame"}] : [])];
+      const input = buildKieInput(modelId,{prompt:"A gentle turn",aspectRatio:"9:16",resolution:"720P",duration:"6"},refs);
+      assert.equal(input.aspect_ratio,"adaptive");
+      assert.equal(input.first_frame_url,refs[0].assetUrl);
+      assert.equal(input.last_frame_url,withEnd ? refs[1].assetUrl : undefined);
+    }
+  }
+});

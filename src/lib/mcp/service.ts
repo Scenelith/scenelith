@@ -98,7 +98,7 @@ import {
   type AutomationOverlapPolicy,
   type AutomationTriggerType,
 } from "@/lib/automation-workflows/triggers";
-import { assetIdFromAssetUrl, moveUploadedMasterClipToLane, nearestVideoMasterRatio, shouldIncludeAutomaticMasterVideoReference, useVideoMasterGeneratedOutput as applyVideoMasterGeneratedOutput, videoMasterClipExportMedia, videoMasterGenerationDuration, videoMasterSourceRatio } from "@/lib/video-master";
+import { assetIdFromAssetUrl, moveUploadedMasterClipToLane, nearestVideoMasterRatio, shouldIncludeAutomaticMasterVideoReference, useVideoMasterGeneratedOutput as applyVideoMasterGeneratedOutput, videoMasterClipExportMedia, videoMasterGenerationDuration, videoMasterProviderAspectRatio, videoMasterSourceRatio } from "@/lib/video-master";
 import { validateVideoMasterGenerationReferences } from "@/lib/video-master-validation";
 import { captureVideoFrameAsset, materializeVideoSegmentAsset, type VideoDerivativeSource } from "@/lib/video-derivatives";
 import { createScenelithDocument, parseScenelithDocument, projectGraphFromScenelithDocument } from "@/lib/scenelith-document";
@@ -975,7 +975,7 @@ export async function runMcpCanvasGeneration(principal: McpPrincipal, input: {
   const resolution = allowedResolutions.includes(requestedResolution) ? requestedResolution : allowedResolutions.includes(model.defaultResolution || "") ? model.defaultResolution! : allowedResolutions[0];
   if (!resolution) throw new Error(`${model.label} has no compatible resolution for these inputs`);
   const allowedRatios = provider.allowedRatios(model, resolution, normalizedReferences.length > 0);
-  const requestedRatio = String(masterClip?.aspectRatio || inspected.node.data.aspectRatio || model.defaultRatio || "4:5");
+  const requestedRatio = videoMasterProviderAspectRatio(model.id, String(masterClip?.aspectRatio || inspected.node.data.aspectRatio || model.defaultRatio || "4:5"), normalizedReferences);
   const aspectRatio = allowedRatios.includes(requestedRatio) ? requestedRatio : allowedRatios.includes(model.defaultRatio || "") ? model.defaultRatio! : allowedRatios[0];
   if (!aspectRatio) throw new Error(`${model.label} has no compatible aspect ratio for these inputs`);
   const requestedDuration = String(masterClip ? videoMasterGenerationDuration(model, masterClip) : inspected.node.data.duration || "");
@@ -985,7 +985,7 @@ export async function runMcpCanvasGeneration(principal: McpPrincipal, input: {
   if (model.id.startsWith("seedance-2")) {
     const hasFrames = normalizedReferences.some((reference) => reference.role === "start-frame" || reference.role === "end-frame");
     const hasMultimodal = normalizedReferences.some((reference) => ["reference-image", "reference-video", "reference-audio"].includes(reference.role));
-    if (hasFrames && hasMultimodal) throw new Error("Seedance uses either start/end frames or multimodal references, not both");
+    if (hasFrames && hasMultimodal) throw Object.assign(new Error("Seedance uses either start/end frames or multimodal references, not both. To keep image and video references together, use reference-image and reference-video; a prompt can request the opening pose but cannot guarantee an exact first frame. Do not remove references or change their roles without the user choosing a mode. This request was rejected by Scenelith before provider submission."), { code: "INCOMPATIBLE_REFERENCE_MODES", status: 400 });
     const limits = model.referenceMediaDuration || { minSeconds: 2, maxSeconds: 15, maxTotalSeconds: 15 };
     for (const role of ["reference-video", "reference-audio"] as const) {
       const timed = normalizedReferences.filter((reference) => reference.role === role && reference.durationSeconds > 0);
