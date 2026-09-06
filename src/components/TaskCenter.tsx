@@ -1,6 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useRef, useState } from "react";
+import { taskCreditLabel } from "@/lib/task-credit-label";
 import type { BackgroundTaskRecord } from "@/lib/types";
 
 function relativeTime(value: string) {
@@ -60,6 +61,7 @@ export function TaskCenter({ onNavigate }: { onNavigate: (task: BackgroundTaskRe
   const recentItems = items.filter((item) => item.status === "completed" || item.status === "failed").slice(0, 6);
   const visibleItems = [...activeItems, ...recentItems];
   const renderTask = (item: BackgroundTaskRecord) => {
+    const credits = taskCreditLabel(item.creditUsage);
     const active = item.status === "queued" || item.status === "running";
     const progress = Math.max(0, Math.min(100, item.progress));
     const detail = item.status === "failed" ? item.error || "This task stopped before it finished." : item.stageLabel;
@@ -69,6 +71,7 @@ export function TaskCenter({ onNavigate }: { onNavigate: (task: BackgroundTaskRe
         <strong>{item.title}</strong>
         <span className="task-meta"><small>{item.projectName}</small><i aria-hidden="true" /><small>{relativeTime(item.updatedAt)}</small></span>
         <p className={item.status === "failed" ? "task-error" : undefined}>{detail}</p>
+        {credits && <span className="task-credits" title={`${item.creditUsage!.unitLabel} · Launch quote: ${item.creditUsage!.quotedCredits.toLocaleString("en-US")}`}><span>{credits}</span><small>{item.creditUsage!.unitLabel}</small></span>}
         {active && <span className="task-progress" role="progressbar" aria-label={`${Math.round(progress)}% complete`} aria-valuemin={0} aria-valuemax={100} aria-valuenow={Math.round(progress)}><i style={{ transform: `scaleX(${progress / 100})` }} /></span>}
       </span>
       <span className={`task-state is-${item.status}`}><b>{stateLabel}</b></span>

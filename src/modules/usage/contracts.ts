@@ -36,6 +36,8 @@ export type AutomationUsageSettlement = {
 };
 
 export interface UsageAuthority {
+  /** Call only after authorizing access to each task. Unmetered editions omit this. */
+  taskCreditUsage?(tasks: UsageTaskReference[]): Promise<Record<string, TaskCreditUsage>>;
   summary(workspaceId: string): Promise<UsageSummary>;
   reserveGeneration(input: GenerationUsageReservation): Promise<boolean>;
   settleGeneration(generationId: string): Promise<void>;
@@ -44,3 +46,17 @@ export interface UsageAuthority {
   settleAutomation(input: AutomationUsageSettlement): Promise<{ chargedCredits: number; capped: boolean; settled: boolean }>;
   releaseAutomation(reservationId: string, reason: string, metadata?: Record<string, unknown>): Promise<boolean>;
 }
+
+/** Account charges are distinct from a model quote or provider consumption. */
+export type TaskCreditUsage = {
+  unit: "credits";
+  unitLabel: string;
+  status: "reserved" | "settled" | "refunded" | "not_charged" | "unavailable";
+  quotedCredits: number;
+  reservedCredits: number;
+  chargedCredits: number;
+  refundedCredits: number;
+  expiredCredits: number;
+};
+
+export type UsageTaskReference = { id: string; kind: "generation" | "workflow" };

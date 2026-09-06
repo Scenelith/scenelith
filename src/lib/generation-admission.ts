@@ -1,5 +1,5 @@
 import { randomUUID } from "node:crypto";
-import { usageAuthority } from "@/modules/usage";
+import { usageAuthority, taskCreditUsage } from "@/modules/usage";
 import { queuedGenerationPosition, type GenerationDispatchPayload } from "./generation-dispatch";
 import { expireStaleGenerations } from "./generation-lifecycle";
 import { generationCreditCost } from "./generation-pricing";
@@ -37,7 +37,7 @@ export type GenerationAdmissionInput = {
 };
 
 export type GenerationAdmissionResult =
-  | { ok: true; generationId: string; status: "queued"; queuePosition: number | null; creditCost: number }
+  | { ok: true; generationId: string; status: "queued"; queuePosition: number | null; creditCost: number; creditUsage?: import("@/modules/usage/contracts").TaskCreditUsage }
   | { ok: false; status: 402 | 404 | 409 | 429 | 500; error: string; code: string; retryAfterMs?: number; concurrency?: number; requiredCredits?: number; generationId?: string };
 
 export function generationDispatchPayload(input: GenerationAdmissionInput): GenerationDispatchPayload {
@@ -174,7 +174,8 @@ export async function admitGeneration(input: GenerationAdmissionInput): Promise<
        (generation_id, payload_json, status, attempts, available_at, created_at, updated_at)
        VALUES (?, ?, 'queued', 0, ?, ?, ?)`,
     ).run(generationId, JSON.stringify(payload), now, now, now);
-    return { ok: true, generationId, status: "queued", queuePosition: await queuedGenerationPosition(generationId), creditCost };
+    const charges = await taskCreditUsage([{ id: generationId, kind: "generation" }]);
+    return { ok: true, generationId, status: "queued", queuePosition: await queuedGenerationPosition(generationId), creditCost, creditUsage: charges[`generation:${generationId}`] };
   } catch (error) {
     const message = error instanceof Error ? error.message : "Could not queue generation";
     await db.prepare("UPDATE generations SET status = 'failed', error = ?, updated_at = ? WHERE id = ?")

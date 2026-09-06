@@ -316,6 +316,7 @@ export type UserRecord = {
 };
 
 export type BackgroundTaskRecord = {
+  creditUsage?: import("@/modules/usage/contracts").TaskCreditUsage;
   id: string;
   kind: "generation" | "automation";
   projectId: string;

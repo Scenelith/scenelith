@@ -67,3 +67,9 @@ test("video credits account for resolution and duration", () => {
   assert.equal(generationCreditCost("veo-3-1", "4K", "8"), 380);
   assert.equal(generationCreditCost("veo-3-1", "4K", "8", 1), 370);
 });
+
+// Fractional reference durations are quoted before dispatch, not read from a provider invoice.
+test("Seedance launch quotes include the exact reference duration", () => {
+  assert.equal(generationCreditCost("seedance-2-5", "720P", "6", 2, { hasVideoInput: true, inputVideoDurationSeconds: 5.3 }), 430);
+  assert.equal(generationCreditCost("seedance-2-5", "720P", "6", 1), 378);
+});

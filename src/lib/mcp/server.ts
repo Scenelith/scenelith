@@ -850,7 +850,7 @@ export function createScenelithMcpServer(principal: McpPrincipal, origin: string
   if (principalHasScope(principal, "generation:run") && principalHasScope(principal, "canvas:write")) {
     server.registerTool("run_canvas_generation", {
       title: "Run canvas generation",
-      description: "Start a Generator or one Video Master scene. For a Master pass clip_id and expected_scene_revision from get_canvas.videoMasterScenes: unrelated canvas edits will not block it. Exact source scene clips are prepared automatically, including duration trims. This consumes credits or provider resources. Poll the returned generation ID; GENERATION_ALREADY_RUNNING also supplies the existing ID.",
+      description: "Start a Generator or one Video Master scene. For a Master pass clip_id and expected_scene_revision from get_canvas.videoMasterScenes: unrelated canvas edits will not block it. Exact source scene clips are prepared automatically, including duration trims. This consumes credits or provider resources. creditCost is the launch quote, not provider consumption. When present, creditUsage identifies the account unit and reserved/charged/refunded amounts; only chargedCredits is final spend. Poll the returned generation ID; GENERATION_ALREADY_RUNNING also supplies the existing ID.",
       inputSchema: z.object({ canvas_id: z.string().min(1), expected_revision: z.number().int().nonnegative(), node_id: z.string().min(1), clip_id: z.string().min(1).max(200).optional(), expected_scene_revision: z.string().regex(/^[a-f0-9]{64}$/).optional(), generation_count: z.number().int().min(1).max(8).optional() }).strict(),
       annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: true },
     }, ({ canvas_id, expected_revision, node_id, clip_id, expected_scene_revision, generation_count }) => safeTool(
@@ -860,7 +860,7 @@ export function createScenelithMcpServer(principal: McpPrincipal, origin: string
 
     server.registerTool("get_canvas_generation", {
       title: "Get canvas generation",
-      description: "Check and reconcile one generation. Completed media is durably stored in the Library and merged into the target canvas node before the updated canvas is returned.",
+      description: "Check and reconcile one generation. creditCost is the launch quote; creditUsage, when available, reports account credits reserved, actually charged and refunded. Do not call a quote or reservation final spend or provider consumption. Completed media is durably stored in the Library and merged into the target canvas node before the updated canvas is returned.",
       inputSchema: z.object({ generation_id: z.string().uuid() }).strict(),
       annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: true },
     }, ({ generation_id }) => safeTool(
