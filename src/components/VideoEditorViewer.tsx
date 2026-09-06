@@ -11,6 +11,7 @@ import { videoPlaybackManager } from "@/lib/video-playback-owner";
 import { editorPlaybackUrl } from "@/lib/editor-media";
 import { generationCreditCost } from "@/lib/generation-pricing";
 import { VideoMasterPlayer } from "@/components/VideoMasterPlayer";
+import { ImageGeneration } from "./ui/ai-chat-image-generation-1";
 
 type Lane = "output" | "original";
 
@@ -471,7 +472,7 @@ function MasterFullscreenEditor({ node, onUpdateNode, onUpload, models, referenc
     <div className="video-editor-viewer-master-workspace">
       <div className="video-editor-viewer-master-stage">
         <div className="generator-node-toolbar video-editor-viewer-node-toolbar" role="toolbar" aria-label="Video Master actions">
-          <button type="button" className="is-run" disabled={!selectedClip?.prompt.trim()} title="Generate selected scene" onClick={() => selectedClip && onGenerateClip?.(selectedClip.id)}><Play size={14} fill="currentColor" /><span>Run</span></button>
+          <button type="button" className="is-run" disabled={!selectedClip?.prompt.trim() || masterHasActiveGeneration} title="Generate selected scene" onClick={() => selectedClip && onGenerateClip?.(selectedClip.id)}><Play size={14} fill="currentColor" /><span>Run</span></button>
           <i />
           <button type="button" disabled={!selectedMedia.url || downloadBusy} title="Download selected scene" aria-label="Download selected scene" onClick={() => void downloadSelected()}>{downloadBusy ? <span className="generator-spinner" /> : <Download size={15} />}</button>
           <i />
@@ -523,7 +524,12 @@ function MasterFullscreenEditor({ node, onUpdateNode, onUpload, models, referenc
             else { videoPlaybackManager.complete(playbackOwnerId, `${selectedClip.id}:${selectedLane}`); setSequencePlaying(false); setRelativeTime(selectedMedia.duration); }
           }}
         /> : <div className="video-editor-viewer-empty"><Video size={22} /><strong>{selectedClip ? "No media in this lane" : "Add the first scene"}</strong></div>}
-        {selectedClip && <div className="generator-overlay video-editor-viewer-master-prompt">
+        {masterBusy && <ImageGeneration
+          className="generator-generation-progress video-master-generation-progress"
+          startingLabel={node.data.status === "queued" ? "Submitting generation…" : "Preparing generation…"}
+          generatingLabel={node.data.status === "queued" ? "Generation submitted. Waiting for provider…" : "Creating video. This may take a moment."}
+        ><div className="generator-generation-preview video-master-generation-preview" aria-hidden="true" /></ImageGeneration>}
+        {selectedClip && !masterBusy && <div className="generator-overlay video-editor-viewer-master-prompt">
           <textarea
             className="nodrag nopan"
             value={selectedClip.prompt}

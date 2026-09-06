@@ -171,6 +171,34 @@ test("a background edit keeps the previous version and its edit references", asy
   assert.equal(node.data.subtitle, "Image edited in place");
 });
 
+test("replaying a Master variation preserves a newer run and its exact scene target", async () => {
+  const seeded = await seedGeneration();
+  await database.mutateProjectGraphSnapshot(seeded.projectId, (graph) => {
+    graph.nodes[0].data = { kind: "videoMaster", title: "Master", status: "working", videoMasterGeneratingClipId: "b",
+      videoMasterClips: ["a", "b"].map((id) => ({ id, title: id, role: "scene", origin: "source", duration: 6, prompt: "Turn" })) };
+    return graph;
+  });
+  const now = new Date().toISOString();
+  await db.prepare(`INSERT INTO generation_dispatch_jobs
+    (generation_id, payload_json, status, attempts, available_at, created_at, updated_at)
+    VALUES (?, ?, 'dispatched', 1, ?, ?, ?)`).run(seeded.generationId, JSON.stringify({ targetClipId: "a" }), now, now, now);
+  const assetId = await state.persistGenerationOutput(seeded.generationId, tinyPng);
+  const first = (await database.readProjectGraphSnapshot(seeded.projectId)).graph.nodes[0].data;
+  assert.equal(first.videoMasterClips?.[0].outputAssetId, assetId);
+  assert.equal(first.videoMasterClips?.[1].outputUrl, undefined);
+  assert.equal(first.status, "working");
+  assert.equal(first.videoMasterGeneratingClipId, "b");
+  await database.mutateProjectGraphSnapshot(seeded.projectId, (graph) => {
+    graph.nodes[0].data.videoMasterGeneratingClipId = "a";
+    return graph;
+  });
+  await state.persistGenerationOutput(seeded.generationId, tinyPng);
+  const replayed = (await database.readProjectGraphSnapshot(seeded.projectId)).graph.nodes[0].data;
+  assert.equal(replayed.status, "working");
+  assert.equal(replayed.videoMasterGeneratingClipId, "a");
+  assert.equal(replayed.videoMasterClips?.[0].generatedOutputs?.length, 1);
+});
+
 test("project hydration reads the authoritative snapshot instead of reconstructing generations", async () => {
   const seeded = await seedGeneration();
   const firstAssetId = await state.persistGenerationOutput(seeded.generationId, tinyPng);
