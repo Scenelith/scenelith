@@ -47,7 +47,7 @@ test("Master scrubbing pauses once and never restarts playback across scene boun
 });
 
 test("Master playhead scene crossings cannot repair a compatible model in a loop", () => {
-  assert.match(frameNode, /if \(currentModelSupportsReference \|\| masterPortModel\.id === currentModel\?\.id \|\| !modelSupportsVideoReference\(masterPortModel\)\) return/);
+  assert.doesNotMatch(frameNode, /generator\.updateMasterClipModel\(id, selectedMasterClip\.id, masterPortModel\.id\)/);
   assert.doesNotMatch(frameNode, /currentModelSupportsReference \? currentModel!\.id : masterPortModel\.id/);
   assert.match(frameNode, /playheadSeekFrameRef\.current = window\.requestAnimationFrame/);
   assert.match(frameNode, /dragPreviewTime \?\? currentTime/);
@@ -547,7 +547,6 @@ test("Video Master assistant reuses the selected timeline thumbnail in a compact
   assert.match(canvasApp, /sourceSegment\?\.clipUrl \|\| masterClip\?\.sourceClipUrl \|\| sourceMediaUrl/);
   assert.match(canvasApp, /const timelineThumbnailUrl = ownsSelectedMasterSource\s*\? videoMasterClipThumbnail\(masterClip, "original"\)/);
   assert.match(canvasApp, /thumbnailUrl: timelineThumbnailUrl/);
-  assert.match(canvasApp, /thumbnailUrl: videoMasterClipThumbnail\(masterClip, "original"\)/);
   assert.doesNotMatch(canvasApp, /representativeTime/);
   assert.match(assetRoute, /videoAssetThumbnailAtTime\(row, requestedThumbnailTime\)/);
   assert.match(frameNode, /generator-assistant-reference-strip is-compact/);

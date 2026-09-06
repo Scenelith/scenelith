@@ -257,11 +257,11 @@ export function createScenelithMcpServer(principal: McpPrincipal, origin: string
 
   server.registerTool("inspect_canvas_node_inputs", {
     title: "Inspect canvas node inputs",
-    description: "Resolve one node's exact connected Assistant text and concrete image, video or audio asset references, including identity cards and attached references. Reports video segments that still need materialization.",
-    inputSchema: z.object({ canvas_id: z.string().min(1), node_id: z.string().min(1) }).strict(),
+    description: "Resolve one node's exact connected Assistant text and concrete image, video or audio asset references, including identity cards and attached references. Pass clip_id for one Video Master scene. Only explicit generation inputs are returned; ORIGINAL is timeline context, not an automatic model input. Reports video segments that still need materialization.",
+    inputSchema: z.object({ canvas_id: z.string().min(1), node_id: z.string().min(1), clip_id: z.string().min(1).optional() }).strict(),
     annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false },
-  }, ({ canvas_id, node_id }) => safeTool(
-    () => inspectMcpCanvasNodeInputs(principal, { projectId: canvas_id, nodeId: node_id }),
+  }, ({ canvas_id, node_id, clip_id }) => safeTool(
+    () => inspectMcpCanvasNodeInputs(principal, { projectId: canvas_id, nodeId: node_id, clipId: clip_id }),
     (inputs) => ({ inputs }),
   ));
 
@@ -592,7 +592,7 @@ export function createScenelithMcpServer(principal: McpPrincipal, origin: string
 
     if (principal.libraryAccess) server.registerTool("detach_canvas_reference", {
       title: "Detach Library reference",
-      description: "Detach one directly attached Library or identity reference from a generator, Assistant, or exact Video Master scene. Visible node-to-node connections remain removable through patch_canvas.remove_edge.",
+      description: "Detach an asset from explicit attachments and matching canvas connections. Pass clip_id to scope the change to one Video Master scene. ORIGINAL media and generated outputs are preserved; disconnected inputs never reconnect automatically.",
       inputSchema: z.object({ canvas_id: z.string().min(1), expected_revision: z.number().int().nonnegative(), node_id: z.string().min(1), clip_id: z.string().min(1).max(200).optional(), asset_id: z.string().min(1), input_role: z.enum(["reference-image", "start-frame", "end-frame", "motion-video", "reference-video", "reference-audio"]).optional() }).strict(),
       annotations: { readOnlyHint: false, destructiveHint: true, idempotentHint: true, openWorldHint: false },
     }, ({ canvas_id, expected_revision, node_id, clip_id, asset_id, input_role }) => safeTool(
@@ -645,16 +645,16 @@ export function createScenelithMcpServer(principal: McpPrincipal, origin: string
 
     server.registerTool("configure_video_master_scene", {
       title: "Configure Video Master scene",
-      description: "Configure one Video Master scene's order, role, prompt, video model, output ratio mode, resolution, generation duration and audio using the live provider catalogue.",
+      description: "Configure one Video Master scene's order, role, prompt, video model, output ratio mode, resolution, generation duration and audio using the live provider catalogue. Incompatible inputs are rejected unless disconnect_incompatible_references is explicitly true; never set it without the user choosing to disconnect. ORIGINAL and generated outputs are preserved.",
       inputSchema: z.object({
         canvas_id: z.string().min(1), expected_revision: z.number().int().nonnegative(), node_id: z.string().min(1), clip_id: z.string().min(1),
         title: z.string().trim().min(1).max(160).optional(), role: z.enum(["hook", "scene", "cta"]).optional(), prompt: z.string().max(30_000).optional(),
         model_id: z.string().min(1).max(120).optional(), aspect_ratio: z.string().min(1).max(20).optional(), aspect_ratio_mode: z.enum(["original", "custom"]).optional(),
-        resolution: z.string().min(1).max(20).optional(), duration: z.number().finite().min(.1).max(30).optional(), generate_audio: z.boolean().optional(), sequence_index: z.number().int().min(0).max(500).optional(),
+        resolution: z.string().min(1).max(20).optional(), duration: z.number().finite().min(.1).max(30).optional(), generate_audio: z.boolean().optional(), sequence_index: z.number().int().min(0).max(500).optional(), disconnect_incompatible_references: z.boolean().optional(),
       }).strict(),
       annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: false },
-    }, ({ canvas_id, expected_revision, node_id, clip_id, title, role, prompt, model_id, aspect_ratio, aspect_ratio_mode, resolution, duration, generate_audio, sequence_index }) => safeTool(
-      () => configureMcpVideoMasterClip(principal, { projectId: canvas_id, expectedRevision: expected_revision, nodeId: node_id, clipId: clip_id, title, role, prompt, modelId: model_id, aspectRatio: aspect_ratio, aspectRatioMode: aspect_ratio_mode, resolution, duration, generateAudio: generate_audio, sequenceIndex: sequence_index }),
+    }, ({ canvas_id, expected_revision, node_id, clip_id, title, role, prompt, model_id, aspect_ratio, aspect_ratio_mode, resolution, duration, generate_audio, sequence_index, disconnect_incompatible_references }) => safeTool(
+      () => configureMcpVideoMasterClip(principal, { projectId: canvas_id, expectedRevision: expected_revision, nodeId: node_id, clipId: clip_id, title, role, prompt, modelId: model_id, aspectRatio: aspect_ratio, aspectRatioMode: aspect_ratio_mode, resolution, duration, generateAudio: generate_audio, sequenceIndex: sequence_index, disconnectIncompatibleReferences: disconnect_incompatible_references }),
       (canvas) => ({ canvas }),
     ));
 

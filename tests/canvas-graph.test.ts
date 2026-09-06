@@ -393,3 +393,14 @@ test("duplicate selection offsets nodes, preserves internal edges, and drops aut
   assert.equal(duplicated.nodes[1].data.automationSourceNodeId, undefined);
   assert.equal(duplicated.nodes[1].data.automationSlideIndex, undefined);
 });
+
+
+test("legacy Master handles retain scene and input semantics without prepared media", () => {
+  const nodes = [node("source", "source", { mediaType: "video" }), node("master", "videoMaster")];
+  const edges: FrameEdge[] = [{ id: "legacy", source: "source", sourceHandle: "segment-output:scene-a", target: "master", targetHandle: "master:clip-a:motion-video-input" }];
+  const [normalized] = normalizeEdgePorts(edges, nodes);
+  assert.equal(normalized.data?.masterClipId, "clip-a");
+  assert.equal(normalized.data?.inputRole, "motion-video");
+  assert.equal(normalized.data?.sourceSegmentId, "scene-a");
+  assert.deepEqual(normalizeEdgePorts([normalized], nodes), [normalized]);
+});

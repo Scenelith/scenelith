@@ -5,6 +5,7 @@
 import { assignCanvasNodeNumbers } from "../../collaboration/node-numbers.mjs";
 import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState, type CSSProperties, type Dispatch, type SetStateAction } from "react";
 import dynamic from "next/dynamic";
+import { MasterModelSwitchDialog } from "./MasterModelSwitchDialog";
 import {
   BaseEdge,
   Controls,
@@ -76,7 +77,7 @@ import { editReferenceMentionToken, referenceMentionToken } from "@/lib/referenc
 import { MAX_GENERATION_BATCH, settleWithConcurrency } from "@/lib/generation-queue";
 import { DEFAULT_ASSISTANT_MODEL_ID } from "@/lib/assistant-models";
 import { duplicateGraphSelection, generatorInputCapacity, generatorSourceAssetIds, normalizeEdgePorts, selectGraphNode, stableGraphEdges, stableGraphNodes, upsertGraphEdge } from "@/lib/canvas-graph";
-import { assetIdFromAssetUrl, hydrateVideoMasterSourceClips, masterClipOriginalReference, nearestVideoMasterRatio, resolveVideoMasterSourceTarget, shouldIncludeAutomaticMasterVideoReference, videoMasterClipExportMedia, videoMasterClipPlaybackMedia, videoMasterClipThumbnail, videoMasterGenerationDuration, videoMasterModelsForScene, videoMasterProviderAspectRatio, videoMasterSourceRatio, videoMasterTimelineDuration, type VideoMasterDownloadLane } from "@/lib/video-master";
+import { assetIdFromAssetUrl, hydrateVideoMasterSourceClips, nearestVideoMasterRatio, resolveVideoMasterSourceTarget, unsupportedMasterReferenceRoles, videoMasterClipExportMedia, videoMasterClipPlaybackMedia, videoMasterClipThumbnail, videoMasterGenerationDuration, videoMasterModelsForScene, videoMasterProviderAspectRatio, videoMasterSourceRatio, videoMasterTimelineDuration, type VideoMasterDownloadLane } from "@/lib/video-master";
 import { reconcileGeneratorReferenceChanges } from "@/lib/generator-reference-modes";
 import { stopAllVideoPlayback } from "@/lib/video-playback-owner";
 import { findTikTokSlideshowSources, type TikTokSlideshowSource } from "@/lib/tiktok-slideshow-sources";
@@ -520,6 +521,7 @@ function CanvasWorkspace({ initialProject, projects: initialProjects, initialWor
   const [projectSwitchingId, setProjectSwitchingId] = useState<string | null>(null);
   const [projectHydratingId, setProjectHydratingId] = useState<string | null>(initialProject.id);
   const [workspaceLibraryOpen, setWorkspaceLibraryOpen] = useState(false);
+  const [masterModelSwitch, setMasterModelSwitch] = useState<{ nodeId: string; clipId: string; modelId: string; label: string; roles: string[]; inputs: string[]; signature: string } | null>(null);
   const [newWorkspaceFormOpen, setNewWorkspaceFormOpen] = useState(false);
   const [hookLibraryOpen, setHookLibraryOpen] = useState(false);
   const [productPanelFocus, setProductPanelFocus] = useState<{ kind: ProductPanelKind; id?: string; nonce: number } | null>(null);
@@ -1886,17 +1888,27 @@ function CanvasWorkspace({ initialProject, projects: initialProjects, initialWor
     setNotice(additions.length === 1 ? "Video added to the sequence" : `${additions.length} videos added to the sequence`);
   }
 
-  function updateMasterClipModel(nodeId: string, clipId: string, modelId: string) {
+  function updateMasterClipModel(nodeId: string, clipId: string, modelId: string, confirmedSignature?: string) {
     const master = nodesRef.current.find((node) => node.id === nodeId && node.data.kind === "videoMaster");
     const model = models.find((item) => item.id === modelId && item.mediaType === "video");
     const clip = master?.data.videoMasterClips?.find((item) => item.id === clipId);
     if (!master || !model || !clip) return;
+    const references = nodeReferencePreviews(nodeId, clipId);
+    const unsupported = unsupportedMasterReferenceRoles(model, references);
+    const incompatible = references.filter((reference) => unsupported.includes(reference.role));
+    const signature = JSON.stringify(incompatible.map((reference) => [reference.edgeId, reference.assetId, reference.role, reference.url]).sort());
+    if (unsupported.length && confirmedSignature !== signature) {
+      setMasterModelSwitch({ nodeId, clipId, modelId, label: model.label, roles: unsupported, signature,
+        inputs: incompatible.map((reference) => `${reference.title} · ${reference.role.replaceAll("-", " ")}`) });
+      return;
+    }
+    pushHistory();
     const nextDuration = videoMasterGenerationDuration(model, clip);
     const supportedRatios = model.ratios?.filter((ratio) => ratio !== "source") || [];
     const nextAspectRatio = clip.aspectRatioMode !== "original" && clip.aspectRatio && supportedRatios.includes(clip.aspectRatio)
       ? clip.aspectRatio
       : nearestVideoMasterRatio(videoMasterSourceRatio(clip, Number(master.data.videoAspectRatio)), supportedRatios);
-    const hasVideoInput = nodeReferencePreviews(nodeId, clipId).some((reference) => reference.role === "reference-video" || reference.role === "motion-video");
+    const hasVideoInput = references.some((reference) => !unsupported.includes(reference.role || "reference-image") && (reference.role === "reference-video" || reference.role === "motion-video"));
     const resolutions = generatorResolutionsFor(model, hasVideoInput);
     const nextResolution = clip.resolution && resolutions.includes(clip.resolution)
       ? clip.resolution
@@ -1919,31 +1931,7 @@ function CanvasWorkspace({ initialProject, projects: initialProjects, initialWor
         } : item),
       },
     });
-    let nextEdges = edgesRef.current.filter((edge) => edge.target !== nodeId || edge.data?.masterClipId !== clipId || supportedRoles.has(String(edge.data?.inputRole || "")));
-    if (supportedRoles.has("reference-video") && clip.sourceNodeId && clip.sourceSegmentId && !nextEdges.some((edge) => edge.target === nodeId && edge.data?.masterClipId === clipId && edge.data?.inputRole === "reference-video")) {
-      const sourceSegment = nodesRef.current.find((node) => node.id === clip.sourceNodeId)?.data.videoSegments?.find((segment) => segment.id === clip.sourceSegmentId);
-      if (sourceSegment) nextEdges = upsertGraphEdge(nextEdges, nextNodes, {
-        id: uid("edge"),
-        source: clip.sourceNodeId,
-        sourceHandle: `segment-output:${clip.sourceSegmentId}`,
-        target: nodeId,
-        targetHandle: `master:${clip.id}:reference-video-input`,
-        animated: true,
-        hidden: true,
-        data: {
-          portType: "video",
-          inputRole: "reference-video",
-          masterClipId: clip.id,
-          sourceSegmentId: sourceSegment.id,
-          sourceSegmentStart: sourceSegment.start,
-          sourceSegmentEnd: sourceSegment.end,
-          sourceSegmentLabel: sourceSegment.label,
-          sourceSegmentThumbnailUrl: sourceSegment.thumbnailUrl,
-          clipAssetId: sourceSegment.clipAssetId,
-          clipUrl: sourceSegment.clipUrl,
-        },
-      }, { replaceTargetInput: false });
-    }
+    const nextEdges = normalizeEdgePorts(edgesRef.current, nodesRef.current).filter((edge) => edge.target !== nodeId || edge.data?.masterClipId !== clipId || !unsupported.includes(String(edge.data?.inputRole || "")));
     nodesRef.current = nextNodes;
     edgesRef.current = nextEdges;
     setNodes(nextNodes);
@@ -1988,6 +1976,8 @@ function CanvasWorkspace({ initialProject, projects: initialProjects, initialWor
       setNotice("No video model is available");
       return;
     }
+    const unsupported = unsupportedMasterReferenceRoles(model, sceneReferences);
+    if (unsupported.length) { setNotice(`Disconnect unsupported inputs before running ${model.label}: ${unsupported.join(", ")}`); return; }
     if (preparingMasterClipIdsRef.current[nodeId] || activeGenerationNodeIds.includes(nodeId)) return;
     preparingMasterClipIdsRef.current = { ...preparingMasterClipIdsRef.current, [nodeId]: clipId };
     setPreparingMasterClipIds(preparingMasterClipIdsRef.current);
@@ -2020,7 +2010,7 @@ function CanvasWorkspace({ initialProject, projects: initialProjects, initialWor
       ? clip.aspectRatio
       : nearestVideoMasterRatio(sourceRatio, supportedRatios);
     const providerAspectRatio = videoMasterProviderAspectRatio(model.id, outputAspectRatio, sceneReferences);
-    const hasVideoInput = sceneReferences.some((reference) => reference.role === "reference-video" || reference.role === "motion-video") || Boolean(generationSourceAsset);
+    const hasVideoInput = sceneReferences.some((reference) => reference.role === "reference-video" || reference.role === "motion-video");
     const resolutions = generatorResolutionsFor(model, hasVideoInput);
     const resolution = clip.resolution && resolutions.includes(clip.resolution)
       ? clip.resolution
@@ -2056,11 +2046,7 @@ function CanvasWorkspace({ initialProject, projects: initialProjects, initialWor
       },
     };
     const nextNodes = nodesRef.current.map((node) => node.id === nodeId ? prepared : node);
-    const supportedInputRoles = new Set((model.inputPorts || []).map((port) => port.id));
-    let nextEdges = edgesRef.current.filter((edge) => edge.target !== nodeId || !edge.data?.masterClipId || edge.data.masterClipId !== clip.id || supportedInputRoles.has(String(edge.data?.inputRole || "")));
-    const explicitSceneRoles = nextEdges
-      .filter((edge) => edge.target === nodeId && edge.data?.masterClipId === clip.id)
-      .map((edge) => edge.data?.inputRole);
+    let nextEdges = edgesRef.current;
     const automaticSourceEdgeIndex = nextEdges.findIndex((edge) => edge.target === nodeId
       && edge.source === clip.sourceNodeId
       && edge.data?.masterClipId === clip.id
@@ -2079,36 +2065,6 @@ function CanvasWorkspace({ initialProject, projects: initialProjects, initialWor
           generationClipDuration: generationSourceAsset?.durationSeconds || Math.max(.1, sourceSegment.end - sourceSegment.start),
         },
       });
-    } else if (supportedInputRoles.has("reference-video")
-      && shouldIncludeAutomaticMasterVideoReference(model.id, explicitSceneRoles)
-      && clip.sourceNodeId
-      && clip.sourceSegmentId
-      && sourceSegment
-      && !nextEdges.some((edge) => edge.target === nodeId && edge.data?.masterClipId === clip.id && edge.data?.inputRole === "reference-video")) {
-      nextEdges = upsertGraphEdge(nextEdges, nextNodes, {
-        id: uid("edge"),
-        source: clip.sourceNodeId,
-        sourceHandle: `segment-output:${clip.sourceSegmentId}`,
-        target: nodeId,
-        targetHandle: `master:${clip.id}:reference-video-input`,
-        animated: true,
-        hidden: true,
-        data: {
-          portType: "video",
-          inputRole: "reference-video",
-          masterClipId: clip.id,
-          sourceSegmentId: sourceSegment.id,
-          sourceSegmentStart: sourceSegment.start,
-          sourceSegmentEnd: sourceSegment.end,
-          sourceSegmentLabel: sourceSegment.label,
-          sourceSegmentThumbnailUrl: sourceSegment.thumbnailUrl,
-          clipAssetId: sourceSegment.clipAssetId,
-          clipUrl: sourceSegment.clipUrl,
-          generationClipAssetId: generationSourceAsset?.id || sourceSegment.clipAssetId,
-          generationClipUrl: generationSourceAsset?.url || sourceSegment.clipUrl,
-          generationClipDuration: generationSourceAsset?.durationSeconds || Math.max(.1, sourceSegment.end - sourceSegment.start),
-        },
-      }, { replaceTargetInput: false });
     }
     nodesRef.current = nextNodes;
     edgesRef.current = nextEdges;
@@ -3273,7 +3229,6 @@ function CanvasWorkspace({ initialProject, projects: initialProjects, initialWor
     const masterClip = masterClipId
       ? generatorNode?.data.videoMasterClips?.find((clip) => clip.id === masterClipId)
       : undefined;
-    const clipModelId = masterClip?.modelId;
     const inputEdges = normalizeEdgePorts(edgesRef.current, nodesRef.current).filter((edge) => edge.target === nodeId
       && edge.data?.portType !== "text"
       && edge.targetHandle !== "text-input"
@@ -3301,8 +3256,8 @@ function CanvasWorkspace({ initialProject, projects: initialProjects, initialWor
       const url = String(ownsSelectedMasterSource
         ? sourceSegment?.clipUrl || masterClip?.sourceClipUrl || sourceMediaUrl
         : sourceSegment?.clipUrl || edge.data?.clipUrl || sourceMediaUrl);
-      const role = canonicalGeneratorRole(clipModelId || generatorNode?.data.modelId, edge.data?.inputRole || edge.targetHandle?.replace(/-input$/, ""));
-      return url ? [{
+      const role = canonicalGeneratorRole(masterClipId ? undefined : generatorNode?.data.modelId, edge.data?.inputRole || edge.targetHandle?.replace(/-input$/, ""));
+      return url || masterClipId ? [{
         id: authoritativeSegmentId ? `${node.id}:${authoritativeSegmentId}` : node.id,
         edgeId: edge.id,
         url,
@@ -3334,33 +3289,10 @@ function CanvasWorkspace({ initialProject, projects: initialProjects, initialWor
       removable: true,
       personaId: reference.personaId,
       variant: reference.variant,
-      role: canonicalGeneratorRole(clipModelId || generatorNode?.data.modelId, reference.role || "reference-image"),
+      role: canonicalGeneratorRole(masterClipId ? undefined : generatorNode?.data.modelId, reference.role || "reference-image"),
       durationSeconds: reference.durationSeconds,
     }));
-    const originalReference = masterClipOriginalReference(masterClip);
-    const masterSourceNode = masterClip?.sourceNodeId
-      ? nodesRef.current.find((node) => node.id === masterClip.sourceNodeId)
-      : undefined;
-    const masterSourceSegment = masterClip?.sourceSegmentId
-      ? masterSourceNode?.data.videoSegments?.find((segment) => segment.id === masterClip.sourceSegmentId)
-      : undefined;
-    const exactOriginalReference = originalReference ? {
-      ...originalReference,
-      url: String(masterSourceSegment?.clipUrl || originalReference.url),
-      assetId: masterSourceSegment?.clipAssetId || originalReference.assetId,
-      thumbnailUrl: videoMasterClipThumbnail(masterClip, "original"),
-      aspectRatio: Number(masterClip?.sourceAspectRatio || masterSourceNode?.data.videoAspectRatio || 0) || undefined,
-    } : undefined;
-    const explicitRoles = [...connected, ...attached].map((reference) => reference.role);
-    const original = exactOriginalReference && shouldIncludeAutomaticMasterVideoReference(clipModelId || generatorNode?.data.modelId, explicitRoles) ? [{
-      ...exactOriginalReference,
-      edgeId: undefined,
-      sourceNodeId: undefined,
-      removable: true,
-      personaId: undefined,
-      variant: undefined,
-    }] : [];
-    const references = [...original, ...connected, ...attached];
+    const references = [...connected, ...attached];
     return references.filter((reference, index, references) => references.findIndex((candidate) => {
       const candidateIdentity = candidate.edgeId || candidate.assetId || candidate.sourceNodeId || candidate.id;
       const referenceIdentity = reference.edgeId || reference.assetId || reference.sourceNodeId || reference.id;
@@ -3412,8 +3344,7 @@ function CanvasWorkspace({ initialProject, projects: initialProjects, initialWor
     if (!generatorNode) return [];
     const masterClipId = generatorNode.data.kind === "videoMaster" ? explicitMasterClipId || generatorNode.data.videoMasterGeneratingClipId : undefined;
     const masterClip = masterClipId ? generatorNode.data.videoMasterClips?.find((clip) => clip.id === masterClipId) : undefined;
-    const masterModelId = masterClip?.modelId;
-    const connected = edgesRef.current.filter((edge) => edge.target === nodeId
+    const connected = normalizeEdgePorts(edgesRef.current, nodesRef.current).filter((edge) => edge.target === nodeId
       && edge.data?.portType !== "text"
       && edge.targetHandle !== "text-input"
       && edge.targetHandle !== "video-master-input"
@@ -3431,7 +3362,7 @@ function CanvasWorkspace({ initialProject, projects: initialProjects, initialWor
           return assetId ? [{
             assetId,
             title: edge.data.sourceSegmentLabel || "Video segment",
-            role: canonicalGeneratorRole(masterModelId || generatorNode.data.modelId, edge.data?.inputRole || edge.targetHandle?.replace(/-input$/, "")),
+            role: canonicalGeneratorRole(masterClipId ? undefined : generatorNode.data.modelId, edge.data?.inputRole || edge.targetHandle?.replace(/-input$/, "")),
             durationSeconds: preferPreparedGenerationMedia && isSceneSource && edge.data.generationClipDuration
               ? edge.data.generationClipDuration
               : Math.max(.1, Number(edge.data.sourceSegmentEnd) - Number(edge.data.sourceSegmentStart)),
@@ -3439,18 +3370,13 @@ function CanvasWorkspace({ initialProject, projects: initialProjects, initialWor
           }] : [];
         }
         return generatorSourceAssetIds(node)
-          .map((assetId) => ({ assetId, title: node.data.title, role: canonicalGeneratorRole(masterModelId || generatorNode.data.modelId, edge.data?.inputRole || edge.targetHandle?.replace(/-input$/, "")), durationSeconds: node.data.mediaType === "video" ? Number(node.data.videoDurationSeconds || node.data.duration || 0) || undefined : undefined, isSceneSource: false }));
+          .map((assetId) => ({ assetId, title: node.data.title, role: canonicalGeneratorRole(masterClipId ? undefined : generatorNode.data.modelId, edge.data?.inputRole || edge.targetHandle?.replace(/-input$/, "")), durationSeconds: node.data.mediaType === "video" ? Number(node.data.videoDurationSeconds || node.data.duration || 0) || undefined : undefined, isSceneSource: false }));
       });
     const masterAttached = masterClipId
       ? generatorNode.data.videoMasterClips?.find((clip) => clip.id === masterClipId)?.attachedReferences || []
       : generatorNode.data.attachedReferences || [];
-    const attached = masterAttached.map((reference) => ({ assetId: reference.assetId, title: reference.title, role: canonicalGeneratorRole(masterModelId || generatorNode.data.modelId, reference.role || "reference-image"), durationSeconds: reference.durationSeconds, isSceneSource: false }));
-    const originalReference = masterClipOriginalReference(masterClip);
-    const explicitRoles = [...connected, ...attached].map((reference) => reference.role);
-    const original = originalReference?.assetId && shouldIncludeAutomaticMasterVideoReference(masterModelId || generatorNode.data.modelId, explicitRoles)
-      ? [{ assetId: originalReference.assetId, title: originalReference.title, role: originalReference.role, durationSeconds: originalReference.durationSeconds, isSceneSource: true }]
-      : [];
-    return [...original, ...connected, ...attached]
+    const attached = masterAttached.map((reference) => ({ assetId: reference.assetId, title: reference.title, role: canonicalGeneratorRole(masterClipId ? undefined : generatorNode.data.modelId, reference.role || "reference-image"), durationSeconds: reference.durationSeconds, isSceneSource: false }));
+    return [...connected, ...attached]
       .filter((entry, index, entries) => entries.findIndex((candidate) => candidate.assetId === entry.assetId && candidate.role === entry.role) === index)
       .map((entry, index) => ({ ...entry, token: referenceMentionToken(entry.title, index) }));
   }
@@ -3874,6 +3800,12 @@ function CanvasWorkspace({ initialProject, projects: initialProjects, initialWor
     } catch (error) {
       setNotice(error instanceof Error ? error.message : "Could not prepare video references");
       return;
+    }
+    if (generatorNode.data.kind === "videoMaster" && generatorNode.data.videoMasterGeneratingClipId) {
+      const liveReferences = nodeReferencePreviews(generatorNode.id, generatorNode.data.videoMasterGeneratingClipId);
+      const unsupported = unsupportedMasterReferenceRoles(model, liveReferences);
+      if (unsupported.length) { setNotice(`Disconnect unsupported inputs before running: ${unsupported.join(", ")}`); return; }
+      if (liveReferences.some((reference) => !reference.assetId)) { setNotice("A connected scene input has no ready asset. Prepare it or disconnect it before generation."); return; }
     }
     const dedupedReferenceEntries = generationReferenceEntries(generatorNode.id, undefined, true);
     const masterSourceTarget = generatorNode.data.kind === "videoMaster" && generatorNode.data.videoMasterGeneratingClipId
@@ -4898,6 +4830,7 @@ function CanvasWorkspace({ initialProject, projects: initialProjects, initialWor
         onDisconnectMasterReference={(reference) => {
           if (reference.sourceNodeId || reference.edgeId) disconnectReference(previewNode.id, String(reference.sourceNodeId || ""), reference.edgeId);
         }}
+        onChangeMasterModel={(clipId, modelId) => updateMasterClipModel(previewNode.id, clipId, modelId)}
         onGenerateMasterClip={(clipId) => void generateMasterClip(previewNode.id, clipId)}
         onDownloadMaster={(lane, scope) => downloadMasterMedia(previewNode.id, lane, scope)}
         onDeleteNode={() => deleteCanvasNode(previewNode.id)}
@@ -5308,6 +5241,9 @@ function CanvasWorkspace({ initialProject, projects: initialProjects, initialWor
           </form>
         </div>
       )}
+      {masterModelSwitch && <MasterModelSwitchDialog choice={masterModelSwitch}
+        onCancel={() => setMasterModelSwitch(null)}
+        onConfirm={() => { const choice = masterModelSwitch; setMasterModelSwitch(null); updateMasterClipModel(choice.nodeId, choice.clipId, choice.modelId, choice.signature); }} />}
       {workspace.memberRole === "owner" && newWorkspaceFormOpen && (
         <div className="modal-backdrop" onMouseDown={(event) => { if (event.target === event.currentTarget) setNewWorkspaceFormOpen(false); }}>
           <form className="modal project-create-modal" onSubmit={createWorkspace}>

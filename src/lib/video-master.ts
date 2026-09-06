@@ -1,5 +1,4 @@
 import type { FrameNode, VideoMasterClip } from "./types";
-import { incompatibleReferenceRoles } from "./generator-reference-modes";
 import { editorThumbnailUrl } from "./editor-media";
 
 type VideoReferenceModel = {
@@ -74,15 +73,17 @@ export function useVideoMasterGeneratedOutput(
 const videoReferenceRoles = new Set(["reference-video", "motion-video"]);
 const frameReferenceRoles = new Set(["start-frame", "end-frame"]);
 
-/**
- * Some providers expose both frame animation and multimodal reference inputs
- * in one model, but require callers to choose one mode per request. ORIGINAL
- * is implicit in Video Master, so an explicit frame connection must win.
- */
-export function shouldIncludeAutomaticMasterVideoReference(modelId: string | undefined, roles: Array<string | undefined>) {
-  if (roles.some((role) => videoReferenceRoles.has(String(role || "")))) return false;
-  if (roles.some((role) => incompatibleReferenceRoles(modelId, role).includes("reference-video"))) return false;
-  return true;
+/** Input compatibility is based on explicit connections, never the ORIGINAL lane. */
+export function unsupportedMasterReferenceRoles(model: VideoReferenceModel | undefined, references: VideoReference[]) {
+  const supported = new Set(model?.inputPorts?.map((port) => port.id) || []);
+  return [...new Set(references.map((reference) => reference.role || "reference-image").filter((role) => !supported.has(role)))];
+}
+
+export function masterGenerationInputSummary(references: VideoReference[]) {
+  const videos = references.filter((reference) => videoReferenceRoles.has(reference.role || "")).length;
+  const audio = references.filter((reference) => reference.role === "reference-audio").length;
+  const images = references.length - videos - audio;
+  return [images ? `${images} image${images === 1 ? "" : "s"}` : "No images", videos ? `${videos} video reference${videos === 1 ? "" : "s"}` : "No video reference", ...(audio ? [`${audio} audio reference${audio === 1 ? "" : "s"}`] : [])].join(" · ");
 }
 
 export function videoMasterProviderAspectRatio(modelId: string | undefined, requestedRatio: string, references: VideoReference[]) {
@@ -94,16 +95,12 @@ export function modelSupportsVideoReference(model: VideoReferenceModel | undefin
   return Boolean(model?.mediaType === "video" && model.inputPorts?.some((port) => port.kind === "video" || videoReferenceRoles.has(port.id)));
 }
 
-export function masterClipHasVideoReference(clip: VideoMasterClip | undefined, references: VideoReference[] = []) {
-  const hasOriginalLaneVideo = Boolean(clip?.origin !== "upload" && clip?.sourceUrl);
-  return hasOriginalLaneVideo || references.some((reference) => videoReferenceRoles.has(String(reference.role || "")));
+export function masterClipHasVideoReference(_clip: VideoMasterClip | undefined, references: VideoReference[] = []) {
+  return references.some((reference) => videoReferenceRoles.has(String(reference.role || "")));
 }
 
-export function videoMasterModelsForScene<T extends VideoReferenceModel>(models: T[], clip: VideoMasterClip | undefined, references: VideoReference[] = []) {
-  const videoModels = models.filter((model) => model.mediaType === "video");
-  return masterClipHasVideoReference(clip, references)
-    ? videoModels.filter(modelSupportsVideoReference)
-    : videoModels;
+export function videoMasterModelsForScene<T extends VideoReferenceModel>(models: T[], _clip: VideoMasterClip | undefined, _references?: VideoReference[]) {
+  return models.filter((model) => model.mediaType === "video");
 }
 
 export function videoMasterTimelineDuration(clip: VideoMasterClip | undefined) {
