@@ -9,7 +9,10 @@ import {
   userCanAccessProject,
   userCanAccessWorkspace,
   workspaceIdForProject,
+  workspaceRoleForUser,
 } from "@/lib/postgres-db";
+import { automationCapabilitiesForWorkspace } from "@/lib/automation-workflows/permissions";
+import { availableMcpConsentScopes, type McpConsentWorkspace } from "@/lib/mcp/consent-policy";
 
 export const mcpScopes = [
   "mcp:read",
@@ -231,6 +234,15 @@ async function oauthClient(clientId: string) {
   return await db.prepare("SELECT * FROM mcp_oauth_clients WHERE client_id = ?").get(clientId) as OAuthClientRow | undefined;
 }
 
+export async function mcpConsentWorkspaces(userId: string): Promise<McpConsentWorkspace[]> {
+  const workspaces = (await listAccessibleWorkspaceRows(userId)).map(rowToWorkspace);
+  return Promise.all(workspaces.map(async (workspace) => ({
+    id: workspace.id, name: workspace.name,
+    role: await workspaceRoleForUser(userId, workspace.id),
+    automation: await automationCapabilitiesForWorkspace(userId, workspace.id),
+  })));
+}
+
 export async function createMcpOAuthConsentRequest(input: {
   userId: string;
   clientId: string;
@@ -258,7 +270,7 @@ export async function createMcpOAuthConsentRequest(input: {
     (id, user_id, client_id, redirect_uri, resource, state, code_challenge, requested_scopes_json, created_at, expires_at)
     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`)
     .run(id, input.userId, input.clientId, input.redirectUri, input.resource, input.state || null, input.codeChallenge, JSON.stringify(requested), now.toISOString(), new Date(now.getTime() + 10 * 60 * 1000).toISOString());
-  const workspaces = (await listAccessibleWorkspaceRows(input.userId)).map(rowToWorkspace);
+  const workspaces = await mcpConsentWorkspaces(input.userId);
   const canvases = (await listAccessibleProjectRows(input.userId)).map(rowToProjectListItem);
   return {
     id,
@@ -307,10 +319,7 @@ export async function decideMcpOAuthConsent(input: {
       return authorizationRedirect(row, { error: "access_denied", error_description: "The user denied access" });
     }
     const requested = normalizedOAuthScopes(row.requested_scopes_json);
-    const granted = oauthScopes.filter((scope) => scope === "offline_access"
-      ? requested.includes(scope)
-      : input.scopes.includes(scope as McpScope) && requested.includes(scope));
-    if (!granted.includes("mcp:read")) throw new Error("Read access is required for an MCP connection");
+    if (!input.scopes.includes("mcp:read")) throw new Error("Read access is required for an MCP connection");
     if (input.workspaceId && !await userCanAccessWorkspace(input.userId, input.workspaceId)) throw new Error("Workspace not found");
     const projectIds = input.restrictToProjects ? [...new Set((input.projectIds || []).map((id) => id.trim()).filter(Boolean))] : [];
     if (input.restrictToProjects && !projectIds.length) throw new Error("Choose at least one canvas or allow all canvases");
@@ -319,11 +328,34 @@ export async function decideMcpOAuthConsent(input: {
       if (!await userCanAccessProject(input.userId, projectId)) throw new Error("One of the selected canvases is unavailable");
       if (input.workspaceId && await workspaceIdForProject(projectId) !== input.workspaceId) throw new Error("A selected canvas is outside the chosen workspace");
     }
+    const projectWorkspaces = new Set(await Promise.all(projectIds.map(workspaceIdForProject)));
+    const workspaces = (await mcpConsentWorkspaces(input.userId)).filter((workspace) =>
+      (!input.workspaceId || input.workspaceId === workspace.id) && (!input.restrictToProjects || projectWorkspaces.has(workspace.id)));
+    const allowedScopes = availableMcpConsentScopes(input.scopes, workspaces)
+      .filter((scope) => input.libraryAccess || !["library:write", "identity:write"].includes(scope));
+    const granted = oauthScopes.filter((scope) => scope === "offline_access"
+      ? requested.includes(scope)
+      : allowedScopes.includes(scope as McpScope) && requested.includes(scope));
     const code = `scn_code_${randomToken(32)}`;
     await db.prepare(`UPDATE mcp_oauth_authorizations SET granted_scopes_json = ?, workspace_id = ?, project_ids_json = ?, library_access = ?, code_hash = ?, decided_at = ?, code_expires_at = ?
       WHERE id = ?`).run(JSON.stringify(granted), input.workspaceId || null, projectIds.length ? JSON.stringify(projectIds) : null, input.libraryAccess,
         hashOpaqueToken(code), now.toISOString(), new Date(now.getTime() + 5 * 60 * 1000).toISOString(), row.id);
     return authorizationRedirect(row, { code });
+  })();
+}
+
+export async function switchMcpOAuthAccount(userId: string, requestId: string) {
+  return await db.transaction(async () => {
+    const row = await db.prepare("SELECT * FROM mcp_oauth_authorizations WHERE id = ? FOR UPDATE").get(requestId) as AuthorizationRow | undefined;
+    if (!row || row.user_id !== userId || row.decided_at || Date.parse(row.expires_at) <= Date.now()) {
+      throw new Error("This connection request expired. Return to your agent and connect again.");
+    }
+    const params = new URLSearchParams({ client_id: row.client_id, redirect_uri: row.redirect_uri, response_type: "code",
+      code_challenge: row.code_challenge, code_challenge_method: "S256", scope: jsonStrings(row.requested_scopes_json).join(" "), resource: row.resource });
+    if (row.state) params.set("state", row.state);
+    // The old account must not approve this request after switching accounts.
+    await db.prepare("DELETE FROM mcp_oauth_authorizations WHERE id = ?").run(row.id);
+    return `/login?next=${encodeURIComponent(`/oauth/authorize?${params}`)}`;
   })();
 }
 
