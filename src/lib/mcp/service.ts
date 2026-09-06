@@ -1,3 +1,4 @@
+import { videoMasterSceneDirectory, videoMasterSceneRevision } from "./video-master-scenes";
 import { assignCanvasNodeNumbers, canvasNodeLabel, canvasNodeType } from "../../../collaboration/node-numbers.mjs";
 import {
   createAssetThumbnailFromStorage,
@@ -180,7 +181,7 @@ export async function getMcpCanvas(principal: McpPrincipal, projectId: string) {
     .get(projectId) as Record<string, unknown> | undefined;
   if (!row) throw Object.assign(new Error("Canvas not found"), { status: 404 });
   const canvas = await rowToProject(row, await readMcpCanvasSnapshot(projectId));
-  return { ...canvas, nodeDirectory: canvas.graph.nodes.map((node) => ({ nodeId: node.id, type: canvasNodeType(node.data), number: node.data.nodeNumber, label: canvasNodeLabel(node.data), title: node.data.title })) };
+  return { ...canvas, videoMasterScenes: videoMasterSceneDirectory(canvas.graph), nodeDirectory: canvas.graph.nodes.map((node) => ({ nodeId: node.id, type: canvasNodeType(node.data), number: node.data.nodeNumber, label: canvasNodeLabel(node.data), title: node.data.title })) };
 }
 
 export async function downloadMcpCanvasNodeOutput(principal: McpPrincipal, input: { projectId: string; nodeId: string; outputIndex?: number }) {
@@ -716,7 +717,8 @@ function inspectVideoMasterClipInputsFromGraph(graph: ProjectGraph, nodeId: stri
     assetId: reference.assetId, title: reference.title, role: canonicalReferenceRole(reference.role, reference.role), purpose: reference.personaId ? "identity" : "upload", durationSeconds: reference.durationSeconds,
   }));
   const explicitRoles = [...connected, ...attached].map((reference) => reference.role);
-  const sourceAssetId = clip.sourceClipAssetId || (!clip.sourceSegmentId ? clip.sourceAssetId || assetIdFromAssetUrl(clip.sourceUrl) : undefined);
+  const sourceSegment = graph.nodes.find((candidate) => candidate.id === clip.sourceNodeId)?.data.videoSegments?.find((candidate) => candidate.id === clip.sourceSegmentId);
+  const sourceAssetId = sourceSegment?.clipAssetId || clip.sourceClipAssetId || (!clip.sourceSegmentId ? clip.sourceAssetId || assetIdFromAssetUrl(clip.sourceUrl) : undefined);
   const implicit = sourceAssetId && shouldIncludeAutomaticMasterVideoReference(clip.modelId, explicitRoles)
     ? [{ assetId: sourceAssetId, title: clip.title, role: "reference-video" as const, purpose: "canvas" as const, durationSeconds: Math.max(.1, clip.duration), sourceNodeId: clip.sourceNodeId, sourceSegmentId: clip.sourceSegmentId }]
     : [];
@@ -823,15 +825,51 @@ export async function composeMcpCanvasPrompt(principal: McpPrincipal, input: {
   return { ...result, ...persistence };
 }
 
+function assertMasterSceneRevision(graph: ProjectGraph, nodeId: string, clipId: string, expected: string) {
+  if (videoMasterSceneRevision(graph, nodeId, clipId) !== expected) throw Object.assign(new Error("The selected scene or its generation inputs changed. Read get_canvas again before generating."), { status: 409, code: "SCENE_REVISION_CONFLICT" });
+}
+
+async function prepareMcpMasterScene(principal: McpPrincipal, input: { projectId: string; nodeId: string; clipId: string }, expected: string) {
+  let current = await getMcpCanvas(principal, input.projectId);
+  assertMasterSceneRevision(current.graph, input.nodeId, input.clipId, expected);
+  const inspected = inspectVideoMasterClipInputsFromGraph(current.graph, input.nodeId, input.clipId);
+  const targets = [
+    ...(inspected.clip.sourceNodeId && inspected.clip.sourceSegmentId ? [{ sourceNodeId: inspected.clip.sourceNodeId, segmentId: inspected.clip.sourceSegmentId }] : []),
+    ...current.graph.edges.filter((edge) => edge.target === input.nodeId && (edge.data?.masterClipId === input.clipId || String(edge.targetHandle || "").startsWith(`master:${input.clipId}:`)) && edge.data?.sourceSegmentId)
+      .map((edge) => ({ sourceNodeId: edge.source, segmentId: String(edge.data?.sourceSegmentId) })),
+  ].filter((item, index, all) => all.findIndex((other) => item.sourceNodeId === other.sourceNodeId && item.segmentId === other.segmentId) === index);
+  for (const target of targets) {
+    for (let attempt = 0; ; attempt++) {
+      current = await getMcpCanvas(principal, input.projectId);
+      assertMasterSceneRevision(current.graph, input.nodeId, input.clipId, expected);
+      try {
+        const result = await materializeMcpCanvasVideoSegment(principal, { projectId: input.projectId, expectedRevision: current.revision, ...target });
+        if ("persisted" in result && !result.persisted) throw Object.assign(new Error(result.reason), { status: 409, code: "SCENE_REVISION_CONFLICT" });
+        break;
+      } catch (error) {
+        if ((error as { code?: string }).code !== "CANVAS_REVISION_CONFLICT" || attempt >= 4) throw error;
+      }
+    }
+  }
+  current = await getMcpCanvas(principal, input.projectId);
+  assertMasterSceneRevision(current.graph, input.nodeId, input.clipId, expected);
+  return current;
+}
+
 export async function runMcpCanvasGeneration(principal: McpPrincipal, input: {
   projectId: string;
   expectedRevision: number;
+  expectedSceneRevision?: string;
   nodeId: string;
   generationCount?: number;
   clipId?: string;
 }) {
-  const canvas = await getMcpCanvas(principal, input.projectId);
-  if (canvas.revision !== input.expectedRevision) throw Object.assign(new Error(`Canvas changed. Read it again and use revision ${canvas.revision}.`), { code: "CANVAS_REVISION_CONFLICT", status: 409, currentRevision: canvas.revision });
+  let canvas = await getMcpCanvas(principal, input.projectId);
+  if (input.expectedSceneRevision && !input.clipId) throw new Error("expected_scene_revision requires a Video Master clip_id");
+  if (input.clipId && input.expectedSceneRevision) assertMasterSceneRevision(canvas.graph, input.nodeId, input.clipId, input.expectedSceneRevision);
+  else if (canvas.revision !== input.expectedRevision) throw Object.assign(new Error(`Canvas changed. Read it again and use revision ${canvas.revision}.`), { code: "CANVAS_REVISION_CONFLICT", status: 409, currentRevision: canvas.revision });
+  const sceneRevision = input.clipId ? videoMasterSceneRevision(canvas.graph, input.nodeId, input.clipId) : undefined;
+  if (input.clipId) canvas = await prepareMcpMasterScene(principal, { ...input, clipId: input.clipId }, sceneRevision!);
   const inspected = input.clipId
     ? inspectVideoMasterClipInputsFromGraph(canvas.graph, input.nodeId, input.clipId)
     : inspectCanvasNodeInputsFromGraph(canvas.graph, input.nodeId);
@@ -888,6 +926,18 @@ export async function runMcpCanvasGeneration(principal: McpPrincipal, input: {
     : connectedPrompt || localPrompt;
   if (prompt.length < 2) throw new Error("Add a prompt or connect an Assistant output before generating");
   if (prompt.length > (model.maxPromptLength || 5_000)) throw new Error(`${model.label} accepts prompts up to ${(model.maxPromptLength || 5_000).toLocaleString("en-US")} characters`);
+  if (masterClip?.sourceNodeId && masterClip.sourceSegmentId) {
+    const source = await mcpVideoSource(principal, input.projectId, masterClip.sourceNodeId);
+    const segment = source.node.data.videoSegments?.find((candidate) => candidate.id === masterClip.sourceSegmentId);
+    if (!segment) throw Object.assign(new Error("Source scene no longer exists"), { status: 409 });
+    const requested = videoMasterGenerationDuration(model, masterClip);
+    if (requested < segment.end - segment.start - .01) {
+      const trimmed = await materializeVideoSegmentAsset({ source: source.source, projectId: input.projectId, workspaceId: source.workspaceId, segmentId: segment.id, start: segment.start, end: segment.start + requested });
+      const prior = "targetSourceAssetId" in inspected ? inspected.targetSourceAssetId : undefined;
+      inspected.references = inspected.references.map((reference) => reference.assetId === prior && reference.role === "reference-video" ? { ...reference, assetId: trimmed.id, durationSeconds: trimmed.durationSeconds } : reference);
+      if ("targetSourceAssetId" in inspected) inspected.targetSourceAssetId = trimmed.id;
+    }
+  }
   const references = await Promise.all(inspected.references.map(async (reference, index) => {
     if (!await userCanAccessAsset(principal.userId, reference.assetId)) throw Object.assign(new Error(`${reference.token} is no longer available`), { status: 404 });
     const asset = await db.prepare("SELECT storage_path, mime_type, kind, role, metadata_json FROM assets WHERE id = ?").get(reference.assetId) as
@@ -928,7 +978,7 @@ export async function runMcpCanvasGeneration(principal: McpPrincipal, input: {
   const requestedRatio = String(masterClip?.aspectRatio || inspected.node.data.aspectRatio || model.defaultRatio || "4:5");
   const aspectRatio = allowedRatios.includes(requestedRatio) ? requestedRatio : allowedRatios.includes(model.defaultRatio || "") ? model.defaultRatio! : allowedRatios[0];
   if (!aspectRatio) throw new Error(`${model.label} has no compatible aspect ratio for these inputs`);
-  const requestedDuration = String(masterClip?.generationDuration || inspected.node.data.duration || "");
+  const requestedDuration = String(masterClip ? videoMasterGenerationDuration(model, masterClip) : inspected.node.data.duration || "");
   const selectedDuration = model.durations?.includes(requestedDuration)
     ? requestedDuration
     : model.defaultDuration || model.durations?.[0] || requestedDuration || "5";
@@ -985,15 +1035,31 @@ export async function runMcpCanvasGeneration(principal: McpPrincipal, input: {
     inputVideoDurationSeconds,
     targetClipId: masterClip?.id,
     targetSourceAssetId,
+    beforeAdmit: masterClip ? async () => {
+      const latest = await getMcpCanvas(principal, input.projectId);
+      assertMasterSceneRevision(latest.graph, input.nodeId, masterClip.id, sceneRevision!);
+    } : undefined,
   });
-  if (!admission.ok) throw Object.assign(new Error(admission.error), { status: admission.status, code: admission.code, retryAfterMs: admission.retryAfterMs, requiredCredits: admission.requiredCredits });
-  const persistence = await persistCanvasIntelligenceResult(principal, {
-    projectId: input.projectId,
-    nodeId: input.nodeId,
-    fingerprint: canvasNodeInputFingerprint(canvas.graph, input.nodeId),
-    data: { status: "queued", queueReason: "provider", generationError: undefined, ...(masterClip ? { videoMasterGeneratingClipId: masterClip.id, videoMasterSelectedClipId: masterClip.id } : {}) },
+  if (!admission.ok) throw Object.assign(new Error(admission.error), { status: admission.status, code: admission.code, retryAfterMs: admission.retryAfterMs, requiredCredits: admission.requiredCredits, generationId: admission.generationId });
+  const persistence = masterClip ? await persistMcpMasterGenerationStatus(principal, input.projectId, input.nodeId, masterClip.id, sceneRevision!).catch(() => ({ persisted: false, reason: "Generation queued; poll its returned ID." })) : await persistCanvasIntelligenceResult(principal, {
+    projectId: input.projectId, nodeId: input.nodeId, fingerprint: canvasNodeInputFingerprint(canvas.graph, input.nodeId),
+    data: { status: "queued", queueReason: "provider", generationError: undefined },
   });
   return { ...admission, modelId: model.id, mediaType: model.mediaType, prompt, referenceCount: normalizedReferences.length, ...persistence };
+}
+
+async function persistMcpMasterGenerationStatus(principal: McpPrincipal, projectId: string, nodeId: string, clipId: string, expected: string) {
+  for (let attempt = 0; attempt < 5; attempt++) {
+    const current = await getMcpCanvas(principal, projectId);
+    try { assertMasterSceneRevision(current.graph, nodeId, clipId, expected); }
+    catch { return { persisted: false, currentRevision: current.revision, reason: "Scene changed after enqueue; poll the returned generation ID." }; }
+    try {
+      const canvas = await patchMcpCanvas(principal, { projectId, expectedRevision: current.revision, operations: [{ type: "update_node", nodeId,
+        data: { status: "queued", queueReason: "provider", generationError: undefined, videoMasterGeneratingClipId: clipId } }] });
+      return { persisted: true, currentRevision: canvas.revision, canvas };
+    } catch (error) { if ((error as { code?: string }).code !== "CANVAS_REVISION_CONFLICT") throw error; }
+  }
+  return { persisted: false, reason: "Canvas kept changing after enqueue; poll the returned generation ID." };
 }
 
 export async function getMcpCanvasGeneration(principal: McpPrincipal, generationId: string) {
@@ -1780,22 +1846,39 @@ export async function materializeMcpCanvasVideoSegment(principal: McpPrincipal, 
   if (initial.canvas.revision !== input.expectedRevision) throw Object.assign(new Error(`Canvas changed. Read it again and use revision ${initial.canvas.revision}.`), { code: "CANVAS_REVISION_CONFLICT", status: 409, currentRevision: initial.canvas.revision });
   const segment = initial.node.data.videoSegments?.find((candidate) => candidate.id === input.segmentId);
   if (!segment) throw Object.assign(new Error("Video segment not found"), { status: 404 });
-  if (segment.clipAssetId && segment.clipUrl) return { asset: { id: segment.clipAssetId, url: segment.clipUrl, durationSeconds: segment.end - segment.start }, canvas: initial.canvas };
+  if (segment.clipAssetId && segment.clipUrl) {
+    const cached = await db.prepare("SELECT metadata_json FROM assets WHERE id = ? AND project_id = ? AND mime_type = 'video/mp4'").get(segment.clipAssetId, input.projectId) as { metadata_json: string | null } | undefined;
+    try {
+      const metadata = JSON.parse(cached?.metadata_json || "{}");
+      if (metadata.sourceAssetId === initial.source.id && metadata.segmentId === segment.id && Math.abs(Number(metadata.start) - segment.start) < .000001 && Math.abs(Number(metadata.end) - segment.end) < .000001) {
+        return { asset: { id: segment.clipAssetId, url: segment.clipUrl, durationSeconds: segment.end - segment.start }, canvas: initial.canvas };
+      }
+    } catch { /* Rebuild stale or legacy scene derivatives from the authoritative source range. */ }
+  }
   const asset = await materializeVideoSegmentAsset({ source: initial.source, projectId: input.projectId, workspaceId: initial.workspaceId, segmentId: segment.id, start: segment.start, end: segment.end });
-  const current = await getMcpCanvas(principal, input.projectId);
-  const source = current.graph.nodes.find((node) => node.id === input.sourceNodeId);
-  const liveSegment = source?.data.videoSegments?.find((candidate) => candidate.id === input.segmentId);
-  if (!source || !liveSegment || liveSegment.start !== segment.start || liveSegment.end !== segment.end) return { asset, canvas: current, persisted: false, reason: "Scene boundaries changed while the segment was prepared" };
-  const operations: CanvasPatchOperation[] = [{ type: "update_node", nodeId: source.id, data: { videoSegments: source.data.videoSegments?.map((candidate) => candidate.id === segment.id ? { ...candidate, clipAssetId: asset.id, clipUrl: asset.url } : candidate) } }];
-  for (const node of current.graph.nodes) {
-    if (node.data.videoSourceNodeId === source.id && node.data.videoSegmentId === segment.id) operations.push({ type: "update_node", nodeId: node.id, data: { assetId: asset.id, imageUrl: asset.url, outputUrl: asset.url, videoClipStart: 0, videoClipEnd: asset.durationSeconds, duration: String(asset.durationSeconds), segmentMaterializing: false } });
-    if (node.data.kind === "videoMaster" && node.data.videoMasterClips?.some((clip) => clip.sourceNodeId === source.id && clip.sourceSegmentId === segment.id)) operations.push({ type: "update_node", nodeId: node.id, data: { videoMasterClips: node.data.videoMasterClips.map((clip) => clip.sourceNodeId === source.id && clip.sourceSegmentId === segment.id ? { ...clip, sourceClipAssetId: asset.id, sourceClipUrl: asset.url } : clip) } });
+  for (let attempt = 0; attempt < 5; attempt++) {
+    const current = await getMcpCanvas(principal, input.projectId);
+    const source = current.graph.nodes.find((node) => node.id === input.sourceNodeId);
+    const liveSegment = source?.data.videoSegments?.find((candidate) => candidate.id === input.segmentId);
+    if (!source || !liveSegment || (source.data.assetId || source.data.videoSourceAssetId || assetIdFromAssetUrl(String(source.data.outputUrl || source.data.imageUrl || ""))) !== initial.source.id || liveSegment.start !== segment.start || liveSegment.end !== segment.end) return { asset, canvas: current, persisted: false, reason: "Scene boundaries changed while the segment was prepared" };
+    const operations: CanvasPatchOperation[] = [{ type: "update_node", nodeId: source.id, data: { videoSegments: source.data.videoSegments?.map((candidate) => candidate.id === segment.id ? { ...candidate, clipAssetId: asset.id, clipUrl: asset.url } : candidate) } }];
+    for (const node of current.graph.nodes) {
+      if (node.data.videoSourceNodeId === source.id && node.data.videoSegmentId === segment.id) operations.push({ type: "update_node", nodeId: node.id, data: { assetId: asset.id, imageUrl: asset.url, outputUrl: asset.url, videoClipStart: 0, videoClipEnd: asset.durationSeconds, duration: String(asset.durationSeconds), segmentMaterializing: false } });
+      if (node.data.kind === "videoMaster" && node.data.videoMasterClips?.some((clip) => clip.sourceNodeId === source.id && clip.sourceSegmentId === segment.id)) operations.push({ type: "update_node", nodeId: node.id, data: { videoMasterClips: node.data.videoMasterClips.map((clip) => clip.sourceNodeId === source.id && clip.sourceSegmentId === segment.id ? { ...clip, sourceClipAssetId: asset.id, sourceClipUrl: asset.url } : clip) } });
+    }
+    // Reinsert in the original order so preparing media cannot reorder reference
+    // mention tokens when only a subset of the connected scenes is materialized.
+    if (current.graph.edges.some((edge) => edge.source === source.id && edge.data?.sourceSegmentId === segment.id)) {
+      for (const edge of current.graph.edges) operations.push({ type: "remove_edge", edgeId: edge.id });
+      for (const edge of current.graph.edges) operations.push({ type: "add_edge", id: edge.id, source: edge.source, sourceHandle: edge.sourceHandle, target: edge.target, targetHandle: edge.targetHandle,
+        data: edge.source === source.id && edge.data?.sourceSegmentId === segment.id ? { ...edge.data, clipAssetId: asset.id, clipUrl: asset.url } : edge.data });
+    }
+    try {
+      const canvas = await patchMcpCanvas(principal, { projectId: input.projectId, expectedRevision: current.revision, operations });
+      return { asset, canvas, persisted: true };
+    } catch (error) { if ((error as { code?: string }).code !== "CANVAS_REVISION_CONFLICT") throw error; }
   }
-  for (const edge of current.graph.edges.filter((candidate) => candidate.source === source.id && candidate.data?.sourceSegmentId === segment.id)) {
-    operations.push({ type: "remove_edge", edgeId: edge.id }, { type: "add_edge", id: edge.id, source: edge.source, sourceHandle: edge.sourceHandle, target: edge.target, targetHandle: edge.targetHandle, data: { ...edge.data, clipAssetId: asset.id, clipUrl: asset.url } });
-  }
-  const canvas = await patchMcpCanvas(principal, { projectId: input.projectId, expectedRevision: current.revision, operations });
-  return { asset, canvas, persisted: true };
+  throw Object.assign(new Error("Canvas kept changing while saving the prepared scene"), { status: 409, code: "CANVAS_REVISION_CONFLICT" });
 }
 
 export async function listMcpLibraryAssets(principal: McpPrincipal, input: {
