@@ -9,8 +9,6 @@ import {
   verifyKieWebhook,
 } from "@/lib/kie";
 
-export type { KieProviderWorkflow as GenerationProviderWorkflow } from "@/lib/kie";
-
 export const kieGenerationProvider = {
   id: "kie",
   models: kieModels,

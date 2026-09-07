@@ -26,7 +26,6 @@ test("generation admission forwards user-controlled payload fields without rewri
     resolution: "1K",
     duration: "5",
     generateAudio: false,
-    providerWorkflow: undefined,
     targetClipId: undefined,
     targetSourceAssetId: undefined,
   });

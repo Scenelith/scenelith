@@ -2,7 +2,6 @@ import { db } from "@/lib/postgres-db";
 import { generationProvider } from "@/platform/providers/registry";
 import { isGenerationTimeoutError } from "@/lib/generation-lifecycle";
 import { finalizeGenerationFromWebhook } from "@/lib/generation-state";
-import { advanceGenerationProviderWorkflow } from "@/lib/generation-dispatch";
 
 export const runtime = "nodejs";
 
@@ -35,14 +34,6 @@ export async function POST(request: Request) {
     return Response.json({ ok: true, ignored: "generation_timed_out" });
   }
   const status = String(task.status || "").toLowerCase();
-  if (existing && await advanceGenerationProviderWorkflow({
-    generationId: existing.id,
-    providerTaskId: task.task_id,
-    providerStatus: status,
-  })) {
-    console.info("[kie:webhook-workflow]", JSON.stringify({ taskId: task.task_id, status, generationId: existing.id }));
-    return Response.json({ ok: true, workflowAdvanced: true });
-  }
   const result = await db.prepare("UPDATE generations SET status = ?, output_url = COALESCE(?, output_url), error = COALESCE(?, error), updated_at = ? WHERE provider_task_id = ?").run(
     String(task.status || "updated").toLowerCase(),
     task.generated?.[0] || null,
