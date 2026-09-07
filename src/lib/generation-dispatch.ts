@@ -1,5 +1,5 @@
 import { usageAuthority } from "@/modules/usage";
-import { generationProvider, type GenerationProviderWorkflow } from "@/platform/providers/registry";
+import { generationProvider } from "@/platform/providers/registry";
 import { db } from "./postgres-db";
 import { workerIdentity } from "./worker-identity";
 
@@ -11,7 +11,6 @@ export type GenerationDispatchPayload = {
   resolution: string;
   duration: string;
   generateAudio?: boolean;
-  providerWorkflow?: GenerationProviderWorkflow;
   targetClipId?: string;
   targetSourceAssetId?: string;
 };
@@ -183,68 +182,6 @@ export function drainGenerationDispatchQueue() {
     shared.scenelithDispatchPromise = undefined;
   });
   return shared.scenelithDispatchPromise;
-}
-
-const providerWorkflowCompletedStatuses = new Set(["completed", "complete", "succeeded", "success"]);
-
-/**
- * Grok Image 2 edits are a provider-level two-step workflow. Kie first needs
- * a segment-map task for an arbitrary source image, then the edit task uses
- * that task id. Both steps stay inside one Scenelith generation/job so users
- * see one operation, one charge and one final output.
- */
-export async function advanceGenerationProviderWorkflow(input: {
-  generationId: string;
-  providerTaskId: string;
-  providerStatus: string;
-}) {
-  let shouldDrain = false;
-  const handled = await db.transaction(async () => {
-    const job = await db.prepare(
-      "SELECT payload_json FROM generation_dispatch_jobs WHERE generation_id = ? FOR UPDATE",
-    ).get(input.generationId) as { payload_json: string } | undefined;
-    if (!job) return false;
-    let payload: GenerationDispatchPayload;
-    try {
-      payload = JSON.parse(job.payload_json) as GenerationDispatchPayload;
-    } catch {
-      return false;
-    }
-    const workflow = payload.providerWorkflow;
-    if (workflow?.kind !== "grok-image-edit") return false;
-
-    // Kie can retry the segment callback after the edit stage has already
-    // started. Never let that old task overwrite the current provider task.
-    if (workflow.stage === "image-edit" && workflow.segmentTaskId === input.providerTaskId) return true;
-    if (workflow.stage !== "segment-map" || !providerWorkflowCompletedStatuses.has(input.providerStatus.toLowerCase())) return false;
-
-    const generation = await db.prepare("SELECT provider_task_id FROM generations WHERE id = ? FOR UPDATE")
-      .get(input.generationId) as { provider_task_id: string | null } | undefined;
-    if (!generation || generation.provider_task_id !== input.providerTaskId) return false;
-
-    const now = new Date().toISOString();
-    const nextPayload: GenerationDispatchPayload = {
-      ...payload,
-      providerWorkflow: {
-        kind: "grok-image-edit",
-        stage: "image-edit",
-        segmentTaskId: input.providerTaskId,
-      },
-    };
-    await db.prepare(
-      `UPDATE generation_dispatch_jobs
-       SET payload_json = ?, status = 'queued', available_at = ?, last_error = NULL,
-           locked_at = NULL, locked_by = NULL, updated_at = ?
-       WHERE generation_id = ?`,
-    ).run(JSON.stringify(nextPayload), now, now, input.generationId);
-    await db.prepare(
-      "UPDATE generations SET status = 'queued', output_url = NULL, error = NULL, updated_at = ? WHERE id = ?",
-    ).run(now, input.generationId);
-    shouldDrain = true;
-    return true;
-  })();
-  if (shouldDrain) void drainGenerationDispatchQueue();
-  return handled;
 }
 
 export async function queuedGenerationPosition(generationId: string) {

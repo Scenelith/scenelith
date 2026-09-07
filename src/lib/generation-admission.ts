@@ -49,9 +49,6 @@ export function generationDispatchPayload(input: GenerationAdmissionInput): Gene
     resolution: input.resolution,
     duration: input.duration,
     generateAudio: input.generateAudio,
-    providerWorkflow: input.model.id === "grok-image-2" && input.references.length > 0
-      ? { kind: "grok-image-edit", stage: "segment-map" }
-      : undefined,
     targetClipId: input.targetClipId,
     targetSourceAssetId: input.targetSourceAssetId,
   };

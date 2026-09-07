@@ -280,12 +280,6 @@ export async function uploadKieReference(path: string, mimeType: string, label =
   }
 }
 
-export type KieProviderWorkflow = {
-  kind: "grok-image-edit";
-  stage: "segment-map" | "image-edit";
-  segmentTaskId?: string;
-};
-
 type StartInput = {
   modelId: string;
   prompt: string;
@@ -294,7 +288,6 @@ type StartInput = {
   resolution?: string;
   duration?: string;
   generateAudio?: boolean;
-  providerWorkflow?: KieProviderWorkflow;
 };
 
 type UploadedReference = { assetUrl: string; label: string; role?: string };
@@ -337,7 +330,7 @@ export function buildKieInput(modelId: string, input: Omit<StartInput, "modelId"
     return { prompt, ...(referenceUrls.length ? { input_urls: referenceUrls } : {}), aspect_ratio: ratio, resolution: resolution?.toUpperCase() };
   }
   if (model.id === "grok-image-2") {
-    return { prompt, aspect_ratio: ratio };
+    return { prompt, aspect_ratio: ratio, ...(referenceUrls.length ? { image_urls: referenceUrls } : {}) };
   }
   if (model.id === "seedream-5-lite" || model.id === "seedream-5-pro") {
     const normalizedResolution = resolution?.toUpperCase();
@@ -404,36 +397,14 @@ export async function startGeneration(input: StartInput) {
   if (input.references.length > model.maxReferences) {
     throw new Error(`${model.label} accepts at most ${model.maxReferences} reference inputs`);
   }
-  const references = input.providerWorkflow?.kind === "grok-image-edit" && input.providerWorkflow.stage === "image-edit"
-    ? []
-    : input.references;
-  const uploaded = await Promise.all(references.map(async (reference) => ({ ...(await uploadKieReference(reference.path, reference.mimeType, reference.label)), role: reference.role })));
+  const uploaded = await Promise.all(input.references.map(async (reference) => ({ ...(await uploadKieReference(reference.path, reference.mimeType, reference.label)), role: reference.role })));
   const prompt = model.id === "grok-image-2"
     ? providerPrompt(input.prompt)
     : kieProviderPrompt(input.prompt, uploaded.map((item) => item.label));
   assertKiePromptLength(model.id, prompt);
   const callBackUrl = process.env.PUBLIC_URL ? `${process.env.PUBLIC_URL.replace(/\/$/, "")}/api/webhooks/kie` : undefined;
   let body: Record<string, unknown>;
-  if (model.id === "grok-image-2") {
-    const workflow = input.providerWorkflow;
-    const providerModel = workflow?.stage === "segment-map"
-      ? "grok-imagine-image-2-0/segment-map"
-      : workflow?.stage === "image-edit"
-        ? "grok-imagine-image-2-0/image-edit"
-        : model.providerModel;
-    const providerInput = workflow?.stage === "segment-map"
-      ? { image_url: uploaded[0]?.assetUrl }
-      : workflow?.stage === "image-edit"
-        ? { prompt, task_id: workflow.segmentTaskId }
-        : buildKieInput(model.id, { prompt, aspectRatio: input.aspectRatio, resolution: input.resolution, duration: input.duration, generateAudio: input.generateAudio }, uploaded);
-    if (workflow?.stage === "segment-map" && !uploaded[0]?.assetUrl) throw new Error("Grok Image Edit requires one image reference");
-    if (workflow?.stage === "image-edit" && !workflow.segmentTaskId) throw new Error("Grok Image Edit segment map is missing");
-    body = {
-      model: providerModel,
-      ...(callBackUrl ? { callBackUrl } : {}),
-      input: providerInput,
-    };
-  } else if (model.providerPath === "/api/v1/veo/generate") {
+  if (model.providerPath === "/api/v1/veo/generate") {
     const roleUrls = (role: string) => uploaded.filter((reference) => reference.role === role).map((reference) => reference.assetUrl);
     const frameUrls = [...roleUrls("start-frame"), ...roleUrls("end-frame")].slice(0, 2);
     const materialUrls = roleUrls("reference-image").slice(0, 3);
@@ -456,6 +427,7 @@ export async function startGeneration(input: StartInput) {
     };
   } else {
     let providerModel = model.providerModel;
+    if (model.id === "grok-image-2") providerModel = uploaded.length ? "grok-imagine-image-2-0/image-edit" : model.providerModel;
     if (model.id === "gpt-image-2") providerModel = uploaded.length ? "gpt-image-2-image-to-image" : "gpt-image-2-text-to-image";
     if (model.id === "seedream-5-lite") providerModel = uploaded.length ? "seedream/5-lite-image-to-image" : "seedream/5-lite-text-to-image";
     if (model.id === "seedream-5-pro") providerModel = uploaded.length ? "seedream/5-pro-image-to-image" : "seedream/5-pro-text-to-image";

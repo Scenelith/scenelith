@@ -1,6 +1,6 @@
 import { db, mutateProjectGraphSnapshot } from "./postgres-db";
 import { mutateCollaborativeGraph } from "./collaboration-store";
-import { advanceGenerationProviderWorkflow, queuedGenerationPosition } from "./generation-dispatch";
+import { queuedGenerationPosition } from "./generation-dispatch";
 import { createAssetThumbnail } from "./image-thumbnails";
 import { getGeneration, KieRateLimitError } from "./kie";
 import {
@@ -339,11 +339,6 @@ export async function reconcileGeneration(id: string) {
   try {
     const task = await getGeneration(generation.model_id, generation.provider_task_id);
     const providerStatus = String(task?.status || generation.status).toLowerCase();
-    if (await advanceGenerationProviderWorkflow({
-      generationId: id,
-      providerTaskId: generation.provider_task_id,
-      providerStatus,
-    })) return (await readGenerationState(id))!;
     const outputUrl = task?.generated?.[0] || generation.output_url;
     const reportedError = providerErrorMessage(task?.error);
     const timedOut = !outputUrl

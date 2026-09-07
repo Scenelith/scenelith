@@ -1,9 +1,7 @@
 import providerDefinitions from "../../../config/runtime-providers.json";
-import { kieGenerationProvider, type GenerationProviderWorkflow } from "./kie-provider";
+import { kieGenerationProvider } from "./kie-provider";
 import { openRouterIntelligenceProvider } from "./openrouter-provider";
 import { tikwmImportProvider } from "./tikwm-provider";
-
-export type { GenerationProviderWorkflow };
 
 const generationProviders = { kie: kieGenerationProvider } as const;
 const intelligenceProviders = { openrouter: openRouterIntelligenceProvider } as const;
