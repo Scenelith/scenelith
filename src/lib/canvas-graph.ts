@@ -142,6 +142,7 @@ export function duplicateGraphSelection(
   selectedNodeIds: string[],
   createId: (prefix: string) => string,
   offset = { x: 48, y: 48 },
+  availableSourceNodeIds = new Set(graphNodes.map((node) => node.id)),
 ): { nodes: FrameNode[]; edges: FrameEdge[]; firstNodeId: string | null } {
   const selectedIds = new Set(selectedNodeIds);
   const selectedNodes = graphNodes.filter((node) => selectedIds.has(node.id));
@@ -167,15 +168,27 @@ export function duplicateGraphSelection(
       data,
     } as FrameNode;
   });
+  // Keep every input to the copied selection. Internal sources follow their
+  // copies; external sources stay shared. Never add outputs to existing targets.
+  // A clipboard source may have been deleted since Copy was pressed.
   const edges = graphEdges
-    .filter((edge) => selectedIds.has(edge.source) && selectedIds.has(edge.target))
-    .map((edge) => ({
-      ...structuredClone(edge),
-      id: createId("edge"),
-      source: idMap.get(edge.source)!,
-      target: idMap.get(edge.target)!,
-      selected: false,
-    } as FrameEdge));
+    .filter((edge) => idMap.has(edge.target) && (idMap.has(edge.source) || availableSourceNodeIds.has(edge.source)))
+    .map((edge) => {
+      const copy = structuredClone(edge);
+      if (copy.data) {
+        delete copy.data.automationKind;
+        delete copy.data.automationSourceNodeId;
+        delete copy.data.automationSlideIndex;
+      }
+      copy.className = copy.className?.split(/\s+/).filter((name) => name !== "is-automation-lineage-edge").join(" ");
+      return {
+        ...copy,
+        id: createId("edge"),
+        source: idMap.get(edge.source) || edge.source,
+        target: idMap.get(edge.target)!,
+        selected: false,
+      } as FrameEdge;
+    });
 
   return { nodes, edges, firstNodeId: nodes[0]?.id || null };
 }

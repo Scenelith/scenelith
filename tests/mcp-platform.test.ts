@@ -1,4 +1,5 @@
 import { canvasBoundsOverlap, canvasNodeBounds } from "../src/lib/canvas-node-placement";
+import type { FrameNode } from "../src/lib/types";
 import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
 import { createServer } from "node:http";
@@ -406,6 +407,7 @@ test("MCP client negotiates with the server and receives only scope-approved too
   assert.ok(names.includes("place_canvas_identity"));
   assert.ok(names.includes("inspect_identity_reference"));
   assert.ok(names.includes("duplicate_canvas_nodes"));
+  assert.ok(names.includes("duplicate_canvas_node"));
   assert.ok(names.includes("select_canvas_output"));
   assert.ok(names.includes("create_video_master"));
   assert.ok(names.includes("configure_video_master_scene"));
@@ -500,6 +502,34 @@ test("MCP client negotiates with the server and receives only scope-approved too
   } });
   assert.equal((duplicated.structuredContent as { duplicatedNodeIds: string[] }).duplicatedNodeIds.length, 2);
   assert.equal((duplicated.structuredContent as { duplicatedEdgeIds: string[] }).duplicatedEdgeIds.length, 1);
+  revision = (duplicated.structuredContent as { canvas: { revision: number } }).canvas.revision;
+  const copied = await client.callTool({ name: "duplicate_canvas_node", arguments: {
+    canvas_id: "mcp-canvas-a", expected_revision: revision, node_id: imageResult.node.id,
+  } });
+  assert.equal(copied.isError, undefined, JSON.stringify(copied));
+  const copy = copied.structuredContent as { sourceNodeId: string; node: FrameNode; canvas: { revision: number }; duplicatedEdgeIds: string[] };
+  assert.equal(copy.sourceNodeId, imageResult.node.id);
+  assert.notEqual(copy.node.id, imageResult.node.id);
+  assert.equal(copy.node.data.prompt, "Original editorial portrait");
+  assert.equal(copy.node.data.resolution, "4K");
+  assert.equal(copy.duplicatedEdgeIds.length, 1);
+  const reloaded = await getMcpCanvas(principal, "mcp-canvas-a");
+  const incoming = reloaded.graph.edges.filter((edge) => edge.target === copy.node.id);
+  assert.equal(incoming.length, 1);
+  assert.equal(incoming[0].source, assistantResult.node.id);
+  assert.equal(incoming[0].targetHandle, "text-input");
+  assert.equal(reloaded.graph.edges.filter((edge) => edge.target === imageResult.node.id).length, 1);
+  assert.deepEqual(reloaded.graph.nodes.find((node) => node.id === copy.node.id), copy.node);
+  const stale = await client.callTool({ name: "duplicate_canvas_node", arguments: {
+    canvas_id: "mcp-canvas-a", expected_revision: revision, node_id: imageResult.node.id,
+  } });
+  assert.equal(stale.isError, true);
+  assert.match(JSON.stringify(stale), /CANVAS_REVISION_CONFLICT/);
+  const missing = await client.callTool({ name: "duplicate_canvas_nodes", arguments: {
+    canvas_id: "mcp-canvas-a", expected_revision: copy.canvas.revision, node_ids: [imageResult.node.id, "missing-node"],
+  } });
+  assert.equal(missing.isError, true);
+  assert.equal((await getMcpCanvas(principal, "mcp-canvas-a")).graph.nodes.length, reloaded.graph.nodes.length);
   await client.close();
   await server.close();
 });
