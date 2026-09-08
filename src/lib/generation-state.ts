@@ -1,3 +1,4 @@
+import { generationAttemptTime } from "./generator-task-state";
 import { db, mutateProjectGraphSnapshot } from "./postgres-db";
 import { mutateCollaborativeGraph } from "./collaboration-store";
 import { queuedGenerationPosition } from "./generation-dispatch";
@@ -57,6 +58,9 @@ async function updateGenerationNode(generation: GenerationStateRow, changes: {
   durationSeconds?: number;
   error?: string | null;
 }) {
+  const latestAttempt = await db.prepare("SELECT id FROM generations WHERE project_id = ? AND node_id = ? ORDER BY created_at DESC, id DESC LIMIT 1")
+    .get(generation.project_id, generation.node_id) as { id: string } | undefined;
+  const isLatestAttempt = !latestAttempt || latestAttempt.id === generation.id;
   let persistedTargetClipId: string | undefined;
   if (changes.outputUrl) {
     try {
@@ -73,6 +77,14 @@ async function updateGenerationNode(generation: GenerationStateRow, changes: {
     if (nodeIndex < 0) return graph;
 
     const node = graph.nodes[nodeIndex] as FrameNode;
+    const recordedOutput = changes.outputUrl && (node.data.outputUrl === changes.outputUrl
+      || node.data.generatedOutputs?.some((item) => item.url === changes.outputUrl));
+    // Legacy clients stamped completion time into generatedAt. For a known
+    // result, the database latest attempt is authoritative over that timestamp.
+    const watermark = generationAttemptTime(node.data.generationAttemptCreatedAt)
+      || (recordedOutput && isLatestAttempt ? 0 : generationAttemptTime(node.data.generatedAt)) || 0;
+    const superseded = !isLatestAttempt || generationAttemptTime(generation.created_at) < watermark;
+    if (!changes.outputUrl && superseded) return graph;
     // Repeated delivery must be idempotent, including legacy jobs without a saved target.
     if (changes.outputUrl && node.data.kind === "videoMaster" && node.data.videoMasterClips?.some((clip) =>
       clip.outputUrl === changes.outputUrl || clip.generatedOutputs?.some((item) => item.url === changes.outputUrl))) return graph;
@@ -94,6 +106,21 @@ async function updateGenerationNode(generation: GenerationStateRow, changes: {
         .filter((item, index, items) => items.findIndex((candidate) => candidate.url === item.url) === index)
         .slice(-20)
       : node.data.generatedOutputs;
+    if (output && node.data.kind !== "videoMaster") {
+      const recorded = node.data.outputUrl === output.url || node.data.generatedOutputs?.some((item) => item.url === output.url);
+      if (superseded || recorded) {
+        // Late results remain available in history but cannot select themselves
+        // or replace a newer attempt's status. Replays preserve user's selection.
+        if (superseded && recorded) return graph;
+        if (recorded && node.data.status === "ready" && !node.data.generationError && !node.data.queueReason) return graph;
+        graph.nodes = [...graph.nodes];
+        graph.nodes[nodeIndex] = { ...node, data: { ...node.data,
+          ...(recorded ? {} : { generatedOutputs: outputHistory }),
+          ...(superseded ? {} : { status: "ready" as const, queueReason: undefined, generationError: undefined, generationAttemptCreatedAt: generation.created_at }),
+        } };
+        return graph;
+      }
+    }
     const editReferencesByAssetId = generation.operation === "edit" && output?.assetId && node.data.assetId
       ? {
         ...(node.data.editReferencesByAssetId || {}),
@@ -106,7 +133,7 @@ async function updateGenerationNode(generation: GenerationStateRow, changes: {
       const clips = node.data.videoMasterClips || [];
       if (clips.some((clip) => clip.id === clipId)) {
         const targetClip = clips.find((clip) => clip.id === clipId);
-        const completesActiveScene = !node.data.videoMasterGeneratingClipId || node.data.videoMasterGeneratingClipId === clipId;
+        const completesActiveScene = !superseded && (!node.data.videoMasterGeneratingClipId || node.data.videoMasterGeneratingClipId === clipId);
         const timelineDuration = videoMasterTimelineDuration(targetClip);
         const physicalDuration = Number(changes.durationSeconds || 0);
         const generatedDuration = physicalDuration > 0
@@ -143,6 +170,7 @@ async function updateGenerationNode(generation: GenerationStateRow, changes: {
               status: "ready" as const,
               queueReason: undefined,
               generationError: undefined,
+              generationAttemptCreatedAt: generation.created_at,
               videoMasterGeneratingClipId: undefined,
             } : {}),
           },
@@ -160,6 +188,7 @@ async function updateGenerationNode(generation: GenerationStateRow, changes: {
           mediaType: output.mediaType,
           modelId: output.modelId,
           generatedAt: generation.created_at,
+          generationAttemptCreatedAt: generation.created_at,
           generatedOutputs: outputHistory,
           activeGeneratedOutputIndex: Math.max(0, (outputHistory?.length || 1) - 1),
           editReferencesByAssetId,
@@ -171,6 +200,7 @@ async function updateGenerationNode(generation: GenerationStateRow, changes: {
           status: "failed" as const,
           queueReason: undefined,
           generationError: changes.error || "Generation failed",
+          generationAttemptCreatedAt: generation.created_at,
         }),
       },
     };
@@ -332,6 +362,12 @@ export async function reconcileGeneration(id: string) {
   let generation = await readGenerationState(id);
   if (!generation) throw new Error("Generation was not found");
   if (["cancelled", "canceled"].includes(String(generation.status).toLowerCase())) return generation;
+  if (generation.output_asset_id && completedGenerationStatuses.has(generation.status.toLowerCase())) {
+    // Durable completion does not depend on an expiring provider response.
+    await persistGenerationOutput(id, `/api/assets/${generation.output_asset_id}`);
+    await (await usageAuthority()).settleGeneration(id);
+    return (await readGenerationState(id))!;
+  }
   if (!generation.provider_task_id) {
     return generation;
   }
@@ -347,9 +383,9 @@ export async function reconcileGeneration(id: string) {
       && !failedGenerationStatuses.has(providerStatus)
       && generationTimedOut(generation.created_at, generation.media_type);
     if (timedOut) {
-      await timeoutGeneration(id, generation.media_type);
+      const timedOut = await timeoutGeneration(id, generation.media_type);
       const timedOutGeneration = (await readGenerationState(id))!;
-      await updateGenerationNode(timedOutGeneration, { error: timedOutGeneration.error });
+      if (timedOut) await updateGenerationNode(timedOutGeneration, { error: timedOutGeneration.error });
       return timedOutGeneration;
     }
 
@@ -377,9 +413,9 @@ export async function reconcileGeneration(id: string) {
   } catch (error) {
     if (error instanceof KieRateLimitError) return (await readGenerationState(id))!;
     if (generationTimedOut(generation.created_at, generation.media_type)) {
-      await timeoutGeneration(id, generation.media_type);
+      const timedOut = await timeoutGeneration(id, generation.media_type);
       const timedOutGeneration = (await readGenerationState(id))!;
-      await updateGenerationNode(timedOutGeneration, { error: timedOutGeneration.error });
+      if (timedOut) await updateGenerationNode(timedOutGeneration, { error: timedOutGeneration.error });
       return timedOutGeneration;
     }
     throw error;
@@ -394,6 +430,10 @@ export async function finalizeGenerationFromWebhook(input: {
 }) {
   const current = await readGenerationState(input.generationId);
   if (current && ["cancelled", "canceled"].includes(String(current.status).toLowerCase())) return current;
+  if (current?.output_asset_id && completedGenerationStatuses.has(current.status.toLowerCase())) {
+    await (await usageAuthority()).settleGeneration(current.id);
+    return current;
+  }
   const normalizedStatus = input.status.toLowerCase();
   if (input.error || failedGenerationStatuses.has(normalizedStatus)) {
     await (await usageAuthority()).releaseGeneration(input.generationId, "provider_webhook_failed");
