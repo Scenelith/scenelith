@@ -291,6 +291,7 @@ export function VideoMasterPlayer({ src, preloadSources = [], clipStart = 0, cli
       stopVisualClock();
       pausePool();
       queueMicrotask(() => setPlaying(false));
+      if (suspended) onPlaybackChange?.(false, playbackKey);
       return;
     }
     if (command.ownerId !== playbackOwnerId || command.targetKey !== playbackKey) return;
