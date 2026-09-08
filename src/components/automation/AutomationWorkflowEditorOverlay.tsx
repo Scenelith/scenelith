@@ -1,5 +1,7 @@
 "use client";
 
+import { GenerationOutline } from "@/components/ui/GenerationOutline";
+
 import {
   BaseEdge,
   Background,
@@ -236,9 +238,7 @@ function AutomationNodeCard({ data, selected }: NodeProps<Node<FlowNodeData>>) {
     : empty;
   const connectableOutputs = definition.outputs.filter((port) => port.connectable !== false);
   return <div className={`automation-flow-node is-${definition.accent} ${selected ? "is-selected" : ""} ${node.disabled ? "is-disabled" : ""} ${data.previewInactive ? "is-preview-inactive" : ""} ${data.relation ? `is-${data.relation}` : ""} ${data.executionStatus !== "idle" ? `is-execution-${data.executionStatus}` : ""}`}>
-    {data.executionStatus === "running" && <svg className="generator-running-outline automation-flow-node-running-outline" aria-hidden="true">
-      <rect className="generator-running-runner" x="2" y="2" width="calc(100% - 4px)" height="calc(100% - 4px)" rx="15" pathLength="100" />
-    </svg>}
+    {data.executionStatus === "running" && <GenerationOutline className="automation-flow-node-running-outline" radius={15} />}
     {inputPorts.map((port, index) => <Handle
       key={port.id}
       id={port.id}

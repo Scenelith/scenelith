@@ -12,7 +12,7 @@ function precise(seconds: number) {
   return `${Math.floor(value / 60)}:${String(Math.floor(value % 60)).padStart(2, "0")}.${String(Math.floor(value % 1 * 1000)).padStart(3, "0")}`;
 }
 
-export function VideoMasterPlayer({ src, preloadSources = [], clipStart = 0, clipEnd, seamlessNext = false, backdropUrl, controlsPortal, playbackOwnerId, playbackKey, active, clickToToggle = false, keyboardActive = false, muted: controlledMuted, onMutedChange, playRequestToken, playRequestRelativeTime, requestedRelativeTime, requestedSeekToken, externalCurrentTime, externalDuration, externalActions, onExternalSeek, onAspectRatio, onMediaDuration, onDoubleClick, onPlaybackChange, onTimeChange, onClipEnded }: {
+export function VideoMasterPlayer({ src, preloadSources = [], clipStart = 0, clipEnd, seamlessNext = false, backdropUrl, controlsPortal, playbackOwnerId, playbackKey, active, suspended = false, clickToToggle = false, keyboardActive = false, muted: controlledMuted, onMutedChange, playRequestToken, playRequestRelativeTime, requestedRelativeTime, requestedSeekToken, externalCurrentTime, externalDuration, externalActions, onExternalSeek, onAspectRatio, onMediaDuration, onDoubleClick, onPlaybackChange, onTimeChange, onClipEnded }: {
   src: string;
   preloadSources?: string[];
   clipStart?: number;
@@ -23,6 +23,8 @@ export function VideoMasterPlayer({ src, preloadSources = [], clipStart = 0, cli
   playbackOwnerId: string;
   playbackKey: string;
   active: boolean;
+  /** Pause a preview covered by generation UI, retaining the last decoded frame. */
+  suspended?: boolean;
   clickToToggle?: boolean;
   keyboardActive?: boolean;
   muted?: boolean;
@@ -77,9 +79,9 @@ export function VideoMasterPlayer({ src, preloadSources = [], clipStart = 0, cli
   const displayTime = Math.min(displayDuration, Math.max(0, scrubTime ?? externalCurrentTime));
   const progress = displayTime / displayDuration * 100;
   useLayoutEffect(() => {
-    activeRef.current = transportAttached;
+    activeRef.current = transportAttached && !suspended;
     playbackKeyRef.current = playbackKey;
-  }, [playbackKey, transportAttached]);
+  }, [playbackKey, suspended, transportAttached]);
 
   useEffect(() => {
     mediaRefs.current.forEach((video) => { video.muted = muted; });
@@ -276,13 +278,20 @@ export function VideoMasterPlayer({ src, preloadSources = [], clipStart = 0, cli
   }, [mediaSources, playbackOwnerId]);
 
   useEffect(() => {
-    if (!transportAttached) {
+    if (!transportAttached || suspended) {
+      // A remote task can cover an already playing preview. Keep its last frame,
+      // but cancel the playback intent as well as the decoder/retry clock so it
+      // cannot silently restart when the overlay disappears.
+      if (suspended && command.action === "play" && command.ownerId === playbackOwnerId && command.targetKey === playbackKey) {
+        videoPlaybackManager.pause(playbackOwnerId, playbackKey);
+      }
       commandRef.current = 0;
       startedCommandRef.current = 0;
       clearRetry();
       stopVisualClock();
       pausePool();
       queueMicrotask(() => setPlaying(false));
+      if (suspended) onPlaybackChange?.(false, playbackKey);
       return;
     }
     if (command.ownerId !== playbackOwnerId || command.targetKey !== playbackKey) return;
@@ -299,13 +308,14 @@ export function VideoMasterPlayer({ src, preloadSources = [], clipStart = 0, cli
     // The transport snapshot is the only command trigger. Media boundaries
     // are read from the same committed render that owns playbackKey.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [command.id, command.action, command.ownerId, command.targetKey, playbackKey, playbackOwnerId, playbackSource, transportAttached]);
+  }, [command.id, command.action, command.ownerId, command.targetKey, playbackKey, playbackOwnerId, playbackSource, suspended, transportAttached]);
 
   useEffect(() => {
     if (!transportAttached || playRequestToken === undefined) return;
     const requestKey = `${playbackKey}:${playRequestToken}`;
     if (consumedPlayRequestRef.current === requestKey) return;
     consumedPlayRequestRef.current = requestKey;
+    if (suspended) return;
     const relativeTime = Math.max(0, Number(playRequestRelativeTime || 0));
     const live = videoPlaybackManager.getSnapshot();
     const issued = live.action === "play" && live.ownerId === playbackOwnerId && live.targetKey === playbackKey
@@ -313,7 +323,7 @@ export function VideoMasterPlayer({ src, preloadSources = [], clipStart = 0, cli
       : videoPlaybackManager.play(playbackOwnerId, playbackKey, { relativeTime });
     if (commandRef.current !== issued.id) runCommand(issued.id, relativeTime);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [playRequestRelativeTime, playRequestToken, playbackKey, playbackOwnerId, playbackSource, transportAttached]);
+  }, [playRequestRelativeTime, playRequestToken, playbackKey, playbackOwnerId, playbackSource, suspended, transportAttached]);
 
   useEffect(() => () => {
     clearRetry();
@@ -357,7 +367,7 @@ export function VideoMasterPlayer({ src, preloadSources = [], clipStart = 0, cli
   }, [mediaSources, playbackSource, transportAttached]);
 
   useEffect(() => {
-    if (!keyboardActive) return;
+    if (!keyboardActive || suspended) return;
     const onKey = (event: KeyboardEvent) => {
       if (event.code !== "Space" || event.repeat) return;
       const target = event.target as HTMLElement | null;
@@ -372,9 +382,10 @@ export function VideoMasterPlayer({ src, preloadSources = [], clipStart = 0, cli
     window.addEventListener("keydown", onKey, true);
     return () => window.removeEventListener("keydown", onKey, true);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [keyboardActive, playbackKey, playbackOwnerId, playbackSource, start]);
+  }, [keyboardActive, playbackKey, playbackOwnerId, playbackSource, start, suspended]);
 
   const toggle = () => {
+    if (suspended) return;
     const video = activeVideo();
     if (video && !video.paused) videoPlaybackManager.pause(playbackOwnerId, playbackKey);
     else videoPlaybackManager.play(playbackOwnerId, playbackKey, { relativeTime: videoPlaybackReplayTime(Math.max(0, Number(video?.currentTime || start) - start), duration) });
@@ -412,8 +423,8 @@ export function VideoMasterPlayer({ src, preloadSources = [], clipStart = 0, cli
   };
 
   const controls = <div className="video-scene-transport nodrag nopan nowheel" onPointerDown={(event) => event.stopPropagation()}>
-    <button type="button" aria-label={playing ? "Pause video" : "Play video"} disabled={!src} onClick={(event) => { event.preventDefault(); event.stopPropagation(); toggle(); }}>{playing ? <Pause size={13} fill="currentColor" /> : <Play size={13} fill="currentColor" />}</button>
-    <input className="video-scene-position-slider" type="range" min="0" max={displayDuration} step="any" value={displayTime} aria-label="Video position" style={{ "--video-progress": `${progress}%` } as CSSProperties} onPointerDown={beginScrub} onPointerMove={moveScrub} onPointerUp={finishScrub} onPointerCancel={finishScrub} onInput={(event) => { const time = Number(event.currentTarget.value); setScrubTime(time); onExternalSeek(time); }} onChange={(event) => { const time = Number(event.currentTarget.value); setScrubTime(time); onExternalSeek(time); }} />
+    <button type="button" aria-label={playing ? "Pause video" : "Play video"} disabled={!src || suspended} onClick={(event) => { event.preventDefault(); event.stopPropagation(); toggle(); }}>{playing ? <Pause size={13} fill="currentColor" /> : <Play size={13} fill="currentColor" />}</button>
+    <input className="video-scene-position-slider" type="range" disabled={suspended} min="0" max={displayDuration} step="any" value={displayTime} aria-label="Video position" style={{ "--video-progress": `${progress}%` } as CSSProperties} onPointerDown={beginScrub} onPointerMove={moveScrub} onPointerUp={finishScrub} onPointerCancel={finishScrub} onInput={(event) => { const time = Number(event.currentTarget.value); setScrubTime(time); onExternalSeek(time); }} onChange={(event) => { const time = Number(event.currentTarget.value); setScrubTime(time); onExternalSeek(time); }} />
     <code>{precise(displayTime)} <i>/</i> {precise(displayDuration)}</code>
     <button type="button" aria-label={muted ? "Unmute video" : "Mute video"} onClick={(event) => { event.preventDefault(); event.stopPropagation(); const next = !muted; if (controlledMuted === undefined) setInternalMuted(next); onMutedChange?.(next); mediaRefs.current.forEach((video) => { video.muted = next; }); }}>{muted ? <VolumeX size={13} /> : <Volume2 size={13} />}</button>
     {externalActions}

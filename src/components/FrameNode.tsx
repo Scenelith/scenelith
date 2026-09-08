@@ -12,6 +12,7 @@ import { ArrowRightLeft, Check, ChevronDown, Clapperboard, Copy, Download, Expan
 import type { FrameNode, GeneratorInputRole, PersonaRecord, VideoMasterClip, VideoSceneSegment } from "@/lib/types";
 import { referenceMentionToken } from "@/lib/reference-mentions";
 import { ImageGeneration } from "@/components/ui/ai-chat-image-generation-1";
+import { GenerationOutline } from "@/components/ui/GenerationOutline";
 import { generationCreditCost } from "@/lib/generation-pricing";
 import { MAX_GENERATION_BATCH } from "@/lib/generation-queue";
 import { assistantModelCreditDescription, assistantModels, normalizeAssistantModelId } from "@/lib/assistant-models";
@@ -2180,11 +2181,7 @@ function FrameNodeCardComponent({ id, data, selected }: NodeProps<FrameNode>) {
       <div className={`generator-media-stage ${displayedOutputUrl ? "has-output" : ""} ${generatedOutputs.length ? "has-history" : ""} ${busy && !previewOwnsPlayback ? "is-generating" : ""} ${queued && !previewOwnsPlayback ? "is-queued" : ""} ${failed || outputLoadFailed ? "is-failed" : ""}`} style={{ aspectRatio: ratioCss, "--prompt-max-height": `${promptMaxHeight}px` } as CSSProperties}>
         {outputMediaType === "video" && outputUrl ? <CanvasVideoPlayer src={outputUrl} variant="generator" selectionActive={Boolean(selected)} onDoubleClick={() => generator.openPreview(id)} /> : displayedOutputUrl ? <img key={`${outputUrl}:${outputRetryAttempt}`} className="generator-output-image" src={displayedOutputUrl} alt="Generated output" draggable={false} loading={selected ? "eager" : "lazy"} fetchPriority={selected ? "high" : "auto"} decoding="async" onLoad={outputIsLoaded ? undefined : markOutputLoaded} onError={outputIsLoaded ? undefined : retryOutputLoad} onPointerDown={(event) => event.stopPropagation()} onDoubleClick={(event) => { event.stopPropagation(); if (readyOutputUrl) generator.openPreview(id); }} /> : null}
         {displayedOutputUrl && <div className="generator-output-vignette" />}
-        {showCanvasGenerationProgress && <>
-          <svg className="generator-running-outline" aria-hidden="true">
-            <rect className="generator-running-runner" x="2" y="2" width="calc(100% - 4px)" height="calc(100% - 4px)" rx="26" pathLength="100" />
-          </svg>
-        </>}
+        {showCanvasGenerationProgress && <GenerationOutline />}
         {busy && !previewOwnsPlayback && <ImageGeneration className="generator-generation-progress" startingLabel="Preparing generation…" generatingLabel={`Creating ${outputMediaType}. This may take a moment.`}><div className={`generator-generation-preview ${displayedOutputUrl ? "has-output" : ""}`} /></ImageGeneration>}
         {queued && !busy && !previewOwnsPlayback && <ImageGeneration className="generator-generation-progress generator-queue-progress" startingLabel={`${outputMediaType === "video" ? "Video" : "Image"} queued…`} generatingLabel={data.queueReason === "provider" ? "Waiting for an available generation slot…" : `Queued. Waiting for ${generator.queueLabel} slot…`}><div className={`generator-generation-preview ${displayedOutputUrl ? "has-output" : ""}`} /></ImageGeneration>}
         {failed && <span className="generator-failed-label" title={String(data.generationError || "Generation failed")}>Failed</span>}
@@ -2795,6 +2792,7 @@ function FrameNodeCardComponent({ id, data, selected }: NodeProps<FrameNode>) {
               seamlessNext={seamlessNext}
               backdropUrl={videoMasterClipThumbnail(selectedClip, selectedPlaybackMedia.usesOutput ? "output" : "original")}
               active={Boolean(selected && !previewOwnsPlayback)}
+              suspended={masterBusy && !previewOwnsPlayback}
               keyboardActive={Boolean(selected && !previewOwnsPlayback)}
               playbackOwnerId={videoMasterPlaybackOwnerId}
               playbackKey={`${selectedClip.id}:${videoMasterSelectedLane}`}
@@ -2852,7 +2850,7 @@ function FrameNodeCardComponent({ id, data, selected }: NodeProps<FrameNode>) {
             {!masterBusy && selectedClip && clipMediaUrl && <button type="button" className="video-master-stage-toggle" aria-label="Toggle Video Master playback" onClick={(event) => { event.preventDefault(); event.stopPropagation(); toggleMasterPlaybackFromStage(); }} onDoubleClick={(event) => { event.preventDefault(); event.stopPropagation(); openMasterPreview(); }} />}
             {selectedClip && !clipMediaUrl && <div className="video-master-empty-stage is-overlay"><Video size={20} /><strong>New scene</strong></div>}
             {masterBusy && !previewOwnsPlayback && <>
-              <svg className="generator-running-outline video-master-running-outline" aria-hidden="true"><rect className="generator-running-runner" x="2" y="2" width="calc(100% - 4px)" height="calc(100% - 4px)" rx="2" pathLength="100" /></svg>
+              <GenerationOutline className="video-master-running-outline" radius={2} />
               <ImageGeneration
                 className="generator-generation-progress video-master-generation-progress"
                 startingLabel={masterPreparing
