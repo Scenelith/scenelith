@@ -2,6 +2,7 @@
 
 /* eslint-disable @next/next/no-img-element */
 
+import { generatorNodeWidth } from "@/lib/canvas-node-placement";
 import type { VideoMasterExportAudioMode } from "@/lib/video-export";
 import { incompatibleReferenceRoles } from "@/lib/generator-reference-modes";
 import { canvasNodeLabel } from "../../collaboration/node-numbers.mjs";
@@ -1910,7 +1911,7 @@ function FrameNodeCardComponent({ id, data, selected }: NodeProps<FrameNode>) {
     const ratioCss = /^\d+:\d+$/.test(selectedRatio) ? selectedRatio.replace(":", " / ") : "16 / 9";
     const [ratioWidth, ratioHeight] = String(data.aspectRatio || "4:5").split(":").map(Number);
     const ratioValue = Number.isFinite(ratioWidth / ratioHeight) ? ratioWidth / ratioHeight : 16 / 9;
-    const generatorWidth = ratioValue >= 1.65 ? 620 : ratioValue >= 1.2 ? 520 : 430;
+    const generatorWidth = generatorNodeWidth(ratioValue);
     const busy = generator.generatingNodeIds.includes(id);
     const queued = data.status === "queued";
     const failed = data.status === "failed";

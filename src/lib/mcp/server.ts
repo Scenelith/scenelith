@@ -498,7 +498,7 @@ export function createScenelithMcpServer(principal: McpPrincipal, origin: string
 
     server.registerTool("create_canvas_node", {
       title: "Create canvas node",
-      description: "Create a configured Image Generator, Video Generator, Assistant, or Sticky Note using the same defaults as the Canvas UI. Use place_canvas_asset or place_canvas_identity for media and identity nodes.",
+      description: "Create a configured Image Generator, Video Generator, Assistant, or Sticky Note using the same defaults as the Canvas UI. Use place_canvas_asset or place_canvas_identity for media and identity nodes. Position is a preferred anchor; collisions are shifted to free space. Use nodeDirectory bounds and read the returned position.",
       inputSchema: z.object({
         canvas_id: z.string().min(1),
         expected_revision: z.number().int().nonnegative(),

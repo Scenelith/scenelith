@@ -1,3 +1,4 @@
+import { canvasBoundsOverlap, canvasNodeBounds } from "../src/lib/canvas-node-placement";
 import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
 import { createServer } from "node:http";
@@ -959,6 +960,7 @@ test("MCP visible node directory stays stable across writes and freed slots are 
     const result = await createMcpCanvasNode(principal, { projectId: canvas.id, expectedRevision: canvas.revision, type, position: { x: 0, y: 0 } });
     canvas = result.canvas;
     created.push(result.node);
+    assert.deepEqual(canvas.nodeDirectory.find((entry) => entry.nodeId === result.node.id)?.bounds, canvasNodeBounds(result.node));
   }
   assert.deepEqual(canvas.nodeDirectory.map(n => n.label), ["Image Generator 1", "Image Generator 2", "Video Generator 1"]);
   canvas = await patchMcpCanvas(principal, { projectId: canvas.id, expectedRevision: canvas.revision, operations: [{ type: "remove_node", nodeId: created[0].id }] });
@@ -1040,4 +1042,18 @@ test("MCP batch mode switching follows operation order across edges and attachme
   const frameLast = applyCanvasPatch(graph, [attachVideo, connectFrame]);
   assert.equal(frameLast.edges[0].id, "frame");
   assert.deepEqual(frameLast.nodes[1].data.attachedReferences, []);
+});
+
+
+test("MCP patches place final configured dimensions and preserve explicit moves", () => {
+  const original = { nodes: [], edges: [] };
+  const graph = applyCanvasPatch(original, [
+    { type: "add_node", id: "p1", position: { x: 0, y: 0 }, data: { kind: "prompt", title: "One", aspectRatio: "1:1" } },
+    { type: "add_node", id: "p2", position: { x: 0, y: 440 }, data: { kind: "prompt", title: "Two", aspectRatio: "1:1" } },
+    { type: "update_node", nodeId: "p1", data: { aspectRatio: "9:16" } },
+  ]);
+  assert.equal(canvasBoundsOverlap(canvasNodeBounds(graph.nodes[0]), canvasNodeBounds(graph.nodes[1])), false);
+  assert.deepEqual(original, { nodes: [], edges: [] });
+  const moved = applyCanvasPatch(graph, [{ type: "update_node", nodeId: "p2", position: { x: 0, y: 20 } }]);
+  assert.deepEqual(moved.nodes[1].position, { x: 0, y: 20 });
 });

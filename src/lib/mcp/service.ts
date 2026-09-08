@@ -1,3 +1,4 @@
+import { canvasNodeBounds, canvasNodeSize, placeChangedCanvasNodes } from "../canvas-node-placement";
 import { generatorReferenceChanges, reconcileGeneratorReferenceChanges } from "../generator-reference-modes";
 import { videoMasterSceneDirectory, videoMasterSceneRevision } from "./video-master-scenes";
 import { assignCanvasNodeNumbers, canvasNodeLabel, canvasNodeType } from "../../../collaboration/node-numbers.mjs";
@@ -182,7 +183,7 @@ export async function getMcpCanvas(principal: McpPrincipal, projectId: string) {
     .get(projectId) as Record<string, unknown> | undefined;
   if (!row) throw Object.assign(new Error("Canvas not found"), { status: 404 });
   const canvas = await rowToProject(row, await readMcpCanvasSnapshot(projectId));
-  return { ...canvas, videoMasterScenes: videoMasterSceneDirectory(canvas.graph), nodeDirectory: canvas.graph.nodes.map((node) => ({ nodeId: node.id, type: canvasNodeType(node.data), number: node.data.nodeNumber, label: canvasNodeLabel(node.data), title: node.data.title })) };
+  return { ...canvas, videoMasterScenes: videoMasterSceneDirectory(canvas.graph), nodeDirectory: canvas.graph.nodes.map((node) => ({ nodeId: node.id, type: canvasNodeType(node.data), number: node.data.nodeNumber, label: canvasNodeLabel(node.data), title: node.data.title, bounds: node.hidden ? null : canvasNodeBounds(node) })) };
 }
 
 export async function downloadMcpCanvasNodeOutput(principal: McpPrincipal, input: { projectId: string; nodeId: string; outputIndex?: number }) {
@@ -273,7 +274,7 @@ export function applyCanvasPatch(graphInput: ProjectGraph, operations: CanvasPat
   if (normalized.nodes.length > 500 || normalized.edges.length > 1_000 || JSON.stringify(normalized).length > 2_000_000) {
     throw new Error("The resulting canvas exceeds its safe document limits");
   }
-  return normalized;
+  return placeChangedCanvasNodes(graphInput, normalized);
 }
 
 export async function patchMcpCanvas(principal: McpPrincipal, input: {
@@ -567,7 +568,7 @@ export async function placeMcpCanvasAsset(principal: McpPrincipal, input: {
       modelId: typeof metadata.modelId === "string" ? metadata.modelId : undefined,
       duration: metadata.durationSeconds ? String(metadata.durationSeconds) : undefined,
       videoDurationSeconds: Number(metadata.durationSeconds || metadata.duration || 0) || undefined,
-      videoAspectRatio: Number(metadata.aspectRatio || 0) || undefined,
+      videoAspectRatio: Number(metadata.aspectRatio || Number(metadata.width) / Number(metadata.height)) || undefined,
       generatedAt: asset.created_at,
       status: "ready",
       createdAt: new Date().toISOString(),
@@ -884,10 +885,7 @@ export async function runMcpCanvasGeneration(principal: McpPrincipal, input: {
   if (masterClip && generationCount > 1) throw new Error("Video Master scenes run one generation at a time");
   if (generationCount > 1) {
     const source = inspected.node;
-    const measuredWidth = Number(source.data.nodeWidth || 430);
-    const [ratioWidth, ratioHeight] = String(source.data.aspectRatio || "4:5").split(":").map(Number);
-    const ratio = Number.isFinite(ratioWidth / ratioHeight) ? ratioWidth / ratioHeight : 16 / 9;
-    const measuredHeight = measuredWidth / Math.max(.2, ratio) + 36;
+    const { width: measuredWidth, height: measuredHeight } = canvasNodeSize(source.data);
     const nodeIds = [source.id, ...Array.from({ length: generationCount - 1 }, () => crypto.randomUUID())];
     const incoming = canvas.graph.edges.filter((edge) => edge.target === source.id);
     const operations: CanvasPatchOperation[] = [{ type: "update_node", nodeId: source.id, data: { generationCount: 1, status: "queued", queueReason: "plan", generationError: undefined } }];
@@ -1210,7 +1208,10 @@ export async function importMcpTikTokToCanvas(principal: McpPrincipal, input: {
   }
   const current = await getMcpCanvas(principal, input.projectId);
   const importedMediaType = result.post.mediaType === "video" ? "video" as const : "slideshow" as const;
-  const existingBottom = current.graph.nodes.reduce((bottom, node) => Math.max(bottom, node.position.y + (node.data.kind === "scene" ? 500 : 170)), 0);
+  const existingBottom = current.graph.nodes.filter((node) => !node.hidden).reduce((bottom, node) => {
+    const bounds = canvasNodeBounds(node);
+    return Math.max(bottom, bounds.y + bounds.height);
+  }, 0);
   const blockTop = current.graph.nodes.length ? existingBottom + 160 : 60;
   const sourceId = crypto.randomUUID();
   const videoAsset = importedMediaType === "video" ? result.assets.find((asset) => asset.kind === "video") : undefined;
