@@ -302,8 +302,7 @@ test("automation steps separate a plain-language guide from configuration and de
   assert.match(canvasSource, /setAutomationExecution\(\{[\s\S]*nodeRuns: \(run\.nodeRuns \|\| \[\]\)\.map/);
   assert.match(themeSource, /is-execution-running/);
   assert.match(themeSource, /\.automation-flow-node\.is-execution-running \{ border-color:var\(--color-border-strong\); box-shadow:none; \}/);
-  assert.match(workflowEditorSource, /generator-running-outline automation-flow-node-running-outline/);
-  assert.match(workflowEditorSource, /<rect className="generator-running-runner"[^>]*pathLength="100"/);
+  assert.match(workflowEditorSource, /<GenerationOutline className="automation-flow-node-running-outline" radius=\{15\}/);
   assert.match(globalsSource, /\.generator-running-runner \{[^}]*animation:generator-border-runner 1\.85s linear infinite/s);
   assert.doesNotMatch(workflowEditorSource, /LoaderCircle className="spin"/);
   assert.match(workflowEditorSource, /function AutomationExecutionEdge/);

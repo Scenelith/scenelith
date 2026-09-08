@@ -59,7 +59,7 @@ test("Master playhead scene crossings cannot repair a compatible model in a loop
 
 test("selected canvas Video Master owns the Space play and pause shortcut after scrubbing", () => {
   assert.match(frameNode, /<VideoMasterPlayer[\s\S]*?active=\{Boolean\(selected && !previewOwnsPlayback\)\}[\s\S]*?keyboardActive=\{Boolean\(selected && !previewOwnsPlayback\)\}/);
-  assert.match(masterPlayer, /if \(!keyboardActive\) return;[\s\S]*?event\.code !== "Space"[\s\S]*?focusedInput\.classList\.contains\("video-scene-position-slider"\)[\s\S]*?videoPlaybackManager\.pause\(playbackOwnerId, playbackKey\)[\s\S]*?videoPlaybackManager\.play\(playbackOwnerId, playbackKey/);
+  assert.match(masterPlayer, /if \(!keyboardActive \|\| suspended\) return;[\s\S]*?event\.code !== "Space"[\s\S]*?focusedInput\.classList\.contains\("video-scene-position-slider"\)[\s\S]*?videoPlaybackManager\.pause\(playbackOwnerId, playbackKey\)[\s\S]*?videoPlaybackManager\.play\(playbackOwnerId, playbackKey/);
 });
 
 test("every Video Master play entry replays a completed clip from its beginning", () => {

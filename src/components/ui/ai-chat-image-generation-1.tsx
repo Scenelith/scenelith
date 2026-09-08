@@ -1,7 +1,7 @@
 "use client";
 
 import * as React from "react";
-import { motion, usePageInView, useReducedMotion } from "motion/react";
+import { motion, useInView, usePageInView, useReducedMotion } from "motion/react";
 import { cn } from "@/lib/utils";
 
 export interface ImageGenerationProps {
@@ -19,8 +19,10 @@ export function ImageGeneration({
 }: ImageGenerationProps) {
   const [loadingState, setLoadingState] = React.useState<"starting" | "generating">("starting");
   const pageInView = usePageInView();
+  const rootRef = React.useRef<HTMLDivElement>(null);
+  const inView = useInView(rootRef, { initial: true });
   const reducedMotion = useReducedMotion();
-  const animateSweep = pageInView && !reducedMotion;
+  const animateSweep = pageInView && inView && !reducedMotion;
   const visibleLabel = loadingState === "starting" ? startingLabel : generatingLabel;
 
   React.useEffect(() => {
@@ -29,7 +31,7 @@ export function ImageGeneration({
   }, []);
 
   return (
-    <div className={cn("image-generation-state", className)}>
+    <div ref={rootRef} className={cn("image-generation-state", className)}>
       <span className="image-generation-label" role="status" aria-live="polite" aria-label={visibleLabel} data-label={visibleLabel} />
       <div className="image-generation-frame">
         {children}

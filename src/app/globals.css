@@ -829,7 +829,10 @@ button { color: inherit; }
 .image-generation-scrim { position: absolute; z-index: 1; inset: 0; background:linear-gradient(180deg,rgba(5,8,10,.04),rgba(5,8,10,.22)); box-shadow:inset 0 0 90px rgba(3,5,7,.3); pointer-events: none; }
 .image-generation-shimmer { width: 46%; position: absolute; z-index: 2; top: -18%; bottom: -18%; left: 0; background: linear-gradient(90deg,transparent,rgba(171,235,212,.09),rgba(238,245,241,.18),rgba(171,235,212,.08),transparent); transform: translate3d(-160%,0,0) skewX(-12deg); will-change: transform; pointer-events: none; }
 .generator-media-stage.is-generating,.generator-media-stage.is-queued { border-color:var(--color-border-strong) !important; box-shadow:none !important; }
-.generator-running-outline { position:absolute; z-index:9; inset:-2px; width:calc(100% + 4px); height:calc(100% + 4px); overflow:visible; pointer-events:none; }
+/* A bounded layer avoids rasterizing the canvas behind the moving stroke.
+   Promote without a transform to retain its rasterization at fractional zoom. */
+.generator-running-outline { position:absolute; z-index:9; inset:-2px; width:calc(100% + 4px); height:calc(100% + 4px); contain:strict; will-change:opacity; pointer-events:none; }
+.generator-running-outline-svg { width:100%; height:100%; display:block; }
 .generator-running-runner { fill:none; stroke:var(--color-mint); stroke-width:3.5; stroke-linecap:round; stroke-linejoin:round; stroke-dasharray:8 92; stroke-dashoffset:0; vector-effect:non-scaling-stroke; opacity:.9; animation:generator-border-runner 1.85s linear infinite; }
 .generator-media-stage.is-queued .generator-running-runner { opacity:.76; animation-duration:2.35s; }
 @keyframes generator-border-runner { to { stroke-dashoffset:-100; } }
