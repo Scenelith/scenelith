@@ -20,7 +20,7 @@ Status values:
 | Create/remove raw edges | `patch_canvas` | implemented | Structural test; semantic tools remain preferred |
 | Connect typed inputs | `connect_canvas_nodes` | implemented | Text/image/video/audio compatibility and capacity tests |
 | Remove a connection | `patch_canvas.remove_edge` | implemented | Protocol test |
-| Duplicate a selection | `duplicate_canvas_nodes` | implemented | Internal-edge and lineage-removal protocol test |
+| Copy one node or a selection with inputs | `duplicate_canvas_node`, `duplicate_canvas_nodes` | implemented | Incoming/internal edges, semantic ports, lineage removal, persistence and conflict protocol tests |
 | Set viewport | `patch_canvas.set_viewport` | implemented | Persisted viewport test |
 | Concurrent human/agent writes | every canvas mutation | verified | Exact revision conflict test |
 | Undo/redo | client-local UI history | not applicable | Agents use explicit revision-safe inverse mutations |

@@ -105,7 +105,7 @@ These read tools are available after `mcp:read` is approved:
 
 Write tools appear only when their corresponding scope was approved:
 
-- Canvas graph: `create_canvas`, `import_canvas_document`, `patch_canvas`, `create_canvas_node`, `configure_canvas_node`, `connect_canvas_nodes`, `place_canvas_asset`, `attach_canvas_reference`, `detach_canvas_reference`, `place_canvas_identity`, `duplicate_canvas_nodes`, `select_canvas_output`, `create_canvas_remake_branch`
+- Canvas graph: `create_canvas`, `import_canvas_document`, `patch_canvas`, `create_canvas_node`, `configure_canvas_node`, `connect_canvas_nodes`, `place_canvas_asset`, `attach_canvas_reference`, `detach_canvas_reference`, `place_canvas_identity`, `duplicate_canvas_node`, `duplicate_canvas_nodes`, `select_canvas_output`, `create_canvas_remake_branch`
 - Video editing: `create_video_master`, `configure_video_master_scene`, `update_canvas_video_timeline`, `create_canvas_segment_node`, `replace_canvas_video_segment`, `add_video_master_asset`, `add_video_master_scene`, `move_video_master_asset_lane`, `copy_video_master_output`, `remove_video_master_scene`, `export_video_master_media`
 - Assistant: `run_canvas_assistant`, `compose_canvas_prompt`
 - Generation: `run_canvas_generation`, `get_canvas_generation`, `cancel_canvas_generation`, `edit_canvas_image`
@@ -191,3 +191,7 @@ Connecting a new frame or multimodal reference automatically disconnects incompa
 ### Generation credit reporting
 
 `creditCost` is the launch quote, not measured provider consumption. Metered editions also return `creditUsage` from `run_canvas_generation`, `get_canvas_generation`, and the Tasks API. Use `unitLabel` to name the account credits, `reservedCredits` for a pending reservation, `chargedCredits` for settled spend, and `refundedCredits` for credits actually returned to the balance. Expired subscription units, when applicable, are reported separately as `expiredCredits`. A failed task does not by itself prove a refund; use its account usage record. If the report is absent or unavailable, do not infer actual spend from the quote. Unmetered editions omit account credit usage.
+
+### Copy a connected node
+
+Read `get_canvas`, resolve the label through `nodeDirectory`, then call `duplicate_canvas_node` with `canvas_id`, `expected_revision`, and `node_id`. The returned `node` is the saved copy with its final position. Its settings, saved outputs, attachments, and incoming connections are preserved without generating new media. Sources remain shared; original downstream nodes are unchanged. `duplicate_canvas_nodes` accepts `node_ids` for a selection and remaps internal connections to the copies. Both tools remove automation lineage and require `canvas:write`.

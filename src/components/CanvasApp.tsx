@@ -1070,6 +1070,7 @@ function CanvasWorkspace({ initialProject, projects: initialProjects, initialWor
         clipboard.nodeIds,
         uid,
         { x: 48 * pasteCount, y: 48 * pasteCount },
+        new Set(nodesRef.current.map((node) => node.id)),
       );
       const nextNodes = [
         ...nodesRef.current.map((node) => node.selected ? { ...node, selected: false } : node),

@@ -39,6 +39,7 @@ import {
   connectMcpCanvasNodes,
   connectMcpAutomationNodes,
   duplicateMcpCanvasNodes,
+  duplicateMcpCanvasNode,
   downloadMcpCanvasNodeOutput,
   detachMcpCanvasReference,
   deleteMcpAutomationFixture,
@@ -613,9 +614,19 @@ export function createScenelithMcpServer(principal: McpPrincipal, origin: string
       (result) => result,
     ));
 
+    server.registerTool("duplicate_canvas_node", {
+      title: "Copy a canvas node",
+      description: "Copy one node with its settings, saved outputs, attached references and all incoming connections. Resolve node_id from get_canvas nodeDirectory. Input sources stay shared, outgoing connections to existing nodes stay unchanged, and no generation runs. Returns the new node and canvas revision; offset is optional and placement avoids overlaps.",
+      inputSchema: z.object({ canvas_id: z.string().min(1), expected_revision: z.number().int().nonnegative(), node_id: z.string().min(1), offset: point.optional() }).strict(),
+      annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: false },
+    }, ({ canvas_id, expected_revision, node_id, offset }) => safeTool(
+      () => duplicateMcpCanvasNode(principal, { projectId: canvas_id, expectedRevision: expected_revision, nodeId: node_id, offset }),
+      (result) => result,
+    ));
+
     server.registerTool("duplicate_canvas_nodes", {
       title: "Duplicate canvas nodes",
-      description: "Duplicate selected nodes and only the connections between them, offsetting the copy and removing automation lineage just like manual Canvas duplication.",
+      description: "Copy a selection with its incoming connections, settings, saved outputs and attached references. Internal connections link the copies; external input sources stay shared. Outgoing connections to existing nodes stay unchanged. Removes automation lineage and never runs generation. For one node, prefer duplicate_canvas_node.",
       inputSchema: z.object({ canvas_id: z.string().min(1), expected_revision: z.number().int().nonnegative(), node_ids: z.array(z.string().min(1)).min(1).max(100), offset: point.optional() }).strict(),
       annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: false },
     }, ({ canvas_id, expected_revision, node_ids, offset }) => safeTool(

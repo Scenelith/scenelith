@@ -619,6 +619,9 @@ export async function duplicateMcpCanvasNodes(principal: McpPrincipal, input: {
 }) {
   const current = await getMcpCanvas(principal, input.projectId);
   if (current.revision !== input.expectedRevision) throw Object.assign(new Error(`Canvas changed. Read it again and use revision ${current.revision}.`), { code: "CANVAS_REVISION_CONFLICT", status: 409, currentRevision: current.revision });
+  for (const nodeId of input.nodeIds) {
+    if (!current.graph.nodes.some((node) => node.id === nodeId)) throw new Error(`Canvas node ${nodeId} was not found`);
+  }
   const duplicated = duplicateGraphSelection(current.graph.nodes, current.graph.edges, input.nodeIds, () => crypto.randomUUID(), input.offset || { x: 48, y: 48 });
   if (!duplicated.nodes.length) throw new Error("Choose at least one existing canvas node to duplicate");
   const operations: CanvasPatchOperation[] = [
@@ -627,6 +630,16 @@ export async function duplicateMcpCanvasNodes(principal: McpPrincipal, input: {
   ];
   const canvas = await patchMcpCanvas(principal, { projectId: input.projectId, expectedRevision: input.expectedRevision, operations });
   return { canvas, duplicatedNodeIds: duplicated.nodes.map((node) => node.id), duplicatedEdgeIds: duplicated.edges.map((edge) => edge.id) };
+}
+
+export async function duplicateMcpCanvasNode(principal: McpPrincipal, input: {
+  projectId: string;
+  expectedRevision: number;
+  nodeId: string;
+  offset?: { x: number; y: number };
+}) {
+  const result = await duplicateMcpCanvasNodes(principal, { ...input, nodeIds: [input.nodeId] });
+  return { ...result, sourceNodeId: input.nodeId, node: result.canvas.graph.nodes.find((node) => node.id === result.duplicatedNodeIds[0])! };
 }
 
 type McpCanvasInputReference = CanvasPromptReference & {

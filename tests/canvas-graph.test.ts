@@ -395,6 +395,75 @@ test("duplicate selection offsets nodes, preserves internal edges, and drops aut
 });
 
 
+test("copying one generator preserves all external input roles without changing its downstream nodes", () => {
+  const nodes = [node("identity", "persona"), node("text", "assistant"), node("motion", "source"), node("generator", "prompt", {
+    prompt: "Keep my settings", modelId: "seedance-2.0", nodeNumber: 12,
+    attachedReferences: [{ assetId: "attached", url: "/api/assets/attached", title: "Reference" }],
+    generatedOutputs: [{ url: "/api/assets/output", assetId: "output", mediaType: "video" }], activeGeneratedOutputIndex: 0,
+  }), node("downstream", "prompt")];
+  const edges: FrameEdge[] = [
+    { id: "identity-in", source: "identity", target: "generator", sourceHandle: "output", targetHandle: "reference-image-input", className: "custom is-automation-lineage-edge", data: { portType: "image", inputRole: "reference-image", automationKind: "tiktok-slideshow", automationSourceNodeId: "identity", automationSlideIndex: 1 } },
+    { id: "text-in", source: "text", target: "generator", sourceHandle: "text-output", targetHandle: "text-input", data: { portType: "text" } },
+    { id: "motion-in", source: "motion", target: "generator", sourceHandle: "segment-output:segment-1", targetHandle: "reference-video-input", data: { portType: "video", inputRole: "reference-video", sourceSegmentId: "segment-1" } },
+    { id: "out", source: "generator", target: "downstream" },
+  ];
+  const before = structuredClone({ nodes, edges });
+  let id = 0;
+  const copy = duplicateGraphSelection(nodes, edges, ["generator"], (prefix) => `${prefix}-${++id}`);
+  assert.equal(copy.nodes.length, 1);
+  assert.equal(copy.nodes[0].data.nodeNumber, undefined);
+  assert.deepEqual(copy.nodes[0].data.attachedReferences, nodes[3].data.attachedReferences);
+  assert.deepEqual(copy.nodes[0].data.generatedOutputs, nodes[3].data.generatedOutputs);
+  assert.equal(copy.nodes[0].data.prompt, "Keep my settings");
+  assert.deepEqual(copy.edges.map((edge) => [edge.source, edge.target, edge.sourceHandle, edge.targetHandle]), edges.slice(0, 3).map((edge) => [edge.source, copy.firstNodeId, edge.sourceHandle, edge.targetHandle]));
+  assert.equal(copy.edges[0].data?.automationKind, undefined);
+  assert.equal(copy.edges[0].className, "custom");
+  assert.equal(copy.edges[2].data?.sourceSegmentId, "segment-1");
+  assert.deepEqual({ nodes, edges }, before);
+  copy.nodes[0].data.generatedOutputs![0].url = "changed";
+  assert.equal(nodes[3].data.generatedOutputs![0].url, "/api/assets/output");
+  const restored = normalizeEdgePorts([...edges, ...copy.edges], [...nodes, ...copy.nodes]);
+  assert.equal(restored.filter((edge) => edge.target === copy.firstNodeId).length, 3);
+  assert.equal(restored.filter((edge) => edge.target === "downstream").length, 1);
+  const disconnected = normalizeEdgePorts(restored.filter((edge) => edge.id !== copy.edges[0].id), [...nodes, ...copy.nodes]);
+  assert.equal(disconnected.some((edge) => edge.source === "identity" && edge.target === copy.firstNodeId), false);
+});
+
+test("copying a group remaps internal inputs and preserves shared external inputs", () => {
+  const nodes = [node("external", "scene"), node("a", "prompt"), node("b", "prompt"), node("outside", "prompt")];
+  const edges: FrameEdge[] = [
+    { id: "external-a", source: "external", target: "a" },
+    { id: "external-b", source: "external", target: "b" },
+    { id: "internal", source: "a", target: "b" },
+    { id: "out", source: "b", target: "outside" },
+  ];
+  let id = 0;
+  const copy = duplicateGraphSelection(nodes, edges, ["b", "a"], () => `copy-${++id}`);
+  assert.deepEqual(copy.edges.map((edge) => [edge.source, edge.target]), [["external", "copy-1"], ["external", "copy-2"], ["copy-1", "copy-2"]]);
+});
+
+test("pasting after an external source is deleted skips dangling edges but retains copied sources", () => {
+  const nodes = [node("source", "scene"), node("target", "prompt")];
+  const edges: FrameEdge[] = [{ id: "input", source: "source", target: "target" }];
+  let id = 0;
+  const single = duplicateGraphSelection(nodes, edges, ["target"], () => `copy-${++id}`, undefined, new Set(["target"]));
+  assert.equal(single.edges.length, 0);
+  const group = duplicateGraphSelection(nodes, edges, ["source", "target"], () => `copy-${++id}`, undefined, new Set());
+  assert.equal(group.edges.length, 1);
+  assert.equal(group.edges[0].source, group.nodes[0].id);
+});
+
+test("copying a Master retains clip-local semantic input connections", () => {
+  const nodes = [node("source", "source", { mediaType: "video" }), node("master", "videoMaster", { videoMasterClips: [{ id: "clip-a", prompt: "My scene", duration: 5, sourceNodeId: "source", sourceSegmentId: "scene-a" }] })];
+  const edges: FrameEdge[] = [{ id: "input", source: "source", sourceHandle: "segment-output:scene-a", target: "master", targetHandle: "master:clip-a:motion-video-input", data: { portType: "video", inputRole: "motion-video", masterClipId: "clip-a", sourceSegmentId: "scene-a" } }];
+  let id = 0;
+  const copy = duplicateGraphSelection(nodes, edges, ["master"], () => `copy-${++id}`);
+  assert.deepEqual(copy.edges[0].data, edges[0].data);
+  assert.equal(copy.edges[0].targetHandle, edges[0].targetHandle);
+  assert.deepEqual(copy.nodes[0].data.videoMasterClips, nodes[1].data.videoMasterClips);
+  assert.equal(normalizeEdgePorts(copy.edges, [...nodes, ...copy.nodes])[0].target, copy.firstNodeId);
+});
+
 test("legacy Master handles retain scene and input semantics without prepared media", () => {
   const nodes = [node("source", "source", { mediaType: "video" }), node("master", "videoMaster")];
   const edges: FrameEdge[] = [{ id: "legacy", source: "source", sourceHandle: "segment-output:scene-a", target: "master", targetHandle: "master:clip-a:motion-video-input" }];
