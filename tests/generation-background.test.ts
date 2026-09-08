@@ -241,3 +241,78 @@ test("project snapshots increment revisions and reject a stale whole-graph save"
   assert.deepEqual(versions.map((version) => version.revision), [saved.snapshot.revision]);
   assert.deepEqual(versions.map((version) => (JSON.parse(version.graph_json) as ProjectGraph).nodes.length), [1]);
 });
+
+async function seedLaterAttempt(seeded: Awaited<ReturnType<typeof seedGeneration>>, status = "completed") {
+  const id = crypto.randomUUID();
+  await db.prepare(`INSERT INTO generations (id, project_id, usage_workspace_id, node_id, prompt, status, operation, model_id, media_type, credit_cost, created_at, updated_at)
+    SELECT ?, project_id, usage_workspace_id, node_id, 'next', ?, operation, model_id, media_type, credit_cost, created_at + interval '1 second', updated_at + interval '1 second'
+    FROM generations WHERE id = ?`).run(id, status, seeded.generationId);
+  return id;
+}
+
+test("old failures and late output cannot replace a newer attempt's result or status", async () => {
+  const seeded = await seedGeneration();
+  await db.prepare("UPDATE generations SET status = 'running' WHERE id = ?").run(seeded.generationId);
+  const newer = await seedLaterAttempt(seeded);
+  const currentAsset = await state.persistGenerationOutput(newer, tinyPng);
+  await state.finalizeGenerationFromWebhook({ generationId: seeded.generationId, status: "failed", error: "Old failure" });
+  let node = (await database.readProjectGraphSnapshot(seeded.projectId)).graph.nodes[0];
+  assert.equal(node.data.status, "ready"); assert.equal(node.data.generationError, undefined);
+  assert.equal(node.data.assetId, currentAsset);
+  const olderAsset = await state.persistGenerationOutput(seeded.generationId, tinyPng);
+  node = (await database.readProjectGraphSnapshot(seeded.projectId)).graph.nodes[0];
+  assert.equal(node.data.assetId, currentAsset); assert.equal(node.data.status, "ready");
+  assert.ok(node.data.generatedOutputs?.some((item) => item.assetId === olderAsset));
+});
+
+test("replaying saved success repairs stale error without selecting a different variation or calling provider", async () => {
+  const seeded = await seedGeneration();
+  await state.persistGenerationOutput(seeded.generationId, tinyPng);
+  await database.mutateProjectGraphSnapshot(seeded.projectId, (graph) => {
+    graph.nodes[0].data = { ...graph.nodes[0].data, status: "failed", generationError: "Stale", generationAttemptCreatedAt: undefined, generatedAt: new Date(Date.now() + 15000).toISOString(), outputUrl: "/selected-older.png", activeGeneratedOutputIndex: 0 };
+    return graph;
+  });
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = async () => { throw new Error("Saved success must not query an expiring provider"); };
+  try { await state.reconcileGeneration(seeded.generationId); } finally { globalThis.fetch = originalFetch; }
+  const node = (await database.readProjectGraphSnapshot(seeded.projectId)).graph.nodes[0];
+  assert.equal(node.data.status, "ready"); assert.equal(node.data.generationError, undefined);
+  assert.equal(node.data.outputUrl, "/selected-older.png");
+  await state.finalizeGenerationFromWebhook({ generationId: seeded.generationId, status: "failed", error: "Delayed failure" });
+  assert.equal((await database.readProjectGraphSnapshot(seeded.projectId)).graph.nodes[0].data.status, "ready");
+});
+
+test("an old expired unsaved result cannot manufacture a node failure when timeout was refused", async () => {
+  const seeded = await seedGeneration();
+  await db.prepare("UPDATE generations SET created_at = ?, updated_at = ?, provider_task_id = 'expired-test', status = 'success', output_url = ? WHERE id = ?")
+    .run("2020-01-01T00:00:00Z", "2020-01-01T00:00:00Z", "https://expired.test/image.png", seeded.generationId);
+  const newer = await seedLaterAttempt(seeded);
+  await state.persistGenerationOutput(newer, tinyPng);
+  const before = (await database.readProjectGraphSnapshot(seeded.projectId)).graph.nodes[0];
+  const originalFetch = globalThis.fetch, oldKey = process.env.KIE_API_KEY;
+  process.env.KIE_API_KEY = "test-key";
+  const calls: string[] = [];
+  globalThis.fetch = async (url) => {
+    calls.push(String(url));
+    if (String(url).startsWith("https://api.kie.ai/")) return Response.json({ code: 200, data: { state: "success", resultUrls: ["https://expired.test/image.png"] } });
+    return new Response("expired", { status: 403 });
+  };
+  try { await state.reconcileGeneration(seeded.generationId); } finally {
+    globalThis.fetch = originalFetch;
+    if (oldKey === undefined) delete process.env.KIE_API_KEY; else process.env.KIE_API_KEY = oldKey;
+  }
+  assert.ok(calls.includes("https://expired.test/image.png"));
+  assert.deepEqual((await database.readProjectGraphSnapshot(seeded.projectId)).graph.nodes[0], before);
+});
+
+test("the newest genuine failure remains visible and old success cannot clear it", async () => {
+  const seeded = await seedGeneration();
+  await state.persistGenerationOutput(seeded.generationId, tinyPng);
+  const newer = await seedLaterAttempt(seeded, "running");
+  await state.finalizeGenerationFromWebhook({ generationId: newer, status: "failed", error: "Current failure" });
+  let node = (await database.readProjectGraphSnapshot(seeded.projectId)).graph.nodes[0];
+  assert.equal(node.data.status, "failed"); assert.equal(node.data.generationError, "Current failure");
+  await state.reconcileGeneration(seeded.generationId);
+  node = (await database.readProjectGraphSnapshot(seeded.projectId)).graph.nodes[0];
+  assert.equal(node.data.status, "failed"); assert.equal(node.data.generationError, "Current failure");
+});

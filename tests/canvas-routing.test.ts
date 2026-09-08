@@ -146,7 +146,7 @@ test("cached canvases remain protected until their live document has synced", ()
   const cachedBody = switchBody.slice(switchBody.indexOf("if (cachedTarget)"), switchBody.indexOf("// The realtime document"));
   assert.doesNotMatch(cachedBody, /setProjectHydratingId\(null\)/);
   assert.match(switchBody, /stays[\s\S]*behind the read-only hydration guard until Yjs confirms/);
-  assert.match(canvasApp, /savedGeneratedAt >= taskGeneratedAt/);
+  assert.match(canvasApp, /restoreGeneratorTask\(node, task, completedOutputsByNode\.get\(node\.id\)\)/);
   assert.match(globals, /\.canvas-project-loading \{[^}]*z-index:20;/);
   assert.match(globals, /\.tool-rail \{ z-index:\s*21;/);
 });

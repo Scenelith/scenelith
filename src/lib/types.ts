@@ -117,6 +117,8 @@ export type FrameNodeData = {
   textModelId?: string;
   status?: "idle" | "queued" | "working" | "ready" | "failed";
   generationError?: string;
+  /** Creation time of the attempt owning the node status; never its last poll time. */
+  generationAttemptCreatedAt?: string;
   createdAt?: string;
   generatedAt?: string;
   queueReason?: "plan" | "provider";

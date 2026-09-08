@@ -2,6 +2,7 @@
 
 /* eslint-disable @next/next/no-img-element */
 
+import { generationAttemptTime, restoreGeneratorTask } from "@/lib/generator-task-state";
 import { assignCanvasNodeNumbers } from "../../collaboration/node-numbers.mjs";
 import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState, type CSSProperties, type Dispatch, type SetStateAction } from "react";
 import dynamic from "next/dynamic";
@@ -609,7 +610,6 @@ function CanvasWorkspace({ initialProject, projects: initialProjects, initialWor
     );
   }
   const automationCameraRequestRef = useRef(0);
-  const restoredTaskStateRef = useRef<Record<string, string>>({});
   const selectedNode = nodes.find((node) => node.id === selectedId) || null;
   const applyCollaborativeGraph = useCallback((graph: ProjectRecord["graph"]) => {
     const stableNodes = stableGraphNodes(graph.nodes || []);
@@ -975,17 +975,12 @@ function CanvasWorkspace({ initialProject, projects: initialProjects, initialWor
     const restoreTasks = (event: Event) => {
       const tasks = ((event as CustomEvent<{ tasks?: BackgroundTaskRecord[] }>).detail?.tasks || [])
         .filter((task) => task.kind === "generation" && task.projectId === project.id);
-      const activeIds = tasks
-        .filter((task) => task.status === "queued" || task.status === "running")
-        .map((task) => task.nodeId);
-      const nextActiveIds = Array.from(new Set(activeIds));
-      setBackgroundGenerationNodeIds((current) => current.length === nextActiveIds.length && current.every((id) => nextActiveIds.includes(id)) ? current : nextActiveIds);
-
       const latestByNode = new Map<string, BackgroundTaskRecord>();
       const completedOutputsByNode = new Map<string, NonNullable<FrameNode["data"]["generatedOutputs"]>>();
       for (const task of tasks) {
         const prior = latestByNode.get(task.nodeId);
-        if (!prior || Date.parse(task.createdAt) > Date.parse(prior.createdAt)) latestByNode.set(task.nodeId, task);
+        if (!prior || generationAttemptTime(task.createdAt) > generationAttemptTime(prior.createdAt)
+          || (generationAttemptTime(task.createdAt) === generationAttemptTime(prior.createdAt) && task.id > prior.id)) latestByNode.set(task.nodeId, task);
         if (task.status === "completed" && task.outputUrl) {
           const output = {
             url: task.outputUrl,
@@ -996,68 +991,32 @@ function CanvasWorkspace({ initialProject, projects: initialProjects, initialWor
           completedOutputsByNode.set(task.nodeId, [...(completedOutputsByNode.get(task.nodeId) || []), output]);
         }
       }
+      const nextActiveIds = [...latestByNode.values()].filter((task) => {
+        if (task.status !== "queued" && task.status !== "running") return false;
+        const node = nodesRef.current.find((candidate) => candidate.id === task.nodeId);
+        if (!node) return false;
+        const started = generationAttemptTime(task.createdAt);
+        return !(started <= generationAttemptTime(node.data.generatedAt) || started < generationAttemptTime(node.data.generationAttemptCreatedAt));
+      }).map((task) => task.nodeId);
+      setBackgroundGenerationNodeIds((current) => current.length === nextActiveIds.length && current.every((id) => nextActiveIds.includes(id)) ? current : nextActiveIds);
+
       let terminalChanged = false;
       setNodes((current) => {
         let changed = false;
         const next = current.map((node) => {
           const task = latestByNode.get(node.id);
           if (!task) return node;
-          const taskSignature = `${task.status}:${task.updatedAt}:${task.assetId || task.outputUrl || ""}`;
           if (node.data.kind === "videoMaster") {
             const restored = restoreVideoMasterTask(node, task);
             if (restored !== node) changed = true;
             return restored;
           }
-          if ((task.status === "completed" || task.status === "failed") && restoredTaskStateRef.current[task.id] === taskSignature) return node;
-          if (task.status === "queued" || task.status === "running") {
-            const status = task.status === "queued" ? "queued" as const : "working" as const;
-            const queueReason = task.status === "queued" ? "provider" as const : undefined;
-            if (node.data.status === status && node.data.queueReason === queueReason) return node;
+          const restored = restoreGeneratorTask(node, task, completedOutputsByNode.get(node.id));
+          if (restored !== node) {
             changed = true;
-            return { ...node, data: { ...node.data, status, queueReason, generationError: undefined } };
+            if (task.status === "completed" || task.status === "failed") terminalChanged = true;
           }
-          restoredTaskStateRef.current[task.id] = taskSignature;
-          const savedGeneratedAt = Date.parse(String(node.data.generatedAt || ""));
-          const taskGeneratedAt = Date.parse(task.updatedAt);
-          if (task.status === "completed" && Number.isFinite(savedGeneratedAt) && Number.isFinite(taskGeneratedAt) && savedGeneratedAt >= taskGeneratedAt) {
-            return node;
-          }
-          terminalChanged = true;
-          changed = true;
-          if (task.status === "failed") {
-            return { ...node, data: { ...node.data, status: "failed" as const, queueReason: undefined, generationError: task.error || "Generation failed" } };
-          }
-          if (!task.outputUrl) return node;
-          const output = {
-            url: task.outputUrl,
-            assetId: task.assetId || undefined,
-            mediaType: task.mediaType || "image" as const,
-            modelId: task.modelId,
-          };
-          const previousOutput = task.operation === "edit" && node.data.outputUrl
-            ? [{ url: node.data.outputUrl, assetId: node.data.assetId, mediaType: node.data.mediaType || "image" as const, modelId: node.data.modelId }]
-            : [];
-          const recoveredOutputs = completedOutputsByNode.get(node.id) || [];
-          const outputHistory = [...(node.data.generatedOutputs || []), ...previousOutput, ...recoveredOutputs, output]
-            .filter((item, index, items) => items.findIndex((candidate) => candidate.url === item.url) === index)
-            .slice(-20);
-          return {
-            ...node,
-            data: {
-              ...node.data,
-              ...(task.operation === "edit" ? { subtitle: "Image edited in place" } : {}),
-              outputUrl: output.url,
-              assetId: output.assetId,
-              mediaType: output.mediaType,
-              modelId: output.modelId,
-              generatedAt: task.updatedAt,
-              generatedOutputs: outputHistory,
-              activeGeneratedOutputIndex: outputHistory.length - 1,
-              status: "ready" as const,
-              queueReason: undefined,
-              generationError: undefined,
-            },
-          };
+          return restored;
         });
         if (changed) nodesRef.current = next;
         return changed ? next : current;
