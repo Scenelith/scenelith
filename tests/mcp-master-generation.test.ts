@@ -361,3 +361,21 @@ test("an unresolved optional scene input blocks dispatch instead of disappearing
   await assert.rejects(runMcpCanvasGeneration(principal, await request()), /connected scene input has no ready asset/);
   assert.equal(reserve.mock.callCount(), 0);
 });
+
+test("Omni MCP admission keeps the complete scene reference and reserves its fixed video-input price", async () => {
+  await configureMcpVideoMasterClip(principal, { ...await request(), modelId: "gemini-omni-video", duration: 4, resolution: "720P" });
+  const result = await runMcpCanvasGeneration(principal, await request());
+  assert.ok("generationId" in result);
+  const payload = await dispatch(result.generationId);
+  assert.equal(payload.duration, "4", "the API still requires a duration field even though video mode ignores it");
+  assert.equal(payload.references.length, 1);
+  assert.equal(payload.references[0].durationSeconds, 5.3, "the 5.3s scene is not shortened to the ignored 4s setting");
+  assert.ok(payload.references[0].sizeBytes > 0);
+  const body = buildKieInput("gemini-omni-video", payload, [{ ...payload.references[0], assetUrl: "https://example.test/scene.mp4" }]);
+  assert.deepEqual(body.video_list, [{ url: "https://example.test/scene.mp4", start: 0, ends: 5.3 }]);
+  assert.equal(reserve.mock.calls.length, 1);
+  assert.equal(reserve.mock.calls[0].arguments[0].credits, 168);
+  const current = await getMcpCanvas(principal, "scene-canvas");
+  assert.equal(current.graph.nodes[1].data.videoMasterClips![0].sourceUrl, graph.nodes[1].data.videoMasterClips![0].sourceUrl);
+  assert.deepEqual(current.graph.nodes[1].data.videoMasterClips![1], graph.nodes[1].data.videoMasterClips![1]);
+});

@@ -3,9 +3,10 @@ import type { FrameEdge, ProjectGraph } from "./types";
 /** The last explicitly connected input chooses the provider's reference mode. */
 export function incompatibleReferenceRoles(modelId: string | undefined, role: string | undefined): string[] {
   const frames = ["start-frame", "end-frame"];
-  const references = String(modelId).startsWith("seedance-2")
+  const references = String(modelId).startsWith("seedance-2") || String(modelId).startsWith("wan-3")
     ? ["reference-image", "reference-video", "reference-audio"]
-    : modelId === "wan-2-7" ? ["reference-video"]
+    : modelId === "gemini-omni-flash-1-1" ? ["reference-image", "reference-video"]
+      : modelId === "wan-2-7" ? ["reference-video"]
       : modelId === "veo-3-1-fast" ? ["reference-image"] : [];
   if (!references.length) return [];
   return frames.includes(role || "") ? references : references.includes(role || "") ? frames : [];

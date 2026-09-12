@@ -182,9 +182,9 @@ export type FrameNodeData = {
   modelId?: string;
   duration?: string;
   generateAudio?: boolean;
-  aspectRatio?: "auto" | "adaptive" | "1:1" | "1:4" | "1:8" | "2:1" | "1:2" | "2:3" | "3:1" | "1:3" | "3:2" | "4:1" | "4:3" | "3:4" | "5:4" | "4:5" | "8:1" | "16:9" | "9:16" | "21:9" | "9:21";
+  aspectRatio?: "auto" | "adaptive" | "1:1" | "1:4" | "1:8" | "2:1" | "1:2" | "2:3" | "3:1" | "1:3" | "3:2" | "4:1" | "4:3" | "3:4" | "5:4" | "4:5" | "8:1" | "16:9" | "9:16" | "21:9" | "9:21" | "27:16" | "16:27" | "9:8" | "8:9";
   ratioMode?: "custom" | "original";
-  resolution?: "1K" | "2K" | "3K" | "4K" | "480P" | "720P" | "1080P";
+  resolution?: "1K" | "2K" | "3K" | "4K" | "360P" | "540P" | "480P" | "720P" | "1080P";
   generationCount?: number;
   nodeWidth?: number;
   nodeHeight?: number;

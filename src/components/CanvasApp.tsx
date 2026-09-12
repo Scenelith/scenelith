@@ -80,7 +80,7 @@ import { editReferenceMentionToken, referenceMentionToken } from "@/lib/referenc
 import { MAX_GENERATION_BATCH, settleWithConcurrency } from "@/lib/generation-queue";
 import { DEFAULT_ASSISTANT_MODEL_ID } from "@/lib/assistant-models";
 import { duplicateGraphSelection, generatorInputCapacity, generatorSourceAssetIds, normalizeEdgePorts, selectGraphNode, stableGraphEdges, stableGraphNodes, upsertGraphEdge } from "@/lib/canvas-graph";
-import { assetIdFromAssetUrl, hydrateVideoMasterSourceClips, nearestVideoMasterRatio, resolveVideoMasterSourceTarget, unsupportedMasterReferenceRoles, videoMasterClipExportMedia, videoMasterClipPlaybackMedia, videoMasterClipThumbnail, videoMasterGenerationDuration, videoMasterModelsForScene, videoMasterProviderAspectRatio, videoMasterSourceRatio, videoMasterTimelineDuration, type VideoMasterDownloadLane } from "@/lib/video-master";
+import { assetIdFromAssetUrl, hydrateVideoMasterSourceClips, nearestVideoMasterRatio, resolveVideoMasterSourceTarget, unsupportedMasterReferenceRoles, videoMasterClipExportMedia, videoMasterClipPlaybackMedia, videoMasterClipThumbnail, videoMasterGenerationDuration, videoMasterReferencePreparationDuration, videoMasterModelsForScene, videoMasterProviderAspectRatio, videoMasterSourceRatio, videoMasterTimelineDuration, type VideoMasterDownloadLane } from "@/lib/video-master";
 import { reconcileGeneratorReferenceChanges } from "@/lib/generator-reference-modes";
 import { stopAllVideoPlayback } from "@/lib/video-playback-owner";
 import { findTikTokSlideshowSources, type TikTokSlideshowSource } from "@/lib/tiktok-slideshow-sources";
@@ -1961,7 +1961,7 @@ function CanvasWorkspace({ initialProject, projects: initialProjects, initialWor
     if (clip.sourceNodeId && clip.sourceSegmentId) {
       try {
         await materializeVideoSegment(clip.sourceNodeId, clip.sourceSegmentId);
-        generationSourceAsset = await materializeVideoSegmentForGeneration(clip.sourceNodeId, clip.sourceSegmentId, Number(duration));
+        generationSourceAsset = await materializeVideoSegmentForGeneration(clip.sourceNodeId, clip.sourceSegmentId, videoMasterReferencePreparationDuration(model, clip));
       } catch (error) {
         const message = error instanceof Error ? error.message : "Could not prepare the source scene";
         clearPreparingState();

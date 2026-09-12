@@ -379,11 +379,11 @@ test("Video Master assistant and generation overlays cannot leak clicks into pla
   assert.doesNotMatch(frameNode, /video-master-generation-preview">[\s\S]{0,180}?videoMasterClipThumbnail/);
   assert.match(frameNode, /preparingMasterClipIds\[id\][\s\S]*?masterHasActiveGeneration/);
   assert.match(frameNode, /masterFailed && <div className="video-master-generation-error" role="alert"/);
-  assert.match(frameNode, /runDisabled=\{!selectedClip\.prompt\.trim\(\) \|\| masterHasActiveGeneration/);
+  assert.match(frameNode, /runDisabled=\{Boolean\(modelInputError\) \|\| !selectedClip\.prompt\.trim\(\) \|\| masterHasActiveGeneration/);
   assert.match(canvasApp, /latestNode\.data\.kind === "videoMaster" && !\(await save\(true, true\)\)/);
   assert.match(canvasApp, /targetClipId: generatorNode\.data\.kind === "videoMaster" \? generatorNode\.data\.videoMasterGeneratingClipId : undefined/);
   assert.match(canvasApp, /targetSourceAssetId: preparedMasterSource\?\.assetId \|\| masterSourceTarget\?\.sourceAssetId/);
-  assert.match(canvasApp, /materializeVideoSegmentForGeneration\(clip\.sourceNodeId, clip\.sourceSegmentId, Number\(duration\)\)/);
+  assert.match(canvasApp, /materializeVideoSegmentForGeneration\(clip\.sourceNodeId, clip\.sourceSegmentId, videoMasterReferencePreparationDuration\(model, clip\)\)/);
   assert.match(canvasApp, /body: JSON\.stringify\(\{ projectId: project\.id, assetId: sourceAssetId, start: segment\.start, end, segmentId \}\)/);
   assert.match(canvasApp, /model\?\.durationSource === "reference-video" \? \{\} : \{ duration: generatorNode\.data\.duration \|\| "5" \}/);
   assert.match(canvasApp, /generationClipAssetId: generationSourceAsset\?\.id \|\| sourceSegment\.clipAssetId/);

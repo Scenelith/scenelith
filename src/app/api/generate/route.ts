@@ -1,3 +1,4 @@
+import { newKieRoleError } from "@/lib/kie-new-models";
 import { z } from "zod";
 import { requireApiUser } from "@/lib/auth";
 import { db, readProjectGraphSnapshot, userCanAccessAsset, userCanAccessProject } from "@/lib/postgres-db";
@@ -19,8 +20,8 @@ const schema = z.object({
   referenceAssetIds: z.array(z.string().uuid()).max(50).default([]),
   referenceLabels: z.array(z.string().min(1).max(80)).max(50).default([]),
   referenceRoles: z.array(z.enum(["reference-image", "start-frame", "end-frame", "motion-video", "reference-video", "reference-audio"])).max(50).default([]),
-  aspectRatio: z.enum(["auto", "adaptive", "1:1", "1:4", "1:8", "2:1", "1:2", "2:3", "3:1", "1:3", "3:2", "4:1", "4:3", "3:4", "5:4", "4:5", "8:1", "16:9", "9:16", "21:9", "9:21"]).default("4:5"),
-  resolution: z.enum(["1K", "2K", "3K", "4K", "480P", "720P", "1080P"]).default("1K"),
+  aspectRatio: z.enum(["auto", "adaptive", "1:1", "1:4", "1:8", "2:1", "1:2", "2:3", "3:1", "1:3", "3:2", "4:1", "4:3", "3:4", "5:4", "4:5", "8:1", "16:9", "9:16", "21:9", "9:21", "27:16", "16:27", "9:8", "8:9"]).default("4:5"),
+  resolution: z.enum(["1K", "2K", "3K", "4K", "360P", "540P", "480P", "720P", "1080P"]).default("1K"),
   // Reference-driven video models can use an exact source duration such as
   // 7.1 seconds. Provider-select models are still normalized against their
   // integer duration catalogue below.
@@ -84,8 +85,8 @@ export async function POST(request: Request) {
   const selectedDuration = model.durations?.includes(parsed.data.duration) ? parsed.data.duration : model.defaultDuration || model.durations?.[0] || parsed.data.duration;
   const references = await Promise.all(parsed.data.referenceAssetIds.map(async (id, index) => {
     if (!await userCanAccessAsset(auth.user.id, id)) throw new Error(`Reference ${id} was not found`);
-    const asset = await db.prepare("SELECT storage_path, mime_type, kind, role, metadata_json FROM assets WHERE id = ?").get(id) as
-      | { storage_path: string; mime_type: string; kind: string; role: string | null; metadata_json: string | null }
+    const asset = await db.prepare("SELECT storage_path, mime_type, kind, role, metadata_json, size_bytes FROM assets WHERE id = ?").get(id) as
+      | { storage_path: string; mime_type: string; kind: string; role: string | null; metadata_json: string | null; size_bytes?: number }
       | undefined;
     if (!asset) throw new Error(`Reference ${id} was not found`);
     const requestedRole = parsed.data.referenceRoles[index] || "reference-image";
@@ -94,9 +95,13 @@ export async function POST(request: Request) {
       : requestedRole;
     const expectedMime = role === "motion-video" || role === "reference-video" ? "video/" : role === "reference-audio" ? "audio/" : "image/";
     if (!asset.mime_type.startsWith(expectedMime)) throw new Error(`${role} requires a ${expectedMime.slice(0, -1)} asset`);
+    let width: number | undefined;
+    let height: number | undefined;
     let durationSeconds = 0;
     try {
-      const metadata = JSON.parse(asset.metadata_json || "{}") as { duration?: number | string; durationSeconds?: number | string };
+      const metadata = JSON.parse(asset.metadata_json || "{}") as { duration?: number | string; durationSeconds?: number | string; width?: number; height?: number };
+      width = metadata.width;
+      height = metadata.height;
       durationSeconds = Number(metadata.durationSeconds || metadata.duration || 0) || 0;
     } catch {}
     return {
@@ -104,10 +109,14 @@ export async function POST(request: Request) {
       mimeType: asset.mime_type,
       role,
       durationSeconds,
+      sizeBytes: asset.size_bytes,
+      width, height,
       label: parsed.data.referenceLabels[index] || (asset.kind === "persona_ref" ? `Identity ${asset.role === "after" ? "After" : asset.role === "before" ? "Before" : "Character"} reference ${index + 1}` : `Composition reference ${index + 1}`),
     };
   }));
   if (references.length > model.maxReferences) return Response.json({ error: `${model.label} accepts at most ${model.maxReferences} reference inputs` }, { status: 400 });
+  const contractError = newKieRoleError(model.id, references);
+  if (contractError) return Response.json({ error: contractError, code: "INCOMPATIBLE_MODEL_INPUTS" }, { status: 400 });
   const allowedRoles = new Set((model.inputPorts || []).map((port) => port.id));
   const normalizedReferences = references.map((reference, index) => ({
     ...reference,
