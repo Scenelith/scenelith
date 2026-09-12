@@ -20,7 +20,7 @@ ENV NODE_ENV=production
 ENV PORT=3000
 ENV HOSTNAME=0.0.0.0
 RUN apt-get update \
-  && apt-get install -y --no-install-recommends ffmpeg ca-certificates libexpat1 \
+  && apt-get install -y --no-install-recommends ffmpeg ca-certificates libexpat1 libpcre2-8-0 \
   && rm -rf \
     /var/lib/apt/lists/* \
     /usr/local/bin/corepack \
