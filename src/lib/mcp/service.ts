@@ -941,7 +941,7 @@ export async function runMcpCanvasGeneration(principal: McpPrincipal, input: {
   const prompt = connectedPrompt && localPrompt && connectedPrompt !== localPrompt
     ? `${connectedPrompt}\n\nAdditional user instructions:\n${localPrompt}`
     : connectedPrompt || localPrompt;
-  if (prompt.length < 2) throw new Error("Add a prompt or connect an Assistant output before generating");
+  if (prompt.length < (model.minPromptLength || 2)) throw new Error(`Add at least ${model.minPromptLength || 2} prompt characters or connect an Assistant output before generating`);
   if (prompt.length > (model.maxPromptLength || 5_000)) throw new Error(`${model.label} accepts prompts up to ${(model.maxPromptLength || 5_000).toLocaleString("en-US")} characters`);
   if (masterClip?.sourceNodeId && masterClip.sourceSegmentId) {
     const source = await mcpVideoSource(principal, input.projectId, masterClip.sourceNodeId);

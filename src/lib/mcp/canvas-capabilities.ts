@@ -43,7 +43,7 @@ export function canvasGenerationModels() {
     supportsAudio: model.supportsAudio || false,
     ...(model.id.startsWith("wan-3") ? { referenceModeRules: {
       mutuallyExclusiveRoleGroups: [["start-frame", "end-frame"], ["reference-image", "reference-video", "reference-audio"]],
-      endFrameRequiresStartFrame: true, audioRequiresVisualReference: true, maxInputPlusOutputVideoSeconds: 30,
+      endFrameRequiresStartFrame: true, audioRequiresVisualReference: model.id === "wan-3", maxInputPlusOutputVideoSeconds: 30,
       referenceNames: "Image1, Image2, Video1, Audio1, independently numbered per media kind",
     } } : {}),
     ...(model.id === "gemini-omni-flash-1-1" ? { referenceModeRules: {

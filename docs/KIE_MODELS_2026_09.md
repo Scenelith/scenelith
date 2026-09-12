@@ -14,7 +14,7 @@ Contracts and public credit tables checked on 2026-09-12. Canvas, Video Master a
 | Gemini Omni | `gemini-omni-video` | Up to 7 images; one video consumes 2 of these slots | Video with native audio; 720p/1080p/4k; 4/6/8/10s without video |
 | Gemini Omni 1.1 Flash | `google/gemini-omni-flash-1-1` | Same references, or separate start/end frame mode | Same outputs, plus 360p |
 
-WAN timed references are individually 1–15s and total at most 15s per media kind. Input video plus requested output must not exceed 30s. Audio-only references require a visual reference in this integration. WAN rejects transparent images and enforces documented size/dimension/format limits. Missing stored media metadata is measured before usage reservation.
+WAN timed references are individually 1–15s and total at most 15s per media kind. Input video plus requested output must not exceed 30s. Standard WAN 3 requires a visual reference together with audio. Prime permits audio-only media input; its documentation recommends a visual reference but does not require one. WAN rejects transparent images and enforces documented size/dimension/format limits. Missing stored media metadata is measured before usage reservation.
 
 Omni accepts source videos up to 30s at the provider, but only a selected range of at most 10s may be submitted. Canvas submits the complete, explicitly selected clip (`start: 0`, `ends: measured duration`) and requires the user to trim longer references before running. It never silently takes the first 10s. With video, Omni chooses output duration and ignores the required duration field; the UI shows “Auto duration”, the source is not trimmed to that field, and billing is fixed per task. Generated asset metadata remains the authority for actual output length.
 

@@ -45,7 +45,8 @@ test("WAN 3 encodes uppercase quality, numeric duration, audio and independent m
     assert.equal(frames.last_frame_url, ref("end-frame").assetUrl);
     assert.equal("reference_image_urls" in frames, false);
     assert.match(error(id, [ref("start-frame"), ref()])!, /cannot be combined/);
-    assert.match(error(id, [ref("reference-audio", 3)])!, /together with an audio/);
+    if (id === "wan-3") assert.match(error(id, [ref("reference-audio", 3)])!, /together with an audio/);
+    else assert.equal(error(id, [ref("reference-audio", 3)]), null, "Prime permits audio as its only media reference");
     assert.match(error(id, [ref("reference-video")])!, /measured duration/);
     assert.match(error(id, [ref("reference-video", 8), ref("reference-video", 8)])!, /total at most 15/);
     assert.match(error(id, [ref("reference-video", 15)], { duration: "16" })!, /must not exceed 30/);

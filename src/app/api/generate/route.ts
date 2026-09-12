@@ -15,7 +15,7 @@ export const maxDuration = 300;
 const schema = z.object({
   projectId: persistedProjectIdSchema,
   nodeId: z.string().min(1),
-  prompt: z.string().min(2).max(30000),
+  prompt: z.string().min(1).max(30000),
   modelId: z.string().min(1).default("nano-banana-2"),
   referenceAssetIds: z.array(z.string().uuid()).max(50).default([]),
   referenceLabels: z.array(z.string().min(1).max(80)).max(50).default([]),
@@ -79,6 +79,7 @@ export async function POST(request: Request) {
   }
   const provider = generationProvider();
   const model = provider.getModel(parsed.data.modelId);
+  if (parsed.data.prompt.trim().length < (model.minPromptLength || 2)) return Response.json({ error: `${model.label} requires at least ${model.minPromptLength || 2} prompt characters` }, { status: 400 });
   if (parsed.data.prompt.length > (model.maxPromptLength || 5000)) {
     return Response.json({ error: `${model.label} accepts prompts up to ${(model.maxPromptLength || 5000).toLocaleString("en-US")} characters` }, { status: 400 });
   }

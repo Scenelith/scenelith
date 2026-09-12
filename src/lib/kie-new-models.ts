@@ -16,7 +16,7 @@ export const newKieModels: KieModel[] = [
     id: `gpt-image-2-5-${variant}`, label: `GPT Image 2.5 ${variant === "flare" ? "Flare" : "Sunburst"}`,
     mediaType: "image", description: "Image generation and editing · up to 16 images · 1K–4K",
     providerModel: `gpt-image-2-5-${variant}-text-to-image`, providerPath: jobPath,
-    maxReferences: 16, maxPromptLength: 20_000, ratios: image1KRatios,
+    maxReferences: 16, minPromptLength: 1, maxPromptLength: 20_000, ratios: image1KRatios,
     ratiosByResolution: { "1K": image1KRatios, "2K": imageRatios, "4K": imageRatios },
     resolutions: ["1K", "2K", "4K"], defaultRatio: "auto", defaultResolution: "1K",
     inputPorts: [{ id: "reference-image", label: "Reference images", kind: "image", max: 16 }],
@@ -25,7 +25,7 @@ export const newKieModels: KieModel[] = [
     id: `wan-3${prime ? "-prime" : ""}`, label: `WAN 3.0${prime ? " Prime" : ""}`,
     mediaType: "video", description: "2–30s · start/end frames or image, video and audio references · input + output video up to 30s",
     providerModel: `wan/3-0-video${prime ? "-prime" : ""}`, providerPath: jobPath,
-    maxReferences: 20, maxPromptLength: 20_000, ratios: ["adaptive", "16:9", "4:3", "1:1", "3:4", "9:16"],
+    maxReferences: 20, minPromptLength: 1, maxPromptLength: 20_000, ratios: ["adaptive", "16:9", "4:3", "1:1", "3:4", "9:16"],
     resolutions: ["480P", "720P", "1080P"], durations: seconds(2, 30), defaultRatio: "adaptive",
     defaultResolution: "1080P", defaultDuration: "5", defaultGenerateAudio: true, supportsAudio: true,
     referenceMediaDuration: { minSeconds: 1, maxSeconds: 15, maxTotalSeconds: 15 },
@@ -53,7 +53,7 @@ export const newKieModels: KieModel[] = [
     id: flash ? "gemini-omni-flash-1-1" : "gemini-omni-video", label: flash ? "Gemini Omni 1.1 Flash" : "Gemini Omni",
     mediaType: "video", description: "Native audio · 4/6/8/10s · up to 7 images or 5 images + one ≤10s video · with video, output length is automatic",
     providerModel: flash ? "google/gemini-omni-flash-1-1" : "gemini-omni-video", providerPath: jobPath,
-    maxReferences: 7, maxPromptLength: 20_000, ratios: ["16:9", "9:16"],
+    maxReferences: 7, minPromptLength: 1, maxPromptLength: 20_000, ratios: ["16:9", "9:16"],
     resolutions: flash ? ["360P", "720P", "1080P", "4K"] : ["720P", "1080P", "4K"],
     durations: ["4", "6", "8", "10"], defaultRatio: "16:9", defaultResolution: "720P", defaultDuration: "8",
     defaultGenerateAudio: true, durationSourceWithVideo: "model",
@@ -115,7 +115,7 @@ export function newKieInputError(id: string, input: NewModelInput): string | nul
   if (model.ratioSource !== "reference" && !ratios.includes(input.aspectRatio || model.defaultRatio!)) return fail(`unsupported aspect ratio at ${resolution}`);
   if (model.durations && !model.durations.includes(input.duration || model.defaultDuration!)) return fail(`duration must be one of ${model.durations.join(", ")} seconds`);
   if (id.startsWith("wan-3")) {
-    if (has("reference-audio") && !has("reference-image") && !has("reference-video")) return fail("connect an image or video together with an audio reference");
+    if (id === "wan-3" && has("reference-audio") && !has("reference-image") && !has("reference-video")) return fail("connect an image or video together with an audio reference");
     for (const role of ["reference-video", "reference-audio"]) {
       const timed = named(role);
       if (timed.some((ref) => !Number.isFinite(ref.durationSeconds) || ref.durationSeconds! < 1 || ref.durationSeconds! > 15)) return fail(`each ${role} needs a measured duration of 1–15s`);
