@@ -77,7 +77,7 @@ export function newKieRoleError(id: string, refs: ModelReference[]) {
 
 /** Return a user-facing error before reserving usage or uploading media. Never
  * reinterpret an explicit input role to make an incompatible request fit. */
-export function newKieInputError(id: string, input: NewModelInput): string | null {
+export function newKieInputError(id: string, input: NewModelInput, options: { allowUnmeasuredMedia?: boolean } = {}): string | null {
   const model = newKieModel(id);
   if (!model) return null;
   const refs = input.references;
@@ -118,14 +118,14 @@ export function newKieInputError(id: string, input: NewModelInput): string | nul
     if (id === "wan-3" && has("reference-audio") && !has("reference-image") && !has("reference-video")) return fail("connect an image or video together with an audio reference");
     for (const role of ["reference-video", "reference-audio"]) {
       const timed = named(role);
-      if (timed.some((ref) => !Number.isFinite(ref.durationSeconds) || ref.durationSeconds! < 1 || ref.durationSeconds! > 15)) return fail(`each ${role} needs a measured duration of 1–15s`);
-      if (timed.reduce((sum, ref) => sum + ref.durationSeconds!, 0) > 15) return fail(`${role} inputs may total at most 15s`);
+      if (timed.some((ref) => !(options.allowUnmeasuredMedia && !ref.durationSeconds) && (!Number.isFinite(ref.durationSeconds) || ref.durationSeconds! < 1 || ref.durationSeconds! > 15))) return fail(`each ${role} needs a measured duration of 1–15s`);
+      if (timed.reduce((sum, ref) => sum + (ref.durationSeconds || 0), 0) > 15) return fail(`${role} inputs may total at most 15s`);
     }
-    if (named("reference-video").reduce((sum, ref) => sum + ref.durationSeconds!, 0) + Number(input.duration || model.defaultDuration) > 30) return fail("input video duration plus output duration must not exceed 30s");
+    if (named("reference-video").reduce((sum, ref) => sum + (ref.durationSeconds || 0), 0) + Number(input.duration || model.defaultDuration) > 30) return fail("input video duration plus output duration must not exceed 30s");
   }
   if (id.startsWith("gemini-omni")) {
     if (named("reference-image").length + named("reference-video").length * 2 > 7) return fail("a video uses two image slots; use at most 5 images with a video");
-    if (named("reference-video").some((ref) => !Number.isFinite(ref.durationSeconds) || ref.durationSeconds! <= 0 || ref.durationSeconds! > 10)) return fail("select a reference clip of at most 10s with a measured duration before generating");
+    if (named("reference-video").some((ref) => !(options.allowUnmeasuredMedia && !ref.durationSeconds) && (!Number.isFinite(ref.durationSeconds) || ref.durationSeconds! <= 0 || ref.durationSeconds! > 10))) return fail("select a reference clip of at most 10s with a measured duration before generating");
   }
   return null;
 }

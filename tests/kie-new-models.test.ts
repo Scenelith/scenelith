@@ -195,3 +195,10 @@ test("Omni prompt assistance does not promise the ignored requested output durat
   assert.match(instruction, /output duration is automatic/);
   assert.doesNotMatch(instruction, /feasible within 4 seconds/);
 });
+
+test("the editor defers missing duration metadata to server preflight without relaxing submission validation", () => {
+  const input = { prompt, references: [ref("reference-video")] };
+  assert.equal(newKieInputError("gemini-omni-video", input, { allowUnmeasuredMedia: true }), null);
+  assert.match(newKieInputError("gemini-omni-video", input)!, /measured duration/);
+  assert.match(newKieInputError("gemini-omni-video", { ...input, references: [ref("reference-video", 11)] }, { allowUnmeasuredMedia: true })!, /at most 10s/);
+});
