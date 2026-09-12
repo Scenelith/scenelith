@@ -8,6 +8,8 @@ const imageCredits: Record<string, Record<string, number>> = {
   "nano-banana-2-lite": { "1K": 4 },
   "nano-banana-2": { "1K": 8, "2K": 12, "4K": 18 },
   "nano-banana-pro": { "1K": 18, "2K": 18, "4K": 24 },
+  "gpt-image-2-5-flare": { "1K": 6, "2K": 10, "4K": 16 },
+  "gpt-image-2-5-sunburst": { "1K": 6, "2K": 10, "4K": 16 },
   "gpt-image-2": { "1K": 6, "2K": 10, "4K": 16 },
   "grok-image-2": { "1K": 4 },
   "seedream-5-lite": { "2K": 5.5, "3K": 5.5, "4K": 5.5 },
@@ -96,6 +98,22 @@ export function generationCreditCost(modelId: string, resolution: string, durati
     return Math.ceil(configuredValue(fixedVideo, normalizedResolution));
   }
   const outputSeconds = Math.max(1, Number(duration) || 5);
+  // Kie model-page credit tables verified 2026-09-12; see docs/KIE_MODELS_2026_09.md.
+  if (canonicalId === "wan-3" || canonicalId === "wan-3-prime") {
+    const rates = canonicalId === "wan-3" ? { "480P": 8, "720P": 16, "1080P": 32 } : { "480P": 12.2, "720P": 25.2, "1080P": 50.4 };
+    return Math.ceil(configuredValue(rates, normalizedResolution) * (outputSeconds + (options.hasVideoInput ? Math.max(0, options.inputVideoDurationSeconds || 0) : 0)));
+  }
+  if (canonicalId.startsWith("pixverse-v6-")) {
+    const fusion = canonicalId === "pixverse-v6-reference";
+    const rates = options.generateAudio
+      ? fusion ? { "360P": 6.3, "540P": 8.1, "720P": 10.8, "1080P": 20.7 } : { "360P": 5.6, "540P": 7.2, "720P": 9.6, "1080P": 18.4 }
+      : fusion ? { "360P": 4.5, "540P": 6.3, "720P": 8.1, "1080P": 16.2 } : { "360P": 4, "540P": 5.6, "720P": 7.2, "1080P": 14.4 };
+    return Math.ceil(configuredValue(rates, normalizedResolution) * outputSeconds);
+  }
+  if (canonicalId === "gemini-omni-video" || canonicalId === "gemini-omni-flash-1-1") {
+    if (options.hasVideoInput) return normalizedResolution === "4K" ? 252 : 168;
+    return Math.ceil(21 + 10.5 * outputSeconds + (normalizedResolution === "4K" ? 84 : 0));
+  }
   if (canonicalId === "seedance-2-5" && normalizedResolution === "1080P" && !options.hasVideoInput) {
     throw new Error("Seedance 2.5 1080P requires a video input");
   }

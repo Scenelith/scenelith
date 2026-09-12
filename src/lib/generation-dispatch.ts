@@ -6,7 +6,7 @@ import { workerIdentity } from "./worker-identity";
 export type GenerationDispatchPayload = {
   modelId: string;
   prompt: string;
-  references: Array<{ path: string; mimeType: string; label: string; role?: string }>;
+  references: import("./generation-admission").GenerationAdmissionReference[];
   aspectRatio: string;
   resolution: string;
   duration: string;

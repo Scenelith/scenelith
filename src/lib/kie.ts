@@ -1,3 +1,5 @@
+import { prepareNewKieReferences } from "./kie-reference-validation";
+import { newKieModels, newKieInputError, newKiePayload, newKiePrompt, newKieModel, type ModelReference } from "./kie-new-models";
 import { createHmac, timingSafeEqual } from "node:crypto";
 import { requireInstanceSecret } from "@/platform/secrets";
 import { readStorageObject } from "./storage";
@@ -16,6 +18,9 @@ export type KieModel = {
   providerPath: string;
   providerStatusPath?: string;
   maxReferences: number;
+  minPromptLength?: number;
+  ratioSource?: "select" | "reference";
+  durationSourceWithVideo?: "model";
   ratios: string[];
   ratiosByResolution?: Record<string, string[]>;
   referenceRatiosByResolution?: Record<string, string[]>;
@@ -71,6 +76,7 @@ const seedance25Ports: NonNullable<KieModel["inputPorts"]> = [
  * lets us replace an upstream variant without corrupting saved canvas nodes.
  */
 export const kieModels: KieModel[] = [
+  ...newKieModels,
   { id: "nano-banana-2-lite", label: "Nano Banana 2 Lite", mediaType: "image", description: "Fast Google generation and editing · up to 10 references · 1K", providerModel: "nano-banana-2-lite", providerPath: "/api/v1/jobs/createTask", maxReferences: 10, maxPromptLength: 20_000, ratios: nanoBanana2LiteRatios, resolutions: ["1K"], defaultRatio: "auto", defaultResolution: "1K" },
   { id: "nano-banana-2", label: "Nano Banana 2", mediaType: "image", description: "Google Gemini 3.1 Flash Image · up to 14 references · 1K–4K", providerModel: "nano-banana-2", providerPath: "/api/v1/jobs/createTask", maxReferences: 14, maxPromptLength: 20_000, ratios: nanoBanana2Ratios, ratiosByResolution: { "1K": nanoBanana2Ratios, "2K": nanoBanana2HighResolutionRatios, "4K": nanoBanana2HighResolutionRatios }, resolutions: ["1K", "2K", "4K"], defaultRatio: "auto", defaultResolution: "1K" },
   { id: "nano-banana-pro", label: "Nano Banana Pro", mediaType: "image", description: "Google premium image generation · up to 8 references · 1K–4K", providerModel: "nano-banana-pro", providerPath: "/api/v1/jobs/createTask", maxReferences: 8, maxPromptLength: 10_000, ratios: nanoBananaProRatios, resolutions: ["1K", "2K", "4K"], defaultRatio: "1:1", defaultResolution: "1K" },
@@ -283,14 +289,14 @@ export async function uploadKieReference(path: string, mimeType: string, label =
 type StartInput = {
   modelId: string;
   prompt: string;
-  references: Array<{ path: string; mimeType: string; label: string; role?: string }>;
+  references: Array<ModelReference & { path: string; mimeType: string; label: string }>;
   aspectRatio?: string;
   resolution?: string;
   duration?: string;
   generateAudio?: boolean;
 };
 
-type UploadedReference = { assetUrl: string; label: string; role?: string };
+type UploadedReference = ModelReference & { assetUrl: string; label: string };
 
 function providerPrompt(value: string) {
   const trimmed = value.trim();
@@ -317,6 +323,8 @@ export function buildKieInput(modelId: string, input: Omit<StartInput, "modelId"
   const prompt = input.prompt;
   const negativePrompt = "watermark, blurry, low quality, distorted anatomy, extra limbs";
   const uploadedReferences = uploadedInput.map((reference) => typeof reference === "string" ? { assetUrl: reference, label: "reference" } : reference);
+  const newPayload = newKiePayload(model.id, input, uploadedReferences);
+  if (newPayload) return newPayload;
   const referenceUrls = uploadedReferences.map((reference) => reference.assetUrl);
   const roleUrls = (role: string) => uploadedReferences.filter((reference) => reference.role === role).map((reference) => reference.assetUrl);
 
@@ -397,10 +405,15 @@ export async function startGeneration(input: StartInput) {
   if (input.references.length > model.maxReferences) {
     throw new Error(`${model.label} accepts at most ${model.maxReferences} reference inputs`);
   }
-  const uploaded = await Promise.all(input.references.map(async (reference) => ({ ...(await uploadKieReference(reference.path, reference.mimeType, reference.label)), role: reference.role })));
+  input = { ...input, references: await prepareNewKieReferences(model.id, input.references) };
+  const validationError = newKieInputError(model.id, input);
+  if (validationError) throw new Error(validationError);
+  const uploaded = await Promise.all(input.references.map(async (reference) => ({ ...reference, ...(await uploadKieReference(reference.path, reference.mimeType, reference.label)) })));
   const prompt = model.id === "grok-image-2"
     ? providerPrompt(input.prompt)
-    : kieProviderPrompt(input.prompt, uploaded.map((item) => item.label));
+    : newKieModel(model.id) && uploaded.length
+      ? newKiePrompt(model.id, providerPrompt(input.prompt), uploaded)
+      : kieProviderPrompt(input.prompt, uploaded.map((item) => item.label));
   assertKiePromptLength(model.id, prompt);
   const callBackUrl = process.env.PUBLIC_URL ? `${process.env.PUBLIC_URL.replace(/\/$/, "")}/api/webhooks/kie` : undefined;
   let body: Record<string, unknown>;
@@ -427,6 +440,7 @@ export async function startGeneration(input: StartInput) {
     };
   } else {
     let providerModel = model.providerModel;
+    if (model.id.startsWith("gpt-image-2-5-")) providerModel = `${model.id}-${uploaded.length ? "image-to-image" : "text-to-image"}`;
     if (model.id === "grok-image-2") providerModel = uploaded.length ? "grok-imagine-image-2-0/image-edit" : model.providerModel;
     if (model.id === "gpt-image-2") providerModel = uploaded.length ? "gpt-image-2-image-to-image" : "gpt-image-2-text-to-image";
     if (model.id === "seedream-5-lite") providerModel = uploaded.length ? "seedream/5-lite-image-to-image" : "seedream/5-lite-text-to-image";

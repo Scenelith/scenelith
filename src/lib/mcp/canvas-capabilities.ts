@@ -20,6 +20,12 @@ export function canvasGenerationModels() {
     label: model.label,
     mediaType: model.mediaType,
     description: model.description,
+    minPromptLength: model.minPromptLength || 1,
+    ratioSource: model.ratioSource || "select",
+    durationSourceWithVideo: model.durationSourceWithVideo || null,
+    referenceMediaDuration: model.referenceMediaDuration || null,
+    ...(model.id.startsWith("gemini-omni") ? { referenceSlots: { max: 7, image: 1, video: 2 }, maxReferenceVideoSeconds: 10, audioInput: "Provider audio IDs require a separate voice workflow; audio files are not accepted" } : {}),
+    outputPorts: [{ id: `${model.mediaType}-output`, kind: model.mediaType }],
     maxPromptLength: model.maxPromptLength || 5_000,
     maxReferences: model.maxReferences,
     ratios: model.ratios,
@@ -35,6 +41,14 @@ export function canvasGenerationModels() {
     defaultDuration: model.defaultDuration || model.durations?.[0] || null,
     defaultGenerateAudio: model.defaultGenerateAudio || false,
     supportsAudio: model.supportsAudio || false,
+    ...(model.id.startsWith("wan-3") ? { referenceModeRules: {
+      mutuallyExclusiveRoleGroups: [["start-frame", "end-frame"], ["reference-image", "reference-video", "reference-audio"]],
+      endFrameRequiresStartFrame: true, audioRequiresVisualReference: model.id === "wan-3", maxInputPlusOutputVideoSeconds: 30,
+      referenceNames: "Image1, Image2, Video1, Audio1, independently numbered per media kind",
+    } } : {}),
+    ...(model.id === "gemini-omni-flash-1-1" ? { referenceModeRules: {
+      mutuallyExclusiveRoleGroups: [["start-frame", "end-frame"], ["reference-image", "reference-video"]], endFrameRequiresStartFrame: true,
+    } } : {}),
     ...(model.id.startsWith("seedance-2") ? { referenceModeRules: {
       mutuallyExclusiveRoleGroups: [["start-frame", "end-frame"], ["reference-image", "reference-video", "reference-audio"]],
       connectionBehavior: "Connecting a new input automatically disconnects incompatible edges and attached references on that node or selected Master scene. The last explicitly connected mode wins; original timeline media is preserved.",

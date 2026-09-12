@@ -1,3 +1,4 @@
+import { newKieRoleError } from "@/lib/kie-new-models";
 import { canvasNodeBounds, canvasNodeSize, placeChangedCanvasNodes } from "../canvas-node-placement";
 import { generatorReferenceChanges, reconcileGeneratorReferenceChanges } from "../generator-reference-modes";
 import { videoMasterSceneDirectory, videoMasterSceneRevision } from "./video-master-scenes";
@@ -100,7 +101,7 @@ import {
   type AutomationOverlapPolicy,
   type AutomationTriggerType,
 } from "@/lib/automation-workflows/triggers";
-import { assetIdFromAssetUrl, moveUploadedMasterClipToLane, nearestVideoMasterRatio, unsupportedMasterReferenceRoles, masterGenerationInputSummary, useVideoMasterGeneratedOutput as applyVideoMasterGeneratedOutput, videoMasterClipExportMedia, videoMasterGenerationDuration, videoMasterProviderAspectRatio, videoMasterSourceRatio } from "@/lib/video-master";
+import { assetIdFromAssetUrl, moveUploadedMasterClipToLane, nearestVideoMasterRatio, unsupportedMasterReferenceRoles, masterGenerationInputSummary, useVideoMasterGeneratedOutput as applyVideoMasterGeneratedOutput, videoMasterClipExportMedia, videoMasterGenerationDuration, videoMasterReferencePreparationDuration, videoMasterProviderAspectRatio, videoMasterSourceRatio } from "@/lib/video-master";
 import { validateVideoMasterGenerationReferences } from "@/lib/video-master-validation";
 import { captureVideoFrameAsset, materializeVideoSegmentAsset, type VideoDerivativeSource } from "@/lib/video-derivatives";
 import { createScenelithDocument, parseScenelithDocument, projectGraphFromScenelithDocument } from "@/lib/scenelith-document";
@@ -940,13 +941,13 @@ export async function runMcpCanvasGeneration(principal: McpPrincipal, input: {
   const prompt = connectedPrompt && localPrompt && connectedPrompt !== localPrompt
     ? `${connectedPrompt}\n\nAdditional user instructions:\n${localPrompt}`
     : connectedPrompt || localPrompt;
-  if (prompt.length < 2) throw new Error("Add a prompt or connect an Assistant output before generating");
+  if (prompt.length < (model.minPromptLength || 2)) throw new Error(`Add at least ${model.minPromptLength || 2} prompt characters or connect an Assistant output before generating`);
   if (prompt.length > (model.maxPromptLength || 5_000)) throw new Error(`${model.label} accepts prompts up to ${(model.maxPromptLength || 5_000).toLocaleString("en-US")} characters`);
   if (masterClip?.sourceNodeId && masterClip.sourceSegmentId) {
     const source = await mcpVideoSource(principal, input.projectId, masterClip.sourceNodeId);
     const segment = source.node.data.videoSegments?.find((candidate) => candidate.id === masterClip.sourceSegmentId);
     if (!segment) throw Object.assign(new Error("Source scene no longer exists"), { status: 409 });
-    const requested = videoMasterGenerationDuration(model, masterClip);
+    const requested = videoMasterReferencePreparationDuration(model, masterClip);
     if (requested < segment.end - segment.start - .01) {
       const trimmed = await materializeVideoSegmentAsset({ source: source.source, projectId: input.projectId, workspaceId: source.workspaceId, segmentId: segment.id, start: segment.start, end: segment.start + requested });
       const prior = "targetSourceAssetId" in inspected ? inspected.targetSourceAssetId : undefined;
@@ -956,8 +957,8 @@ export async function runMcpCanvasGeneration(principal: McpPrincipal, input: {
   }
   const references = await Promise.all(inspected.references.map(async (reference, index) => {
     if (!await userCanAccessAsset(principal.userId, reference.assetId)) throw Object.assign(new Error(`${reference.token} is no longer available`), { status: 404 });
-    const asset = await db.prepare("SELECT storage_path, mime_type, kind, role, metadata_json FROM assets WHERE id = ?").get(reference.assetId) as
-      { storage_path: string; mime_type: string; kind: string; role: string | null; metadata_json: string | null } | undefined;
+    const asset = await db.prepare("SELECT storage_path, mime_type, kind, role, metadata_json, size_bytes FROM assets WHERE id = ?").get(reference.assetId) as
+      { storage_path: string; mime_type: string; kind: string; role: string | null; metadata_json: string | null; size_bytes?: number } | undefined;
     if (!asset) throw Object.assign(new Error(`${reference.token} is no longer available`), { status: 404 });
     const requestedRole = canonicalReferenceRole(reference.role, asset.mime_type.split("/")[0]);
     const role = !masterClip && model.id === "kling-3-motion"
@@ -965,14 +966,20 @@ export async function runMcpCanvasGeneration(principal: McpPrincipal, input: {
       : requestedRole;
     const expectedMime = role === "motion-video" || role === "reference-video" ? "video/" : role === "reference-audio" ? "audio/" : "image/";
     if (!asset.mime_type.startsWith(expectedMime)) throw new Error(`${role} requires a ${expectedMime.slice(0, -1)} asset`);
+    let width: number | undefined;
+    let height: number | undefined;
     let durationSeconds = Number(reference.durationSeconds || 0) || 0;
     try {
-      const metadata = JSON.parse(asset.metadata_json || "{}") as { duration?: number | string; durationSeconds?: number | string };
+      const metadata = JSON.parse(asset.metadata_json || "{}") as { duration?: number | string; durationSeconds?: number | string; width?: number; height?: number };
+      width = metadata.width;
+      height = metadata.height;
       durationSeconds ||= Number(metadata.durationSeconds || metadata.duration || 0) || 0;
     } catch {}
-    return { path: asset.storage_path, mimeType: asset.mime_type, role, durationSeconds, label: reference.token || reference.title || `Reference ${index + 1}` };
+    return { path: asset.storage_path, mimeType: asset.mime_type, role, durationSeconds, sizeBytes: asset.size_bytes, width, height, label: reference.token || reference.title || `Reference ${index + 1}` };
   }));
   if (references.length > model.maxReferences) throw new Error(`${model.label} accepts at most ${model.maxReferences} reference inputs`);
+  const contractError = newKieRoleError(model.id, references);
+  if (contractError) throw Object.assign(new Error(contractError), { code: "INCOMPATIBLE_MODEL_INPUTS", status: 400 });
   const allowedRoles = new Set((model.inputPorts || []).map((port) => port.id));
   if (masterClip && references.some((reference) => !allowedRoles.has(reference.role))) throw Object.assign(new Error(`Disconnect unsupported inputs before running ${model.label}: ${references.filter((reference) => !allowedRoles.has(reference.role)).map((reference) => reference.role).join(", ")}`), { code: "INCOMPATIBLE_MODEL_INPUTS", status: 400 });
   const normalizedReferences = references.map((reference, index) => ({

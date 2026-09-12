@@ -74,14 +74,21 @@ export function videoPromptSystemInstruction(input: Pick<GenerationPromptSystemC
   const hasEnd = roles.has("end-frame");
   const hasMotionVideo = roles.has("reference-video") || roles.has("motion-video");
   const hasAudioReference = roles.has("reference-audio");
+  const isOmniWithVideo = input.modelId?.startsWith("gemini-omni") && hasMotionVideo;
+  const isWan3 = input.modelId?.startsWith("wan-3");
+  const isPixverseExtend = input.modelId === "pixverse-v6-extend";
   const isMotionControl = input.modelId === "kling-3-motion";
   const isSeedance = input.modelId?.startsWith("seedance-2");
   const isSeedance25 = input.modelId === "seedance-2-5";
   const master = input.videoMasterContext;
-  const trimRule = master && master.generationDurationSeconds && master.generationDurationSeconds > master.timelineDurationSeconds + .01
+  const trimRule = isOmniWithVideo ? "The model determines output length from the connected video. Do not promise an exact generated duration or trim the input to a requested output length." : master && master.generationDurationSeconds && master.generationDurationSeconds > master.timelineDurationSeconds + .01
     ? `The provider generates ${master.generationDurationSeconds.toFixed(3)} seconds, but the edited scene keeps only the first ${master.timelineDurationSeconds.toFixed(3)} seconds. Put every required action and payoff inside that kept interval. Continue naturally after it so trimming does not cut in the middle of an essential action.`
     : master ? `The edited scene and generated clip both last ${master.timelineDurationSeconds.toFixed(3)} seconds. Keep all action feasible inside that exact interval.` : "";
-  const modelRules = isMotionControl
+  const modelRules = isOmniWithVideo
+    ? "Gemini Omni uses the explicitly connected reference clip. Its output duration is automatic with video input; the requested duration setting is ignored. Describe a coherent continuation or transformation without promising exact timecodes. Audio is native to the model."
+    : isPixverseExtend ? "Continue the connected video naturally. Describe what happens next during the requested extension, preserving continuity at the join. Do not treat the extension duration as the length of the original input video."
+    : isWan3 ? "WAN 3 uses start/end frames or multimodal image, video and audio references. Preserve those declared roles. The input video plus output duration is limited to 30 seconds. Do not invent strict frame constraints when only reference-image inputs are connected."
+    : isMotionControl
     ? "This is Kling Motion Control. The start image defines the subject's appearance. The reference video defines pose, body movement, timing and motion trajectory, including framing and camera movement. Write a short replacement instruction: identify exactly which connected image supplies the replacement subject and which reference video supplies motion. Do not restate or redesign the reference video's shot, invent a competing camera path, or add timecodes. Do not request a duration; duration is inherited from the reference video."
     : isSeedance25 && master
       ? `This is Seedance 2.5 multimodal generation for one selected Video Master scene. Produce a model-ready prompt with compact uppercase sections when useful (REFERENCE ROLES, LOOK, and TIMELINE). Use timestamped beats from 00:00.000 through the exact generated duration. Every timestamp must use MM:SS.mmm syntax (for example, four seconds is 00:04.000, never 04:00). When generation is longer than the kept timeline, no required-action beat may cross the kept boundary: end it at or before that boundary, then create a separate tail beat containing only settled natural continuation. Never copy internal storyboard labels such as CHRONOLOGICAL STORYBOARD FOR into the final prompt. Do not write a multi-scene commercial unless the user asks for one; this prompt controls only ${master.clipTitle}. Bind every @token to one explicit responsibility and preserve identity continuity across the whole clip.`
@@ -103,14 +110,14 @@ export function videoPromptSystemInstruction(input: Pick<GenerationPromptSystemC
 
 Write the final prompt in concise English. ${outputFormat}
 
-Build a single coherent shot in this order when relevant: shot and subject, one continuous action, environment, camera movement, lighting and atmosphere, temporal progression, then audio direction. Use concrete observable movement and positive instructions. Keep the action feasible within ${input.duration ? `${input.duration} seconds` : "one short generated clip"}. Avoid contradictory camera moves, multiple unrelated scene changes, prompt-padding, quality buzzwords and long negative lists.
+Build a single coherent shot in this order when relevant: shot and subject, one continuous action, environment, camera movement, lighting and atmosphere, temporal progression, then audio direction. Use concrete observable movement and positive instructions. Keep the action feasible within ${isOmniWithVideo ? "one coherent clip whose length is chosen by the model" : input.duration ? `${input.duration} seconds` : "one short generated clip"}. Avoid contradictory camera moves, multiple unrelated scene changes, prompt-padding, quality buzzwords and long negative lists.
 
 ${modelRules}
 
 ${master ? `VIDEO MASTER SCENE CONTRACT:
 - Selected scene: ${master.clipTitle} (${master.sourceKind}).
 - Timeline duration: ${master.timelineDurationSeconds.toFixed(3)} seconds.
-- Generated duration: ${(master.generationDurationSeconds || master.timelineDurationSeconds).toFixed(3)} seconds.
+- Generated duration: ${isOmniWithVideo ? "automatic, chosen by the model" : `${(master.generationDurationSeconds || master.timelineDurationSeconds).toFixed(3)} seconds`}.
 - Source format: ${master.sourceAspectRatio}. Output format: ${master.outputAspectRatio}${master.outputRatioChanged ? " (the user changed the source format; describe deliberate reframing/crop/extension)" : " (preserve the source framing and orientation)"}.
 - ${trimRule}
 - Storyboard frames extracted from connected videos are visual evidence of progression. Read them chronologically. Do not confuse a storyboard frame with a separate reference identity or invent details that the frames do not show.` : ""}

@@ -1,3 +1,5 @@
+import { prepareNewKieReferences } from "./kie-reference-validation";
+import { newKieInputError, newKieModel, newKiePrompt } from "./kie-new-models";
 import { randomUUID } from "node:crypto";
 import { usageAuthority, taskCreditUsage } from "@/modules/usage";
 import { queuedGenerationPosition, type GenerationDispatchPayload } from "./generation-dispatch";
@@ -11,6 +13,10 @@ export type GenerationAdmissionReference = {
   label: string;
   role?: string;
   durationSeconds?: number;
+  sizeBytes?: number;
+  width?: number;
+  height?: number;
+  hasAlpha?: boolean;
 };
 
 export type GenerationAdmissionInput = {
@@ -38,7 +44,7 @@ export type GenerationAdmissionInput = {
 
 export type GenerationAdmissionResult =
   | { ok: true; generationId: string; status: "queued"; queuePosition: number | null; creditCost: number; creditUsage?: import("@/modules/usage/contracts").TaskCreditUsage }
-  | { ok: false; status: 402 | 404 | 409 | 429 | 500; error: string; code: string; retryAfterMs?: number; concurrency?: number; requiredCredits?: number; generationId?: string };
+  | { ok: false; status: 400 | 402 | 404 | 409 | 429 | 500; error: string; code: string; retryAfterMs?: number; concurrency?: number; requiredCredits?: number; generationId?: string };
 
 export function generationDispatchPayload(input: GenerationAdmissionInput): GenerationDispatchPayload {
   return {
@@ -60,6 +66,20 @@ export function generationDispatchPayload(input: GenerationAdmissionInput): Gene
  * persistence, concurrency, usage reservation and dispatch happen only here.
  */
 export async function admitGeneration(input: GenerationAdmissionInput): Promise<GenerationAdmissionResult> {
+  try {
+    input = { ...input, references: await prepareNewKieReferences(input.model.id, input.references) };
+  } catch {
+    return { ok: false, status: 400, code: "INVALID_REFERENCE_MEDIA", error: "Could not read reference media; upload a valid file before generating" };
+  }
+  if (newKieModel(input.model.id)) {
+    const videos = input.references.filter((reference) => reference.role === "reference-video");
+    input.hasVideoInput = videos.length > 0;
+    input.inputVideoDurationSeconds = videos.reduce((sum, reference) => sum + (reference.durationSeconds || 0), 0);
+  }
+  const inputError = newKieInputError(input.model.id, input);
+  const catalogModel = newKieModel(input.model.id);
+  if (catalogModel && newKiePrompt(input.model.id, input.prompt, input.references).length > catalogModel.maxPromptLength!) return { ok: false, status: 400, code: "PROMPT_TOO_LONG", error: `${catalogModel.label}: shorten the prompt to leave room for reference bindings` };
+  if (inputError) return { ok: false, status: 400, code: "INCOMPATIBLE_MODEL_INPUTS", error: inputError };
   const workspaceId = await usageWorkspaceForUserProject(input.userId, input.projectId);
   if (!workspaceId) return { ok: false, status: 404, error: "Canvas not found", code: "PROJECT_NOT_FOUND" };
   await expireStaleGenerations(workspaceId);

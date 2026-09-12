@@ -6,6 +6,7 @@ type VideoReferenceModel = {
   durations?: string[];
   defaultDuration?: string;
   durationSource?: "select" | "reference-video";
+  durationSourceWithVideo?: "model";
   ratios?: string[];
   defaultRatio?: string;
   inputPorts?: Array<{ id: string; kind: "image" | "video" | "audio" }>;
@@ -131,8 +132,13 @@ export function videoMasterGenerationDuration(model: VideoReferenceModel | undef
   return supported.find((value) => value >= timelineDuration) || supported[supported.length - 1];
 }
 
-export function videoMasterGenerationDurationChoices(model: VideoReferenceModel | undefined, clip: VideoMasterClip | undefined) {
-  if (model?.durationSource === "reference-video") return [];
+/** Automatic output length must never implicitly shorten the source input. */
+export function videoMasterReferencePreparationDuration(model: VideoReferenceModel | undefined, clip: VideoMasterClip | undefined) {
+  return model?.durationSourceWithVideo === "model" ? videoMasterTimelineDuration(clip) : videoMasterGenerationDuration(model, clip);
+}
+
+export function videoMasterGenerationDurationChoices(model: VideoReferenceModel | undefined, clip: VideoMasterClip | undefined, hasVideoInput = false) {
+  if (model?.durationSource === "reference-video" || (model?.durationSourceWithVideo === "model" && hasVideoInput)) return [];
   return (model?.durations || []).map(Number).filter((value) => Number.isFinite(value) && value > 0);
 }
 
