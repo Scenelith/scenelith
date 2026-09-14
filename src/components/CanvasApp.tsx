@@ -77,7 +77,8 @@ import { TaskCenter } from "./TaskCenter";
 import BrandMark from "./BrandMark";
 import type { BackgroundTaskRecord, FrameEdge, FrameNode, GeneratorInputRole, HookRecord, LibraryMediaAsset, PersonaRecord, ProjectRecord, UserRecord, VideoMasterClip, VideoSceneSegment, WorkspaceRecord } from "@/lib/types";
 import { editReferenceMentionToken, referenceMentionToken } from "@/lib/reference-mentions";
-import { MAX_GENERATION_BATCH, settleWithConcurrency } from "@/lib/generation-queue";
+import { MAX_GENERATION_BATCH, GenerationCapacityQueue, canRestoreForegroundTask } from "@/lib/generation-queue";
+import { submitGenerationWhenAvailable } from "@/lib/generation-submission";
 import { DEFAULT_ASSISTANT_MODEL_ID } from "@/lib/assistant-models";
 import { duplicateGraphSelection, generatorInputCapacity, generatorSourceAssetIds, normalizeEdgePorts, selectGraphNode, stableGraphEdges, stableGraphNodes, upsertGraphEdge } from "@/lib/canvas-graph";
 import { assetIdFromAssetUrl, hydrateVideoMasterSourceClips, nearestVideoMasterRatio, resolveVideoMasterSourceTarget, unsupportedMasterReferenceRoles, videoMasterClipExportMedia, videoMasterClipPlaybackMedia, videoMasterClipThumbnail, videoMasterGenerationDuration, videoMasterReferencePreparationDuration, videoMasterModelsForScene, videoMasterProviderAspectRatio, videoMasterSourceRatio, videoMasterTimelineDuration, type VideoMasterDownloadLane } from "@/lib/video-master";
@@ -557,7 +558,11 @@ function CanvasWorkspace({ initialProject, projects: initialProjects, initialWor
   const [importing, setImporting] = useState(false);
   const [saving, setSaving] = useState<"idle" | "saving" | "saved">("idle");
   const [notice, setNotice] = useState("");
-  const [generating, setGenerating] = useState(false);
+  const [foregroundGenerationCount, setForegroundGenerationCount] = useState(0);
+  const generating = foregroundGenerationCount > 0;
+  const foregroundGenerationsRef = useRef(new Map<string, string | null>());
+  const generationCapacityQueue = useRef(new GenerationCapacityQueue());
+  const generationAbortRef = useRef(new AbortController());
   const [generatingNodeIds, setGeneratingNodeIds] = useState<string[]>([]);
   const [backgroundGenerationNodeIds, setBackgroundGenerationNodeIds] = useState<string[]>([]);
   const [preparingMasterClipIds, setPreparingMasterClipIds] = useState<Record<string, string>>({});
@@ -972,6 +977,11 @@ function CanvasWorkspace({ initialProject, projects: initialProjects, initialWor
   }, [project.id]);
   useEffect(() => { void refreshUsage(); }, [refreshUsage]);
   useEffect(() => {
+    const controller = new AbortController();
+    generationAbortRef.current = controller;
+    return () => controller.abort();
+  }, [project.id]);
+  useEffect(() => {
     const restoreTasks = (event: Event) => {
       const tasks = ((event as CustomEvent<{ tasks?: BackgroundTaskRecord[] }>).detail?.tasks || [])
         .filter((task) => task.kind === "generation" && task.projectId === project.id);
@@ -992,6 +1002,7 @@ function CanvasWorkspace({ initialProject, projects: initialProjects, initialWor
         }
       }
       const nextActiveIds = [...latestByNode.values()].filter((task) => {
+        if (!canRestoreForegroundTask(task, foregroundGenerationsRef.current)) return false;
         if (task.status !== "queued" && task.status !== "running") return false;
         const node = nodesRef.current.find((candidate) => candidate.id === task.nodeId);
         if (!node) return false;
@@ -1006,6 +1017,7 @@ function CanvasWorkspace({ initialProject, projects: initialProjects, initialWor
         const next = current.map((node) => {
           const task = latestByNode.get(node.id);
           if (!task) return node;
+          if (!canRestoreForegroundTask(task, foregroundGenerationsRef.current)) return node;
           if (node.data.kind === "videoMaster") {
             const restored = restoreVideoMasterTask(node, task);
             if (restored !== node) changed = true;
@@ -3762,103 +3774,109 @@ function CanvasWorkspace({ initialProject, projects: initialProjects, initialWor
     const requestedId = requestedNode?.id || selectedNode?.id;
     const generatorNode = nodesRef.current.find((node) => node.id === requestedId);
     const effectivePrompt = requestedId ? effectiveGeneratorPrompt(requestedId, generatorNode) : "";
-    if (!generatorNode || !effectivePrompt || activeGenerationNodeIds.includes(generatorNode.id)) return;
-    const modelId = generatorNode.data.modelId || "nano-banana-2";
-    const model = models.find((item) => item.id === modelId);
-    const generationCount = Math.min(MAX_GENERATION_BATCH, Math.max(1, Number(generatorNode.data.generationCount || 1)));
-    const generationConcurrency = Math.max(1, liveCreditUsage.generationConcurrency || 1);
+    if (!generatorNode || !effectivePrompt || activeGenerationNodeIds.includes(generatorNode.id) || foregroundGenerationsRef.current.has(generatorNode.id)) return;
+    const ownedNodeIds = new Set([generatorNode.id]);
+    const generationSignal = generationAbortRef.current.signal;
+    foregroundGenerationsRef.current.set(generatorNode.id, null);
+    setForegroundGenerationCount((count) => count + 1);
     try {
-      await ensureGeneratorSegmentReferences(generatorNode.id);
-    } catch (error) {
-      setNotice(error instanceof Error ? error.message : "Could not prepare video references");
-      return;
-    }
-    if (generatorNode.data.kind === "videoMaster" && generatorNode.data.videoMasterGeneratingClipId) {
-      const liveReferences = nodeReferencePreviews(generatorNode.id, generatorNode.data.videoMasterGeneratingClipId);
-      const unsupported = unsupportedMasterReferenceRoles(model, liveReferences);
-      if (unsupported.length) { setNotice(`Disconnect unsupported inputs before running: ${unsupported.join(", ")}`); return; }
-      if (liveReferences.some((reference) => !reference.assetId)) { setNotice("A connected scene input has no ready asset. Prepare it or disconnect it before generation."); return; }
-    }
-    const dedupedReferenceEntries = generationReferenceEntries(generatorNode.id, undefined, true);
-    const masterSourceTarget = generatorNode.data.kind === "videoMaster" && generatorNode.data.videoMasterGeneratingClipId
-      ? resolveVideoMasterSourceTarget(nodesRef.current, generatorNode.id, generatorNode.data.videoMasterGeneratingClipId)
-      : undefined;
-    const preparedMasterSource = dedupedReferenceEntries.find((entry) => entry.isSceneSource && entry.role === "reference-video");
-    const referenceAssetIds = dedupedReferenceEntries.map((entry) => entry.assetId);
-    // Use the same flattened ordering as the @ mention menu. This keeps the
-    // visible token, API array index and provider-side label in exact sync.
-    const referenceLabels = dedupedReferenceEntries.map((entry) => entry.token);
-    const referenceRoles = dedupedReferenceEntries.map((entry) => entry.role);
-    const primaryAttachedIdentity = generatorNode.data.attachedReferences?.find((reference) => reference.personaId);
-    const primaryConnectedIdentity = incomingNodes(generatorNode.id, nodesRef.current, edgesRef.current).find((node) => node.data.personaId);
-    const generationPersonaId = generatorNode.data.personaId || primaryAttachedIdentity?.personaId || primaryConnectedIdentity?.data.personaId;
-    const generationPersonaVariant = generatorNode.data.personaVariant || primaryAttachedIdentity?.variant || primaryConnectedIdentity?.data.personaVariant;
-    const measuredWidth = Number(generatorNode.measured?.width || generatorNode.width || generatorNode.data.nodeWidth || 430);
-    const [batchRatioWidth, batchRatioHeight] = String(generatorNode.data.aspectRatio || model?.defaultRatio || "4:5").split(":").map(Number);
-    const batchRatio = Number.isFinite(batchRatioWidth / batchRatioHeight) ? batchRatioWidth / batchRatioHeight : 16 / 9;
-    const measuredHeight = measuredWidth / Math.max(0.2, batchRatio) + 36;
-    const batchNodeIds = [generatorNode.id, ...Array.from({ length: generationCount - 1 }, () => uid("prompt"))];
-    const clonedNodes: FrameNode[] = batchNodeIds.slice(1).map((nodeId, index) => ({
-      id: nodeId,
-      type: "frameNode",
-      position: {
-        x: generatorNode.position.x + (measuredWidth + 64) * ((index + 1) % 4),
-        y: generatorNode.position.y + (measuredHeight + 80) * Math.floor((index + 1) / 4),
-      },
-      data: {
-        ...structuredClone(generatorNode.data),
-        generationCount: 1,
-        outputUrl: undefined,
-        assetId: undefined,
-        generatedOutputs: [],
-        activeGeneratedOutputIndex: undefined,
-        status: "queued",
-        queueReason: "plan",
-        generationError: undefined,
-      },
-    }));
-    const incomingEdges = edgesRef.current.filter((edge) => edge.target === generatorNode.id);
-    const clonedEdges: FrameEdge[] = batchNodeIds.slice(1).flatMap((nodeId) => incomingEdges.map((edge) => ({
-      ...structuredClone(edge),
-      id: uid("edge"),
-      target: nodeId,
-    })));
-    pushHistory();
-    const preparedNodes = nodesRef.current.map((node) => node.id === generatorNode.id ? {
-      ...node,
-      data: {
-        ...node.data,
-        generationCount: 1,
-        status: "queued" as const,
-        queueReason: "plan" as const,
-        generationError: undefined,
-        mediaType: model?.mediaType || "image",
-      },
-    } : node).concat(clonedNodes);
-    const preparedEdges = [...edgesRef.current, ...clonedEdges];
-    nodesRef.current = preparedNodes;
-    edgesRef.current = preparedEdges;
-    setNodes(preparedNodes);
-    setEdges(preparedEdges);
-    if (!(await save(true))) {
-      setNotice("Could not save the generator nodes before starting");
-      return false;
-    }
-    setGenerating(true);
-    setNotice(generationCount === 1
-      ? "Generation started"
-      : `${generationCount} generator nodes created · ${Math.min(generationCount, generationConcurrency)} running at a time`);
-    const runOne = async (nodeId: string) => {
-      const setActive = (active: boolean) => setGeneratingNodeIds((current) => active
-        ? current.includes(nodeId) ? current : [...current, nodeId]
-        : current.filter((id) => id !== nodeId));
+      const modelId = generatorNode.data.modelId || "nano-banana-2";
+      const model = models.find((item) => item.id === modelId);
+      const generationCount = Math.min(MAX_GENERATION_BATCH, Math.max(1, Number(generatorNode.data.generationCount || 1)));
+      const generationConcurrency = Math.max(1, liveCreditUsage.generationConcurrency || 1);
       try {
-        let generationId = "";
-        while (!generationId) {
-          const response = await fetch("/api/generate", {
-            method: "POST",
-            headers: { "content-type": "application/json" },
-            body: JSON.stringify({
+        await ensureGeneratorSegmentReferences(generatorNode.id);
+      } catch (error) {
+        setNotice(error instanceof Error ? error.message : "Could not prepare video references");
+        return;
+      }
+      if (generatorNode.data.kind === "videoMaster" && generatorNode.data.videoMasterGeneratingClipId) {
+        const liveReferences = nodeReferencePreviews(generatorNode.id, generatorNode.data.videoMasterGeneratingClipId);
+        const unsupported = unsupportedMasterReferenceRoles(model, liveReferences);
+        if (unsupported.length) { setNotice(`Disconnect unsupported inputs before running: ${unsupported.join(", ")}`); return; }
+        if (liveReferences.some((reference) => !reference.assetId)) { setNotice("A connected scene input has no ready asset. Prepare it or disconnect it before generation."); return; }
+      }
+      const dedupedReferenceEntries = generationReferenceEntries(generatorNode.id, undefined, true);
+      const masterSourceTarget = generatorNode.data.kind === "videoMaster" && generatorNode.data.videoMasterGeneratingClipId
+        ? resolveVideoMasterSourceTarget(nodesRef.current, generatorNode.id, generatorNode.data.videoMasterGeneratingClipId)
+        : undefined;
+      const preparedMasterSource = dedupedReferenceEntries.find((entry) => entry.isSceneSource && entry.role === "reference-video");
+      const referenceAssetIds = dedupedReferenceEntries.map((entry) => entry.assetId);
+      // Use the same flattened ordering as the @ mention menu. This keeps the
+      // visible token, API array index and provider-side label in exact sync.
+      const referenceLabels = dedupedReferenceEntries.map((entry) => entry.token);
+      const referenceRoles = dedupedReferenceEntries.map((entry) => entry.role);
+      const primaryAttachedIdentity = generatorNode.data.attachedReferences?.find((reference) => reference.personaId);
+      const primaryConnectedIdentity = incomingNodes(generatorNode.id, nodesRef.current, edgesRef.current).find((node) => node.data.personaId);
+      const generationPersonaId = generatorNode.data.personaId || primaryAttachedIdentity?.personaId || primaryConnectedIdentity?.data.personaId;
+      const generationPersonaVariant = generatorNode.data.personaVariant || primaryAttachedIdentity?.variant || primaryConnectedIdentity?.data.personaVariant;
+      const measuredWidth = Number(generatorNode.measured?.width || generatorNode.width || generatorNode.data.nodeWidth || 430);
+      const [batchRatioWidth, batchRatioHeight] = String(generatorNode.data.aspectRatio || model?.defaultRatio || "4:5").split(":").map(Number);
+      const batchRatio = Number.isFinite(batchRatioWidth / batchRatioHeight) ? batchRatioWidth / batchRatioHeight : 16 / 9;
+      const measuredHeight = measuredWidth / Math.max(0.2, batchRatio) + 36;
+      const batchNodeIds = [generatorNode.id, ...Array.from({ length: generationCount - 1 }, () => uid("prompt"))];
+      for (const id of batchNodeIds.slice(1)) { foregroundGenerationsRef.current.set(id, null); ownedNodeIds.add(id); }
+      const clonedNodes: FrameNode[] = batchNodeIds.slice(1).map((nodeId, index) => ({
+        id: nodeId,
+        type: "frameNode",
+        position: {
+          x: generatorNode.position.x + (measuredWidth + 64) * ((index + 1) % 4),
+          y: generatorNode.position.y + (measuredHeight + 80) * Math.floor((index + 1) / 4),
+        },
+        data: {
+          ...structuredClone(generatorNode.data),
+          generationCount: 1,
+          outputUrl: undefined,
+          assetId: undefined,
+          generatedOutputs: [],
+          activeGeneratedOutputIndex: undefined,
+          status: "queued",
+          queueReason: "plan",
+          generationError: undefined,
+        },
+      }));
+      const incomingEdges = edgesRef.current.filter((edge) => edge.target === generatorNode.id);
+      const clonedEdges: FrameEdge[] = batchNodeIds.slice(1).flatMap((nodeId) => incomingEdges.map((edge) => ({
+        ...structuredClone(edge),
+        id: uid("edge"),
+        target: nodeId,
+      })));
+      pushHistory();
+      const preparedNodes = nodesRef.current.map((node) => node.id === generatorNode.id ? {
+        ...node,
+        data: {
+          ...node.data,
+          generationCount: 1,
+          status: "queued" as const,
+          queueReason: "plan" as const,
+          generationError: undefined,
+          mediaType: model?.mediaType || "image",
+        },
+      } : node).concat(clonedNodes);
+      const preparedEdges = [...edgesRef.current, ...clonedEdges];
+      nodesRef.current = preparedNodes;
+      edgesRef.current = preparedEdges;
+      setNodes(preparedNodes);
+      setEdges(preparedEdges);
+      if (!(await save(true))) {
+        const message = "Could not save the generator nodes before starting";
+        for (const id of batchNodeIds) updateNode(id, { status: "failed", queueReason: undefined, generationError: message });
+        setNotice(message);
+        return false;
+      }
+      setNotice(generationCount === 1
+        ? "Generation started"
+        : `${generationCount} generator nodes created · ${Math.min(generationCount, generationConcurrency)} running at a time`);
+      const runOne = async (nodeId: string) => {
+        const setActive = (active: boolean) => setGeneratingNodeIds((current) => active
+          ? current.includes(nodeId) ? current : [...current, nodeId]
+          : current.filter((id) => id !== nodeId));
+        let releaseSlot: (() => void) | undefined;
+        try {
+          releaseSlot = await generationCapacityQueue.current.acquire(generationConcurrency, generationSignal);
+          let generationId = "";
+          while (!generationId) {
+            const { response, body } = await submitGenerationWhenAvailable({
               projectId: project.id,
               nodeId,
               prompt: effectivePrompt,
@@ -3874,147 +3892,146 @@ function CanvasWorkspace({ initialProject, projects: initialProjects, initialWor
               generateAudio: generatorNode.data.generateAudio ?? model?.defaultGenerateAudio ?? false,
               targetClipId: generatorNode.data.kind === "videoMaster" ? generatorNode.data.videoMasterGeneratingClipId : undefined,
               targetSourceAssetId: preparedMasterSource?.assetId || masterSourceTarget?.sourceAssetId,
-            }),
-          });
-          const body = (await response.json().catch(() => ({}))) as { error?: string; code?: string; generationId?: string; retryAfterMs?: number; status?: string };
-          if (response.status === 429 && body.code === "GENERATION_CONCURRENCY_LIMIT") {
-            setActive(false);
-            updateNode(nodeId, { status: "queued", queueReason: "plan" });
-            await new Promise((resolve) => window.setTimeout(resolve, Math.max(1000, body.retryAfterMs || 3000)));
-            continue;
+            }, generationSignal);
+            await refreshUsage();
+            if (!response.ok || !body.generationId) throw new Error(body.error || "Generation failed");
+            generationId = body.generationId;
+            foregroundGenerationsRef.current.set(nodeId, generationId);
+            window.dispatchEvent(new Event("scenelith:tasks-changed"));
+            if (body.status === "queued") {
+              setActive(false);
+              updateNode(nodeId, { status: "queued", queueReason: "provider" });
+            } else {
+              setActive(true);
+              updateNode(nodeId, { status: "working", queueReason: undefined });
+            }
           }
-          await refreshUsage();
-          if (!response.ok || !body.generationId) throw new Error(body.error || "Generation failed");
-          generationId = body.generationId;
-          window.dispatchEvent(new Event("scenelith:tasks-changed"));
-          if (body.status === "queued") {
-            setActive(false);
-            updateNode(nodeId, { status: "queued", queueReason: "provider" });
-          } else {
-            setActive(true);
-            updateNode(nodeId, { status: "working", queueReason: undefined });
-          }
-        }
-        // The API owns the provider timeout (5 minutes for images, 45 for
-        // videos). Keep polling until it returns a terminal state so a slow
-        // provider cannot leave the node and its credit reservation orphaned.
-        for (let attempt = 0; attempt < 920; attempt += 1) {
-          await new Promise((resolve) => window.setTimeout(resolve, 3000));
-          const poll = await fetch(`/api/generate/${generationId}`, { cache: "no-store" });
-          const pollBody = (await poll.json().catch(() => ({}))) as { generation?: { status: string; outputUrl?: string; assetId?: string; mediaType?: "image" | "video"; modelId?: string; createdAt?: string; durationSeconds?: number; queuePosition?: number | null; error?: string | null }; error?: string };
-          const polledStatus = String(pollBody.generation?.status || "").toLowerCase();
-          if (polledStatus === "queued" || polledStatus === "dispatching") {
-            setActive(false);
-            updateNode(nodeId, { status: "queued", queueReason: "provider" });
-            continue;
-          }
-          if (["failed", "fail", "error", "cancelled", "canceled"].includes(polledStatus) || pollBody.error) {
-            throw new Error(pollBody.error || pollBody.generation?.error || "Generation failed");
-          }
-          if (pollBody.generation && !pollBody.generation.outputUrl) {
-            setActive(true);
-            updateNode(nodeId, { status: "working", queueReason: undefined });
-          }
-          if (pollBody.generation?.outputUrl) {
-            const output = {
-              url: pollBody.generation.outputUrl,
-              assetId: pollBody.generation.assetId,
-              mediaType: pollBody.generation.mediaType || model?.mediaType || "image" as const,
-              modelId: pollBody.generation.modelId || modelId,
-            };
-            const latestNode = nodesRef.current.find((node) => node.id === nodeId) || generatorNode;
-            const masterClipId = latestNode.data.kind === "videoMaster" ? latestNode.data.videoMasterGeneratingClipId : undefined;
-            const targetMasterClip = masterClipId
-              ? latestNode.data.videoMasterClips?.find((clip) => clip.id === masterClipId)
-              : undefined;
-            const generatedDuration = output.mediaType === "video"
-              ? Number(pollBody.generation.durationSeconds || 0) > 0
-                ? Number(pollBody.generation.durationSeconds)
-                : targetMasterClip
-                  ? videoMasterTimelineDuration(targetMasterClip)
-                  : Math.max(.1, Number(latestNode.data.duration || 0)) || undefined
-              : undefined;
-            const nextMasterClips = masterClipId ? latestNode.data.videoMasterClips?.map((clip) => {
-              if (clip.id !== masterClipId) return clip;
-              const clipOutput = { url: output.url, assetId: output.assetId, modelId: output.modelId, durationSeconds: generatedDuration };
-              const history = [...(clip.generatedOutputs || []), clipOutput]
+          // The API owns the provider timeout (5 minutes for images, 45 for
+          // videos). Keep polling until it returns a terminal state so a slow
+          // provider cannot leave the node and its credit reservation orphaned.
+          for (let attempt = 0; attempt < 920; attempt += 1) {
+            await new Promise((resolve) => window.setTimeout(resolve, 3000));
+            const poll = await fetch(`/api/generate/${generationId}`, { cache: "no-store", signal: generationSignal });
+            const pollBody = (await poll.json().catch(() => ({}))) as { generation?: { status: string; outputUrl?: string; assetId?: string; mediaType?: "image" | "video"; modelId?: string; createdAt?: string; durationSeconds?: number; queuePosition?: number | null; error?: string | null }; error?: string };
+            const polledStatus = String(pollBody.generation?.status || "").toLowerCase();
+            if (polledStatus === "queued" || polledStatus === "dispatching") {
+              setActive(false);
+              updateNode(nodeId, { status: "queued", queueReason: "provider" });
+              continue;
+            }
+            if (["failed", "fail", "error", "cancelled", "canceled"].includes(polledStatus) || pollBody.error) {
+              throw new Error(pollBody.error || pollBody.generation?.error || "Generation failed");
+            }
+            if (pollBody.generation && !pollBody.generation.outputUrl) {
+              setActive(true);
+              updateNode(nodeId, { status: "working", queueReason: undefined });
+            }
+            if (pollBody.generation?.outputUrl) {
+              const output = {
+                url: pollBody.generation.outputUrl,
+                assetId: pollBody.generation.assetId,
+                mediaType: pollBody.generation.mediaType || model?.mediaType || "image" as const,
+                modelId: pollBody.generation.modelId || modelId,
+              };
+              const latestNode = nodesRef.current.find((node) => node.id === nodeId) || generatorNode;
+              const masterClipId = latestNode.data.kind === "videoMaster" ? latestNode.data.videoMasterGeneratingClipId : undefined;
+              const targetMasterClip = masterClipId
+                ? latestNode.data.videoMasterClips?.find((clip) => clip.id === masterClipId)
+                : undefined;
+              const generatedDuration = output.mediaType === "video"
+                ? Number(pollBody.generation.durationSeconds || 0) > 0
+                  ? Number(pollBody.generation.durationSeconds)
+                  : targetMasterClip
+                    ? videoMasterTimelineDuration(targetMasterClip)
+                    : Math.max(.1, Number(latestNode.data.duration || 0)) || undefined
+                : undefined;
+              const nextMasterClips = masterClipId ? latestNode.data.videoMasterClips?.map((clip) => {
+                if (clip.id !== masterClipId) return clip;
+                const clipOutput = { url: output.url, assetId: output.assetId, modelId: output.modelId, durationSeconds: generatedDuration };
+                const history = [...(clip.generatedOutputs || []), clipOutput]
+                  .filter((item, index, items) => items.findIndex((candidate) => candidate.url === item.url) === index)
+                  .slice(-20);
+                return {
+                  ...clip,
+                  origin: "generated" as const,
+                  outputUrl: output.url,
+                  outputAssetId: output.assetId,
+                  generatedDuration,
+                  generatedOutputs: history,
+                  modelId: output.modelId,
+                };
+              }) : latestNode.data.videoMasterClips;
+              const previousOutput = latestNode.data.outputUrl ? [{
+                url: latestNode.data.outputUrl,
+                assetId: latestNode.data.assetId,
+                mediaType: latestNode.data.mediaType || model?.mediaType || "image" as const,
+                modelId: latestNode.data.modelId || modelId,
+              }] : [];
+              const outputHistory = [...(latestNode.data.generatedOutputs || []), ...previousOutput, output]
                 .filter((item, index, items) => items.findIndex((candidate) => candidate.url === item.url) === index)
                 .slice(-20);
-              return {
-                ...clip,
-                origin: "generated" as const,
+              const activeOutputIndex = outputHistory.findIndex((item) => item.url === output.url);
+              updateNode(nodeId, {
                 outputUrl: output.url,
-                outputAssetId: output.assetId,
-                generatedDuration,
-                generatedOutputs: history,
+                assetId: output.assetId,
+                mediaType: output.mediaType,
                 modelId: output.modelId,
-              };
-            }) : latestNode.data.videoMasterClips;
-            const previousOutput = latestNode.data.outputUrl ? [{
-              url: latestNode.data.outputUrl,
-              assetId: latestNode.data.assetId,
-              mediaType: latestNode.data.mediaType || model?.mediaType || "image" as const,
-              modelId: latestNode.data.modelId || modelId,
-            }] : [];
-            const outputHistory = [...(latestNode.data.generatedOutputs || []), ...previousOutput, output]
-              .filter((item, index, items) => items.findIndex((candidate) => candidate.url === item.url) === index)
-              .slice(-20);
-            const activeOutputIndex = outputHistory.findIndex((item) => item.url === output.url);
-            updateNode(nodeId, {
-              outputUrl: output.url,
-              assetId: output.assetId,
-              mediaType: output.mediaType,
-              modelId: output.modelId,
-              generatedAt: pollBody.generation.createdAt || new Date().toISOString(),
-              generatedOutputs: outputHistory,
-              activeGeneratedOutputIndex: activeOutputIndex >= 0 ? activeOutputIndex : outputHistory.length - 1,
-              personaId: generationPersonaId,
-              personaVariant: generationPersonaVariant,
-              status: "ready",
-              queueReason: undefined,
-              generationError: undefined,
-              videoMasterClips: nextMasterClips,
-              videoMasterGeneratingClipId: undefined,
-            });
-            const replacementFor = generatorNode.data.replacementFor;
-            if (replacementFor && output.mediaType === "video" && output.assetId) {
-              const sourceNode = nodesRef.current.find((node) => node.id === replacementFor.sourceNodeId);
-              if (sourceNode?.data.videoSegments) updateNode(replacementFor.sourceNodeId, {
-                videoSegments: sourceNode.data.videoSegments.map((segment) => segment.id === replacementFor.segmentId
-                  ? { ...segment, replacementAssetId: output.assetId, replacementUrl: output.url }
-                  : segment),
+                generatedAt: pollBody.generation.createdAt || new Date().toISOString(),
+                generatedOutputs: outputHistory,
+                activeGeneratedOutputIndex: activeOutputIndex >= 0 ? activeOutputIndex : outputHistory.length - 1,
+                personaId: generationPersonaId,
+                personaVariant: generationPersonaVariant,
+                status: "ready",
+                queueReason: undefined,
+                generationError: undefined,
+                videoMasterClips: nextMasterClips,
+                videoMasterGeneratingClipId: undefined,
               });
+              const replacementFor = generatorNode.data.replacementFor;
+              if (replacementFor && output.mediaType === "video" && output.assetId) {
+                const sourceNode = nodesRef.current.find((node) => node.id === replacementFor.sourceNodeId);
+                if (sourceNode?.data.videoSegments) updateNode(replacementFor.sourceNodeId, {
+                  videoSegments: sourceNode.data.videoSegments.map((segment) => segment.id === replacementFor.segmentId
+                    ? { ...segment, replacementAssetId: output.assetId, replacementUrl: output.url }
+                    : segment),
+                });
+              }
+              // A provider success is not durable until the generated clip has
+              // been written into the graph. Do not leave this to the regular
+              // delayed autosave: an immediate reload must keep OUTPUT intact.
+              if (latestNode.data.kind === "videoMaster" && !(await save(true, true))) {
+                throw new Error("Video generated, but the canvas could not be saved");
+              }
+              return;
             }
-            // A provider success is not durable until the generated clip has
-            // been written into the graph. Do not leave this to the regular
-            // delayed autosave: an immediate reload must keep OUTPUT intact.
-            if (latestNode.data.kind === "videoMaster" && !(await save(true, true))) {
-              throw new Error("Video generated, but the canvas could not be saved");
-            }
-            return;
           }
+          throw new Error("Generation did not complete in time");
+        } catch (error) {
+          if (generationSignal.aborted) throw error;
+          updateNode(nodeId, {
+            status: "failed",
+            queueReason: undefined,
+            generationError: error instanceof Error ? error.message : "Generation failed",
+            ...(generatorNode.data.kind === "videoMaster" ? { videoMasterGeneratingClipId: generatorNode.data.videoMasterGeneratingClipId } : {}),
+          });
+          throw error;
+        } finally {
+          releaseSlot?.();
+          foregroundGenerationsRef.current.delete(nodeId);
+          ownedNodeIds.delete(nodeId);
+          setActive(false);
         }
-        throw new Error("Generation did not complete in time");
-      } catch (error) {
-        updateNode(nodeId, {
-          status: "failed",
-          queueReason: undefined,
-          generationError: error instanceof Error ? error.message : "Generation failed",
-          ...(generatorNode.data.kind === "videoMaster" ? { videoMasterGeneratingClipId: generatorNode.data.videoMasterGeneratingClipId } : {}),
-        });
-        throw error;
-      } finally {
-        setActive(false);
-      }
-    };
-    const results = await settleWithConcurrency(batchNodeIds, generationConcurrency, runOne);
-    const completed = results.filter((result) => result.status === "fulfilled").length;
-    setGenerating(false);
-    setGeneratingNodeIds([]);
-    await refreshUsage();
-    const firstFailure = results.find((result): result is PromiseRejectedResult => result.status === "rejected");
-    setNotice(completed === generationCount ? `${completed} version${completed === 1 ? "" : "s"} ready in separate nodes` : completed > 0 ? `${completed} of ${generationCount} versions ready` : firstFailure?.reason instanceof Error ? firstFailure.reason.message : "Generation failed");
-    return completed > 0;
+      };
+      const results = await Promise.allSettled(batchNodeIds.map(runOne));
+      const completed = results.filter((result) => result.status === "fulfilled").length;
+      await refreshUsage();
+      const firstFailure = results.find((result): result is PromiseRejectedResult => result.status === "rejected");
+      setNotice(completed === generationCount ? `${completed} version${completed === 1 ? "" : "s"} ready in separate nodes` : completed > 0 ? `${completed} of ${generationCount} versions ready` : firstFailure?.reason instanceof Error ? firstFailure.reason.message : "Generation failed");
+      return completed > 0;
+    } finally {
+      for (const id of ownedNodeIds) foregroundGenerationsRef.current.delete(id);
+      setForegroundGenerationCount((count) => count - 1);
+    }
   }
 
   async function editImageInPlace(
@@ -4024,7 +4041,7 @@ function CanvasWorkspace({ initialProject, projects: initialProjects, initialWor
     additionalReferences: ImageEditReference[],
     onPhase?: (phase: "preparing" | "queued" | "generating") => void,
   ) {
-    if (generating || activeGenerationNodeIds.includes(sourceNode.id)) throw new Error("This node already has a generation in progress");
+    if (foregroundGenerationsRef.current.has(sourceNode.id) || activeGenerationNodeIds.includes(sourceNode.id)) throw new Error("This node already has a generation in progress");
     const currentNode = nodesRef.current.find((node) => node.id === sourceNode.id) || sourceNode;
     const sourceUrl = String(currentNode.data.outputUrl || currentNode.data.imageUrl || "");
     const sourceAssetId = currentNode.data.assetId;
@@ -4068,27 +4085,26 @@ function CanvasWorkspace({ initialProject, projects: initialProjects, initialWor
       ? current.includes(currentNode.id) ? current : [...current, currentNode.id]
       : current.filter((id) => id !== currentNode.id));
 
-    pushHistory();
-    updateNode(currentNode.id, {
-      status: "queued",
-      queueReason: "plan",
-      generationError: undefined,
-    });
-    setGenerating(true);
-    onPhase?.("preparing");
-    setNotice("Preparing image edit…");
-    if (!(await save(true))) {
-      setGenerating(false);
-      throw new Error("Could not save this node before starting the edit");
-    }
-
+    const generationSignal = generationAbortRef.current.signal;
+    foregroundGenerationsRef.current.set(currentNode.id, null);
+    setForegroundGenerationCount((count) => count + 1);
+    let releaseSlot: (() => void) | undefined;
     try {
-      let generationId = "";
-      while (!generationId) {
-        const response = await fetch("/api/generate", {
-          method: "POST",
-          headers: { "content-type": "application/json" },
-          body: JSON.stringify({
+      pushHistory();
+      updateNode(currentNode.id, {
+        status: "queued",
+        queueReason: "plan",
+        generationError: undefined,
+      });
+      onPhase?.("preparing");
+      setNotice("Preparing image edit…");
+      try {
+        if (!(await save(true))) throw new Error("Could not save this node before starting the edit");
+        onPhase?.("queued");
+        releaseSlot = await generationCapacityQueue.current.acquire(liveCreditUsage.generationConcurrency, generationSignal);
+        let generationId = "";
+        while (!generationId) {
+          const { response, body } = await submitGenerationWhenAvailable({
             projectId: project.id,
             nodeId: currentNode.id,
             prompt: effectiveEditPrompt,
@@ -4101,97 +4117,94 @@ function CanvasWorkspace({ initialProject, projects: initialProjects, initialWor
             duration: editModel.defaultDuration || editModel.durations?.[0] || "5",
             generateAudio: false,
             operation: "edit",
-          }),
-        });
-        const body = (await response.json().catch(() => ({}))) as { error?: string; code?: string; generationId?: string; retryAfterMs?: number; status?: string };
-        if (response.status === 429 && body.code === "GENERATION_CONCURRENCY_LIMIT") {
-          setActive(false);
-          updateNode(currentNode.id, { status: "queued", queueReason: "plan" });
-          onPhase?.("queued");
-          await new Promise((resolve) => window.setTimeout(resolve, Math.max(1000, body.retryAfterMs || 3000)));
-          continue;
-        }
-        await refreshUsage();
-        if (!response.ok || !body.generationId) throw new Error(body.error || "Image edit failed");
-        generationId = body.generationId;
-        window.dispatchEvent(new Event("scenelith:tasks-changed"));
-        updateNode(currentNode.id, { status: "queued", queueReason: "provider" });
-        onPhase?.("queued");
-      }
-
-      for (let attempt = 0; attempt < 110; attempt += 1) {
-        await new Promise((resolve) => window.setTimeout(resolve, 3000));
-        const poll = await fetch(`/api/generate/${generationId}`, { cache: "no-store" });
-        const pollBody = (await poll.json().catch(() => ({}))) as { generation?: { status: string; outputUrl?: string; assetId?: string; mediaType?: "image" | "video"; modelId?: string; createdAt?: string; error?: string | null }; error?: string };
-        const status = String(pollBody.generation?.status || "").toLowerCase();
-        if (status === "queued" || status === "dispatching") {
-          setActive(false);
+          }, generationSignal);
+          await refreshUsage();
+          if (!response.ok || !body.generationId) throw new Error(body.error || "Image edit failed");
+          generationId = body.generationId;
+          foregroundGenerationsRef.current.set(currentNode.id, generationId);
+          window.dispatchEvent(new Event("scenelith:tasks-changed"));
           updateNode(currentNode.id, { status: "queued", queueReason: "provider" });
           onPhase?.("queued");
-          continue;
         }
-        if (["failed", "fail", "error", "cancelled", "canceled"].includes(status) || pollBody.error) {
-          throw new Error(pollBody.error || pollBody.generation?.error || "Image edit failed");
+
+        for (let attempt = 0; attempt < 110; attempt += 1) {
+          await new Promise((resolve) => window.setTimeout(resolve, 3000));
+          const poll = await fetch(`/api/generate/${generationId}`, { cache: "no-store", signal: generationSignal });
+          const pollBody = (await poll.json().catch(() => ({}))) as { generation?: { status: string; outputUrl?: string; assetId?: string; mediaType?: "image" | "video"; modelId?: string; createdAt?: string; error?: string | null }; error?: string };
+          const status = String(pollBody.generation?.status || "").toLowerCase();
+          if (status === "queued" || status === "dispatching") {
+            setActive(false);
+            updateNode(currentNode.id, { status: "queued", queueReason: "provider" });
+            onPhase?.("queued");
+            continue;
+          }
+          if (["failed", "fail", "error", "cancelled", "canceled"].includes(status) || pollBody.error) {
+            throw new Error(pollBody.error || pollBody.generation?.error || "Image edit failed");
+          }
+          if (pollBody.generation && !pollBody.generation.outputUrl) {
+            setActive(true);
+            updateNode(currentNode.id, { status: "working", queueReason: undefined });
+            onPhase?.("generating");
+          }
+          if (pollBody.generation?.outputUrl) {
+            const output = {
+              url: pollBody.generation.outputUrl,
+              assetId: pollBody.generation.assetId,
+              mediaType: "image" as const,
+              modelId: pollBody.generation.modelId || editModel.id,
+            };
+            const latestNode = nodesRef.current.find((node) => node.id === currentNode.id) || currentNode;
+            const previousOutput = { url: sourceUrl, assetId: sourceAssetId, mediaType: "image" as const, modelId: currentNode.data.modelId };
+            const outputHistory = [...(latestNode.data.generatedOutputs || []), previousOutput, output]
+              .filter((item, index, items) => items.findIndex((candidate) => candidate.url === item.url) === index)
+              .slice(-20);
+            const currentAspectRatio = String(currentNode.data.aspectRatio || currentModel?.defaultRatio || "4:5");
+            const preservedAspectRatio = /^\d+:\d+$/.test(currentAspectRatio) ? currentAspectRatio : "16:9";
+            const nextData: Partial<FrameNode["data"]> = {
+              prompt: effectiveEditPrompt,
+              subtitle: "Image edited in place",
+              outputUrl: output.url,
+              assetId: output.assetId,
+              mediaType: "image",
+              modelId: output.modelId,
+              aspectRatio: (options.sizeMode === "custom" ? aspectRatio : preservedAspectRatio) as FrameNode["data"]["aspectRatio"],
+              ratioMode: options.sizeMode === "custom" ? "custom" : currentNode.data.ratioMode,
+              resolution: resolution as FrameNode["data"]["resolution"],
+              generatedAt: pollBody.generation.createdAt || new Date().toISOString(),
+              generatedOutputs: outputHistory,
+              activeGeneratedOutputIndex: outputHistory.length - 1,
+              editReferencesByAssetId: {
+                ...(latestNode.data.editReferencesByAssetId || {}),
+                [sourceAssetId]: additionalReferences.map((reference) => ({ ...reference })),
+                ...(output.assetId ? { [output.assetId]: additionalReferences.map((reference) => ({ ...reference })) } : {}),
+              },
+              status: "ready",
+              queueReason: undefined,
+              generationError: undefined,
+            };
+            updateNode(currentNode.id, nextData);
+            setPreviewNode((preview) => preview?.id === currentNode.id
+              ? { ...preview, data: { ...preview.data, ...nextData } }
+              : preview);
+            setNotice("Edited image ready in the same node");
+            return output;
+          }
         }
-        if (pollBody.generation && !pollBody.generation.outputUrl) {
-          setActive(true);
-          updateNode(currentNode.id, { status: "working", queueReason: undefined });
-          onPhase?.("generating");
-        }
-        if (pollBody.generation?.outputUrl) {
-          const output = {
-            url: pollBody.generation.outputUrl,
-            assetId: pollBody.generation.assetId,
-            mediaType: "image" as const,
-            modelId: pollBody.generation.modelId || editModel.id,
-          };
-          const latestNode = nodesRef.current.find((node) => node.id === currentNode.id) || currentNode;
-          const previousOutput = { url: sourceUrl, assetId: sourceAssetId, mediaType: "image" as const, modelId: currentNode.data.modelId };
-          const outputHistory = [...(latestNode.data.generatedOutputs || []), previousOutput, output]
-            .filter((item, index, items) => items.findIndex((candidate) => candidate.url === item.url) === index)
-            .slice(-20);
-          const currentAspectRatio = String(currentNode.data.aspectRatio || currentModel?.defaultRatio || "4:5");
-          const preservedAspectRatio = /^\d+:\d+$/.test(currentAspectRatio) ? currentAspectRatio : "16:9";
-          const nextData: Partial<FrameNode["data"]> = {
-            prompt: effectiveEditPrompt,
-            subtitle: "Image edited in place",
-            outputUrl: output.url,
-            assetId: output.assetId,
-            mediaType: "image",
-            modelId: output.modelId,
-            aspectRatio: (options.sizeMode === "custom" ? aspectRatio : preservedAspectRatio) as FrameNode["data"]["aspectRatio"],
-            ratioMode: options.sizeMode === "custom" ? "custom" : currentNode.data.ratioMode,
-            resolution: resolution as FrameNode["data"]["resolution"],
-            generatedAt: pollBody.generation.createdAt || new Date().toISOString(),
-            generatedOutputs: outputHistory,
-            activeGeneratedOutputIndex: outputHistory.length - 1,
-            editReferencesByAssetId: {
-              ...(latestNode.data.editReferencesByAssetId || {}),
-              [sourceAssetId]: additionalReferences.map((reference) => ({ ...reference })),
-              ...(output.assetId ? { [output.assetId]: additionalReferences.map((reference) => ({ ...reference })) } : {}),
-            },
-            status: "ready",
-            queueReason: undefined,
-            generationError: undefined,
-          };
-          updateNode(currentNode.id, nextData);
-          setPreviewNode((preview) => preview?.id === currentNode.id
-            ? { ...preview, data: { ...preview.data, ...nextData } }
-            : preview);
-          setNotice("Edited image ready in the same node");
-          return output;
-        }
+        throw new Error("Image edit did not complete in time");
+      } catch (error) {
+        if (generationSignal.aborted) throw error;
+        const message = error instanceof Error ? error.message : "Image edit failed";
+        updateNode(currentNode.id, { status: "failed", queueReason: undefined, generationError: message });
+        setNotice(message);
+        throw error;
+      } finally {
+        setActive(false);
+        await refreshUsage();
       }
-      throw new Error("Image edit did not complete in time");
-    } catch (error) {
-      const message = error instanceof Error ? error.message : "Image edit failed";
-      updateNode(currentNode.id, { status: "failed", queueReason: undefined, generationError: message });
-      setNotice(message);
-      throw error;
     } finally {
-      setActive(false);
-      setGenerating(false);
-      await refreshUsage();
+      releaseSlot?.();
+      foregroundGenerationsRef.current.delete(currentNode.id);
+      setForegroundGenerationCount((count) => count - 1);
     }
   }
 
