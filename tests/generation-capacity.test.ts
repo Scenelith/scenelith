@@ -58,3 +58,21 @@ test("capacity and locked admission agree without reserving credits for a full w
   assert.equal(reserve.mock.calls.length, 0);
   assert.equal(await activeGenerationCount("space"), 2);
 });
+
+
+test("capacity and admission resolve entitlements for the authenticated actor", async () => {
+  const authority = await usageAuthority();
+  const base = await authority.summary("space");
+  const summary = mock.method(authority, "summary", async (workspaceId: string, userId?: string) => {
+    assert.equal(workspaceId, "space");
+    return { ...base, generationConcurrency: userId === "owner" ? 20 : 1 };
+  });
+  const reserve = mock.method(authority, "reserveGeneration", async () => true);
+  await generation("existing", "running");
+  assert.deepEqual(await generationCapacity("owner", "canvas"), { concurrency: 20, available: 19, retryAfterMs: 3000 });
+  const accepted = await admitGeneration(request);
+  assert.equal(accepted.ok, true);
+  assert.equal(reserve.mock.calls.length, 1);
+  assert.ok(summary.mock.calls.length >= 2);
+  for (const call of summary.mock.calls) assert.deepEqual(call.arguments, ["space", "owner"]);
+});

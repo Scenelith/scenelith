@@ -38,7 +38,8 @@ export type AutomationUsageSettlement = {
 export interface UsageAuthority {
   /** Call only after authorizing access to each task. Unmetered editions omit this. */
   taskCreditUsage?(tasks: UsageTaskReference[]): Promise<Record<string, TaskCreditUsage>>;
-  summary(workspaceId: string): Promise<UsageSummary>;
+  /** userId is the authenticated actor, never a client-provided entitlement selector. */
+  summary(workspaceId: string, userId?: string): Promise<UsageSummary>;
   reserveGeneration(input: GenerationUsageReservation): Promise<boolean>;
   settleGeneration(generationId: string): Promise<void>;
   releaseGeneration(generationId: string, reason: string): Promise<boolean>;

@@ -99,7 +99,7 @@ export async function admitGeneration(input: GenerationAdmissionInput): Promise<
   );
   const now = new Date().toISOString();
   const usage = await usageAuthority();
-  const concurrency = (await usage.summary(workspaceId)).generationConcurrency;
+  const concurrency = (await usage.summary(workspaceId, input.userId)).generationConcurrency;
   const admitted = await db.transaction(async () => {
     await db.prepare("SELECT pg_advisory_xact_lock(hashtextextended(?, 0))").get(`generation-admission:${workspaceId}`);
     // One active request per Master prevents retries (and simultaneous UI/MCP

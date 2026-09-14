@@ -53,6 +53,6 @@ export default async function CanvasPage({ searchParams }: { searchParams: Promi
   ]);
   const projects = projectRows.map((row) => String(row.id) === initialProject.id ? initialProject : rowToProjectListItem(row));
   if (!usageWorkspaceId) redirect("/login");
-  const creditUsage = await usageSummary(usageWorkspaceId);
+  const creditUsage = await usageSummary(usageWorkspaceId, user.id);
   return <CanvasApp initialProject={initialProject} projects={projects} initialWorkspace={initialWorkspace} workspaces={workspaces} user={user} creditUsage={creditUsage} initialModels={generationProvider().models} />;
 }

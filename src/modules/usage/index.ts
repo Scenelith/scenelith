@@ -7,8 +7,8 @@ export async function usageAuthority(): Promise<UsageAuthority> {
   return editionUsage.authority;
 }
 
-export async function usageSummary(workspaceId: string) {
-  return await editionUsage.authority.summary(workspaceId);
+export async function usageSummary(workspaceId: string, userId?: string) {
+  return await editionUsage.authority.summary(workspaceId, userId);
 }
 
 export async function teamUsageEntitlement(workspaceId: string) {

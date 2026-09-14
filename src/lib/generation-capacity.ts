@@ -12,6 +12,6 @@ export async function activeGenerationCount(workspaceId: string) {
 export async function generationCapacity(userId: string, projectId: string) {
   const workspaceId = await usageWorkspaceForUserProject(userId, projectId);
   if (!workspaceId) return null;
-  const [usage, active] = await Promise.all([usageSummary(workspaceId), activeGenerationCount(workspaceId)]);
+  const [usage, active] = await Promise.all([usageSummary(workspaceId, userId), activeGenerationCount(workspaceId)]);
   return { concurrency: usage.generationConcurrency, available: Math.max(0, usage.generationConcurrency - active), retryAfterMs: 3000 };
 }

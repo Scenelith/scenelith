@@ -15,7 +15,7 @@ export async function GET(request: Request) {
   const usageWorkspaceId = await usageWorkspaceForUserWorkspace(auth.user.id, workspaceId.data);
   if (!usageWorkspaceId) return Response.json({ error: "Workspace not found" }, { status: 404 });
   return Response.json(
-    { usage: await usageSummary(usageWorkspaceId) },
+    { usage: await usageSummary(usageWorkspaceId, auth.user.id) },
     { headers: { "Cache-Control": "private, no-store, max-age=0" } },
   );
 }
