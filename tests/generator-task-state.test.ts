@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { generationAttemptTime, restoreGeneratorTask } from "../src/lib/generator-task-state";
+import { generationAttemptTime, preserveLocalGenerationStatus, restoreGeneratorTask } from "../src/lib/generator-task-state";
 import type { BackgroundTaskRecord, FrameNode } from "../src/lib/types";
 const node: FrameNode = { id: "image", position: { x: 0, y: 0 }, data: { kind: "prompt", title: "Image", status: "ready", generatedAt: "2026-09-08 10:13:49.678+00", outputUrl: "/new.png", generatedOutputs: [{ url: "/old.png", mediaType: "image" }, { url: "/new.png", mediaType: "image" }] } };
 const task: BackgroundTaskRecord = { id: "old", kind: "generation", projectId: "p", projectName: "P", nodeId: "image", title: "Image", status: "failed", stageLabel: "Failed", progress: 100, createdAt: "2026-09-08T10:08:13.875Z", updatedAt: "2026-09-08T10:25:19.824Z", error: "Old error" };
@@ -31,4 +31,19 @@ test("completion uses attempt creation time, and old completion polls never chan
   const ready = restoreGeneratorTask(node, fresh);
   assert.equal(ready.data.generatedAt, fresh.createdAt); assert.equal(ready.data.outputUrl, "/next.png");
   assert.equal(restoreGeneratorTask(ready, { ...task, status: "completed", outputUrl: "/old.png" }), ready);
+});
+
+test("remote task restoration cannot reset a local wait or run, while unrelated edits still arrive", () => {
+  for (const status of ["queued", "working"] as const) {
+    const local = { ...node, data: { ...node.data, status, queueReason: status === "queued" ? "plan" as const : undefined } };
+    const incoming = { ...node, position: { x: 40, y: 50 }, data: { ...node.data, title: "Remote title", outputUrl: "/remote-output.png", status: "ready" as const } };
+    const view = preserveLocalGenerationStatus(incoming, local, true);
+    assert.equal(view.data.status, status);
+    assert.equal(view.data.queueReason, local.data.queueReason);
+    assert.equal(view.data.title, "Remote title");
+    assert.equal(view.data.outputUrl, "/remote-output.png");
+    assert.deepEqual(view.position, incoming.position);
+    assert.equal(preserveLocalGenerationStatus(incoming, local, false), incoming, "background-only nodes follow the remote graph");
+    assert.equal(preserveLocalGenerationStatus(incoming, node, true), incoming, "completed local attempts do not mask future remote state");
+  }
 });

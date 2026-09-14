@@ -44,3 +44,15 @@ export function restoreGeneratorTask(node: FrameNode, task: BackgroundTaskRecord
     status: "ready", queueReason: undefined, generationError: undefined,
   } };
 }
+
+/** Remote graph snapshots can include a stale task restored by another tab.
+ * Keep the local attempt's progress visible while still receiving remote edits
+ * and outputs. The owning attempt or its matching task decides when it ends. */
+export function preserveLocalGenerationStatus(incoming: FrameNode, local: FrameNode | undefined, isForeground: boolean): FrameNode {
+  if (!isForeground || !local || (local.data.status !== "queued" && local.data.status !== "working")) return incoming;
+  if (incoming.data.status === local.data.status && incoming.data.queueReason === local.data.queueReason
+    && incoming.data.generationError === local.data.generationError) return incoming;
+  return { ...incoming, data: { ...incoming.data,
+    status: local.data.status, queueReason: local.data.queueReason, generationError: local.data.generationError,
+  } };
+}

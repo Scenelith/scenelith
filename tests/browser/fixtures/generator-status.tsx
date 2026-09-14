@@ -3,7 +3,7 @@ import { createRoot } from "react-dom/client";
 import { ReactFlow, type NodeTypes } from "@xyflow/react";
 import { FrameNodeCard, GeneratorNodeContext, type GeneratorNodeActions } from "../../../src/components/FrameNode";
 import { canRestoreForegroundTask } from "../../../src/lib/generation-queue";
-import { restoreGeneratorTask } from "../../../src/lib/generator-task-state";
+import { preserveLocalGenerationStatus, restoreGeneratorTask } from "../../../src/lib/generator-task-state";
 import type { BackgroundTaskRecord, ProjectGraph } from "../../../src/lib/types";
 
 const nodeTypes: NodeTypes = { frameNode: FrameNodeCard };
@@ -29,6 +29,7 @@ function Fixture() {
     generatingNodeIds: [], preparingMasterClipIds: {}, generationConcurrency: 1, queueLabel: "test", runningAssistantNodeId: null, activePreviewNodeId: null,
   };
   return <>
+    <button onClick={() => setGraph((current) => ({ ...current, nodes: current.nodes.map((node) => preserveLocalGenerationStatus({ ...node, data: { ...node.data, status: "ready", queueReason: undefined } }, node, foreground.current.has(node.id))) }))}>Remote old success</button>
     <button onClick={() => { foreground.current.set("image", null); updateNode("image", { status: "queued", queueReason: "plan" }); }}>Wait for capacity</button>
     <button onClick={() => { foreground.current.set("image", "attempt-30"); apply("queued", 30); }}>Accept waiting attempt</button>
     <button onClick={() => apply("failed", 10)}>Old failure</button>

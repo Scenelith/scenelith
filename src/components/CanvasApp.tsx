@@ -2,7 +2,7 @@
 
 /* eslint-disable @next/next/no-img-element */
 
-import { generationAttemptTime, restoreGeneratorTask } from "@/lib/generator-task-state";
+import { generationAttemptTime, preserveLocalGenerationStatus, restoreGeneratorTask } from "@/lib/generator-task-state";
 import { assignCanvasNodeNumbers } from "../../collaboration/node-numbers.mjs";
 import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState, type CSSProperties, type Dispatch, type SetStateAction } from "react";
 import dynamic from "next/dynamic";
@@ -619,7 +619,9 @@ function CanvasWorkspace({ initialProject, projects: initialProjects, initialWor
   const applyCollaborativeGraph = useCallback((graph: ProjectRecord["graph"]) => {
     const stableNodes = stableGraphNodes(graph.nodes || []);
     const normalizedEdges = normalizeEdgePorts(graph.edges || [], stableNodes);
-    const hydratedNodes = applyModelCatalogue(stableNodes, normalizedEdges, models);
+    const localById = new Map(nodesRef.current.map((node) => [node.id, node]));
+    const hydratedNodes = applyModelCatalogue(stableNodes, normalizedEdges, models).map((node) =>
+      preserveLocalGenerationStatus(node, localById.get(node.id), foregroundGenerationsRef.current.has(node.id)));
     const localSelectedId = selectedIdRef.current;
     const selectedNodeStillExists = Boolean(localSelectedId && hydratedNodes.some((node) => node.id === localSelectedId));
     const viewNodes = selectedNodeStillExists && localSelectedId
