@@ -373,7 +373,7 @@ test("every registered node type owns hand-written user help and technical notes
     [...registrySource.matchAll(/type: "([^"]+)", version: (\d+)/g)].map((match) => `${match[1]}@${match[2]}`),
   );
   const overriddenVersions = [...registrySource.matchAll(/^\s+"([^"@]+@\d+)": \{/gm)].map((match) => match[1]);
-  assert.equal(new Set(registeredTypes).size, 25);
+  assert.equal(new Set(registeredTypes).size, 26);
   assert.deepEqual(new Set(helpedTypes), new Set(registeredTypes));
   for (const versionKey of overriddenVersions) {
     assert.ok(registeredVersions.has(versionKey), `${versionKey} help override must target a registered node version`);

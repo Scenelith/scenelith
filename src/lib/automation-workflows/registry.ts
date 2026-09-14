@@ -46,6 +46,12 @@ const assistantModelOptions = assistantModels.map((model) => ({ value: model.id,
 const optionalAssistantModelOptions = [{ value: "", label: "No backup model" }, ...assistantModelOptions];
 
 const helpByType: Record<string, AutomationNodeHelp> = {
+  "media.text-overlay": {
+    whenToUse: "Render exact captions on image results before placing them on Canvas.",
+    setup: ["Connect Image Generator to Images.", "Choose Local overlay in Prepare slideshow image requests to generate clean backgrounds.", "Adjust position and typography, then connect Images with text to Add slideshow to canvas."],
+    exampleFlow: { before: "Image Generator", after: "Add slideshow to canvas", explanation: "Each image receives its own exact caption locally." },
+    technicalNotes: ["Uses each image's presentation.overlayText by default. Optional captions may be a plain string for all images or {slides:[{index,overlayText}]}, matched by index, never array position. Missing, duplicate and extra indexes fail explicitly.", "Empty text passes its image through. Originals and generation credit accounting remain unchanged. Existing lettering is not erased; prepare clean images using the Local overlay mode before Image Generator.", "Position is the center of the text block in percent. Out-of-bounds text fails with a readable error; reduce size or move the block. White text and black outline use the bundled OFL font."]
+  },
   "core.manual-trigger": {
     whenToUse: "Use this as the start of a workflow. A person can press Run, and a configured schedule, event or webhook can start the same saved workflow automatically.",
     setup: ["Place it at the start of the workflow.", "Connect its Run output to every input step that must prepare a value before the work begins.", "Mark changeable fields on later steps as Ask on run so they appear in the Automation panel."],
@@ -195,7 +201,7 @@ const helpByType: Record<string, AutomationNodeHelp> = {
   },
   "logic.prepare-slideshow-image-requests": {
     whenToUse: "Use this after TikTok slide-plan validation to turn the checked domain contract into the one generic image-request contract.",
-    setup: ["Connect Checked plans and the original slideshow.", "Connect the same optional identity and visual-reference packages used by validation.", "Connect Image requests to the generic Image Generator."],
+    setup: ["Connect Checked plans and the original slideshow.", "Connect the same optional identity and visual-reference packages used by validation.", "Choose Image model for model-rendered lettering, or Local Text overlay node for clean backgrounds and a separate text layer.", "Connect Image requests to the generic Image Generator."],
     exampleFlow: { before: "Validated TikTok slide plans", after: "Image Generator", explanation: "This visible adapter serializes each approved prompt and exact reference list; the generator itself does not know about TikTok, clothing, locations or text policy." },
     tips: ["Keep domain-specific transformations in explicit adapter nodes.", "Do not bypass validation when the source plans came from an AI step."],
     technicalNotes: ["Outputs schemaVersion 1 image requests with one exact prompt, ordered asset ids, roles and labels per item.", "It does not call a provider or choose model settings."],
@@ -267,6 +273,9 @@ const helpOverridesByVersion: Record<string, Partial<AutomationNodeHelp>> = {
     whenToUse: "Use this only to resolve a saved contract-v3 request produced by Prepare v2 and Interpret v2.",
     setup: ["Connect the same v3 request and analysis.", "Route Resolved choices and Conflict explicitly.", "Use Resolve v4 for a configurable evidence destination."],
     technicalNotes: ["Accepts exactly contract v3 and uses its configured controls and taxonomy.", "On success this historical version writes normalized comment and evidence to the fixed creativeBrief and direction fields."],
+  },
+  "logic.prepare-slideshow-image-requests@1": {
+    setup: ["Connect checked plans and the original slideshow.", "Connect the same optional references used by validation.", "This version preserves model-rendered lettering. Use version 2 to choose local Text overlay."],
   },
   "generation.image@1": {
     whenToUse: "Use this only to execute a saved slideshow graph that connects checked plans, source and reference packages directly to generation.",
@@ -704,6 +713,17 @@ const rawDefinitions: Array<Omit<AutomationNodeDefinition, "help">> = [
     fields: [],
   },
   {
+    type: "logic.prepare-slideshow-image-requests", version: 2, title: "Prepare slideshow image requests", description: "Converts checked TikTok slide plans into exact generic image requests with an explicit choice of model-rendered text or clean backgrounds for a local overlay.", example: "Serialize every approved slide prompt and its ordered references before provider execution.", category: "logic", icon: "image-requests", accent: "neutral", retrySafe: true,
+    inputs: [
+      { id: "plans", label: "Checked slide plans", type: "slide-plan-set", required: true },
+      { id: "source", label: "Original slideshow", type: "tiktok-source", required: true },
+      { id: "identity", label: "Person or character", type: "identity" },
+      { id: "references", label: "Visual references", type: "visual-references" },
+    ],
+    outputs: [{ id: "requests", label: "Image requests", type: "image-request-batch", required: true }],
+    fields: [{ id: "textRendering", label: "Who draws the text?", description: "Local overlay removes the typography instruction from the image prompt while keeping the exact caption for Text overlay.", kind: "select", defaultValue: "model", options: [{ value: "model", label: "Image model" }, { value: "local-overlay", label: "Local Text overlay node" }] }],
+  },
+  {
     type: "generation.image", version: 2, title: "Image Generator", description: "Creates images from exact prompts and reference roles prepared by connected workflow nodes.", example: "Create a batch of images without adding or reinterpreting creative instructions.", category: "generation", icon: "generate", accent: "image",
     inputs: [
       { id: "requests", label: "Image requests", type: "image-request-batch", required: true },
@@ -719,6 +739,23 @@ const rawDefinitions: Array<Omit<AutomationNodeDefinition, "help">> = [
       { id: "failureMode", label: "If every image fails", description: "Stop the run or send the generation error to a connected recovery path.", kind: "select", defaultValue: "stop", options: [
         { value: "stop", label: "Stop and show the error" }, { value: "error-output", label: "Send the error to another path" },
       ], advanced: true },
+    ],
+  },
+  {
+    type: "media.text-overlay", version: 1, title: "Text overlay", description: "Adds exact text to finished images locally, without asking an image model to draw letters.", example: "Image Generator → Text overlay → Add slideshow to canvas. Use clean images to avoid overlapping existing text.", category: "generation", icon: "text-overlay", accent: "image", retrySafe: true,
+    inputs: [{ id: "assets", label: "Images", type: "generated-assets", required: true }, { id: "captions", label: "Rewritten slide text (optional)", type: "data" }],
+    outputs: [{ id: "assets", label: "Images with text", type: "generated-assets", required: true }, { id: "layers", label: "Transparent text layers", type: "data" }],
+    fields: [
+      { id: "enabled", label: "Apply text overlay", description: "Turn off to pass the original images through this step.", kind: "boolean", defaultValue: true, runtimeBindable: true, runtimeValueType: "boolean" },
+      { id: "text", label: "Same text on every image (optional)", description: "Leave empty to use each slide's caption. Connected text takes precedence.", kind: "textarea", defaultValue: "" },
+      {"id": "x", "label": "Horizontal position (%)", "description": "Center of the text block, measured from the left edge.", "kind": "number", "step": "any", "defaultValue": 50, "min": 0, "max": 100},
+      {"id": "y", "label": "Vertical position (%)", "description": "30 is near the top, 50 is the center, 70 is lower.", "kind": "number", "step": "any", "defaultValue": 50, "min": 0, "max": 100},
+      {"id": "fontSize", "label": "Font size (px; 0 = automatic)", "description": "Automatic size follows image width. Pixels refer to the output image.", "kind": "number", "step": "any", "defaultValue": 0, "min": 0, "max": 300},
+      {"id": "sizeScale", "label": "Text size multiplier", "description": "1 keeps the size; 1.2 makes it 20% larger.", "kind": "number", "step": "any", "defaultValue": 1, "min": 0.25, "max": 3},
+      {"id": "maxWidth", "label": "Text block width (%)", "description": "Long lines wrap within this fraction of the image width.", "kind": "number", "step": "any", "defaultValue": 90, "min": 10, "max": 100},
+      {"id": "lineHeight", "label": "Line spacing", "description": "Distance between lines as a multiple of font size.", "kind": "number", "step": "any", "defaultValue": 1.2051947095945923, "min": 1, "max": 3},
+      {"id": "stroke", "label": "Outline thickness (px)", "description": "Black outline around white text. Use 0 for no outline.", "kind": "number", "step": "any", "defaultValue": 4.5, "min": 0, "max": 20},
+      { id: "transparent", label: "Save transparent text layer", description: "Also saves a PNG layer linked from each result's textOverlay metadata.", kind: "boolean", defaultValue: false },
     ],
   },
   {

@@ -24,6 +24,7 @@ import {
 } from "@xyflow/react";
 import {
   Activity,
+  Type,
   ArrowDownToLine,
   ArrowRight,
   ArrowDown,
@@ -218,6 +219,7 @@ const automationNodeIcons = {
   http: Globe2,
   validate: ShieldCheck,
   "image-requests": FileInput,
+  "text-overlay": Type,
   generate: ImageIcon,
   canvas: Layers3,
   finish: Flag,
@@ -1018,7 +1020,7 @@ function FieldEditor({ field, node, disabled, options, referencePicker, onConfig
           : field.kind === "schema" ? <ResponseSchemaEditor disabled={disabled || askOnRun} value={value} onChange={onConfig} />
           : field.kind === "value" ? <SimpleValueEditor disabled={disabled || askOnRun} value={value} placeholder={field.placeholder} onChange={onConfig} />
           : field.kind === "textarea" || field.kind === "prompt" ? <textarea disabled={disabled || askOnRun} value={String(value)} placeholder={field.placeholder} spellCheck={field.kind !== "prompt"} onChange={(event) => onConfig(event.target.value)} />
-            : <input disabled={disabled || askOnRun} type={field.kind === "number" ? "number" : "text"} min={field.min} max={field.max} value={String(value)} placeholder={field.placeholder} onChange={(event) => onConfig(field.kind === "number" ? Number(event.target.value) : event.target.value)} />}
+            : <input disabled={disabled || askOnRun} type={field.kind === "number" ? "number" : "text"} min={field.min} max={field.max} step={field.step} value={String(value)} placeholder={field.placeholder} onChange={(event) => onConfig(field.kind === "number" ? Number(event.target.value) : event.target.value)} />}
   </label>;
 }
 

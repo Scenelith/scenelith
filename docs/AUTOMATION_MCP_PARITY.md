@@ -15,7 +15,7 @@ Every capability entry includes:
 - allowed template-variable roots or the explicit prohibition of variables;
 - value-path syntax and live Canvas model/ratio/resolution data when `canvas_id` is supplied.
 
-## Current latest node coverage: 25 of 25
+## Current latest node coverage: 26 of 26
 
 | Category | Node | Agent-visible purpose |
 | --- | --- | --- |
@@ -41,7 +41,8 @@ Every capability entry includes:
 | Integration | `integration.http-request@1` | Call an external service through a safe deployment credential slot |
 | Logic | `logic.validate-slide-plans@2` | Validate Recreate TikTok plans before generation |
 | Generation | `generation.image@2` | Generate images from exact prepared requests |
-| Logic | `logic.prepare-slideshow-image-requests@1` | Serialize approved plans and ordered references |
+| Logic | `logic.prepare-slideshow-image-requests@2` | Serialize approved plans and ordered references, optionally requesting clean backgrounds |
+| Generation | `media.text-overlay@1` | Render exact captions onto image assets locally |
 | Output | `output.add-to-canvas@3` | Add all generated slideshow images to the Canvas |
 | Output | `output.finish@1` | End a route and return its result without Canvas mutation |
 
@@ -82,3 +83,5 @@ Three separate layers guard parity:
 3. MCP protocol tests connect a real client and complete create → semantic edit → RUN INPUTS → connect → stale-write rejection → validate → publish → fixture preview → trigger lifecycle → production run → poll → captured node details → diagnose → export/import → archive.
 
 Any new node or changed field causes layer 1 to fail until the capability remains exact. Runtime changes must pass layers 2 and 3 before release.
+
+The catalog also exposes `media.text-overlay@1`: canonical image results in/out, optional caption input and transparent-layer output, with the same settings and help as the visual editor.

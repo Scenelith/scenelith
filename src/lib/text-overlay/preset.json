@@ -1,0 +1,23 @@
+{
+  "font": "MayaOverlayMatch-Regular.ttf",
+  "source_family": "TikTok Sans",
+  "source_version": "4.000",
+  "axes": {
+    "opsz": 32.54135610567837,
+    "wdth": 108.80208350917503,
+    "wght": 483.034663311271,
+    "slnt": 0
+  },
+  "font_size_per_1170": 66.37931561026407,
+  "tracking_per_1170": -0.35547161370607006,
+  "extra_word_space_per_1170": 1.1429222698904555,
+  "line_step_per_1170": 80,
+  "stroke_per_1170": 4.5,
+  "reference_width": 1170,
+  "reference_height": 1566,
+  "fill": "#ffffff",
+  "stroke": "#000000",
+  "status": "Full-font calibrated approximation; not an exact font identification or proven pixel match.",
+  "mapped_characters": 910,
+  "source": "https://github.com/tiktok/TikTokSans"
+}
