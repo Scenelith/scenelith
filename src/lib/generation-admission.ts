@@ -6,6 +6,7 @@ import { queuedGenerationPosition, type GenerationDispatchPayload } from "./gene
 import { expireStaleGenerations } from "./generation-lifecycle";
 import { generationCreditCost } from "./generation-pricing";
 import { db, usageWorkspaceForUserProject } from "./postgres-db";
+import { activeGenerationCount } from "./generation-capacity";
 
 export type GenerationAdmissionReference = {
   path: string;
@@ -110,12 +111,7 @@ export async function admitGeneration(input: GenerationAdmissionInput): Promise<
       if (existing) return { existingGenerationId: existing.id };
     }
     await input.beforeAdmit?.();
-    const active = await db.prepare(`SELECT COUNT(*) AS count FROM generations g
-      WHERE g.usage_workspace_id = ?
-        AND lower(g.status) NOT IN ('failed','fail','error','cancelled','canceled','completed','complete','succeeded','success')
-        AND g.output_url IS NULL
-        AND g.output_asset_id IS NULL`).get(workspaceId) as { count: number };
-    if (active.count >= concurrency) return false;
+    if (await activeGenerationCount(workspaceId) >= concurrency) return false;
     await db.prepare(
       `INSERT INTO generations (id, project_id, usage_workspace_id, requested_by_user_id, node_id, prompt, status, model_id, media_type, provider_path, operation, aspect_ratio, resolution, credit_cost, reference_count, created_at, updated_at)
        VALUES (?, ?, ?, ?, ?, ?, 'queued', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,

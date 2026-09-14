@@ -25,3 +25,27 @@ test("the real card drops old failure after success but shows a newer failure", 
   await expect(failed).toBeVisible();
   expect(errors).toEqual([]);
 });
+
+test("a queued card keeps its animation when old completed tasks are refreshed", async ({ page }) => {
+  const errors: string[] = [];
+  page.on("pageerror", (error) => errors.push(error.message));
+  const fixture = (await build({ entryPoints: ["tests/browser/fixtures/generator-status.tsx"], absWorkingDir: process.cwd(), tsconfig: path.resolve("tsconfig.json"), bundle: true, write: false, platform: "browser", jsx: "automatic", define: { "process.env.NODE_ENV": '"production"' } })).outputFiles[0].text;
+  await page.setContent(`<style>${readFileSync("node_modules/@xyflow/react/dist/style.css", "utf8")}${readFileSync("src/app/globals.css", "utf8")}${readFileSync("src/app/theme.css", "utf8")}</style><div id="root"></div>`);
+  await page.addScriptTag({ content: fixture });
+  await page.getByRole("button", { name: "New success", exact: true }).click();
+  await page.getByRole("button", { name: "Wait for capacity", exact: true }).click();
+  const animation = page.locator(".generator-queue-progress");
+  await expect(animation).toBeVisible();
+  await animation.evaluate((element) => element.setAttribute("data-original-animation", "yes"));
+  for (let i = 0; i < 3; i += 1) {
+    await page.getByRole("button", { name: "New success", exact: true }).click();
+    await page.getByRole("button", { name: "Old failure", exact: true }).click();
+    await expect(page.locator(".generator-media-stage")).toHaveClass(/is-queued/);
+    await expect(animation).toHaveAttribute("data-original-animation", "yes");
+    await expect(page.locator(".generator-failed-label")).toHaveCount(0);
+  }
+  await page.getByRole("button", { name: "Accept waiting attempt", exact: true }).click();
+  await page.getByRole("button", { name: "New failure", exact: true }).click();
+  await expect(page.locator(".generator-failed-label")).toBeVisible();
+  expect(errors).toEqual([]);
+});
