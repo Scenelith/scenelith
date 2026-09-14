@@ -48,3 +48,7 @@ yarn-error.log*
 # typescript
 *.tsbuildinfo
 next-env.d.ts
+
+# Python renderer bytecode is local runtime state.
+__pycache__/
+*.py[cod]
