@@ -40,6 +40,7 @@ test("a queued card keeps its animation when old completed tasks are refreshed",
   for (let i = 0; i < 3; i += 1) {
     await page.getByRole("button", { name: "New success", exact: true }).click();
     await page.getByRole("button", { name: "Old failure", exact: true }).click();
+    await page.getByRole("button", { name: "Remote old success", exact: true }).click();
     await expect(page.locator(".generator-media-stage")).toHaveClass(/is-queued/);
     await expect(animation).toHaveAttribute("data-original-animation", "yes");
     await expect(page.locator(".generator-failed-label")).toHaveCount(0);
