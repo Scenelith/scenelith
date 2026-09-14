@@ -31,7 +31,7 @@ export async function renderTextOverlay(bytes: Buffer, text: string, settings: T
         max_width: config.maxWidth, line_height: config.lineHeight, stroke: config.stroke } }));
     const script = join(/* turbopackIgnore: true */ process.cwd(), "src/lib/text-overlay/render.py");
     const result = await new Promise<string>((resolve, reject) => {
-      execFile(/* turbopackIgnore: true */ process.env.SCENELITH_PYTHON || "python3", [script, job], { timeout: 30_000, maxBuffer: 64 * 1024, signal }, (error, stdout, stderr) => {
+      execFile(/* turbopackIgnore: true */ process.env.SCENELITH_PYTHON || "python3", ["-B", script, job], { timeout: 30_000, maxBuffer: 64 * 1024, signal }, (error, stdout, stderr) => {
         if (error) reject(new Error(`Text overlay failed: ${stderr.trim().split("\n").at(-1) || error.message}`));
         else resolve(stdout);
       });
