@@ -1,3 +1,4 @@
+import { textOverlay } from "./text-overlay";
 import { lookup } from "node:dns/promises";
 import { isIP } from "node:net";
 import { createHash } from "node:crypto";
@@ -1545,6 +1546,25 @@ async function prepareSlideshowImageRequests(execution: AutomationNodeExecution)
   return { requests: { schemaVersion: 1, requests } };
 }
 
+async function prepareSlideshowImageRequestsV2(execution: AutomationNodeExecution) {
+  const mode = enumSetting(execution, "textRendering", ["model", "local-overlay"] as const);
+  const result = await prepareSlideshowImageRequests(execution);
+  if (mode === "model") return result;
+  const plans = parseAutomationSlidePlanSet(execution.inputs.plans).slides;
+  for (const [index, request] of result.requests.requests.entries()) {
+    const plan = plans[index];
+    const prompt = structuredClone(plan.prompt);
+    const clean = "Create a clean image without on-screen text. Remove all source captions and typography. Do not draw replacement letters; the exact caption will be added in a separate local text overlay step.";
+    prompt.preserve = prompt.preserve.filter((instruction) => instruction !== plan.text.instruction);
+    prompt.change = prompt.change.filter((instruction) => instruction !== plan.text.instruction);
+    prompt.change.push(clean);
+    if (!prompt.avoid.includes(AUTOMATION_NO_TEXT_AVOID_INSTRUCTION)) prompt.avoid.push(AUTOMATION_NO_TEXT_AVOID_INSTRUCTION);
+    request.prompt = serializeImageGenerationPrompt(prompt);
+    request.metadata = { ...request.metadata, promptContract: prompt, textRendering: mode } as typeof request.metadata;
+  }
+  return result;
+}
+
 async function imageGenerationV2(execution: AutomationNodeExecution) {
   const batch = parseAutomationImageGenerationRequestBatch(execution.inputs.requests);
   const requests = batch.requests;
@@ -1991,8 +2011,10 @@ export function coreAutomationNodeHandlers(): AutomationNodeHandlers {
     "logic.validate-slide-plans@1": validateSlidePlans,
     "logic.validate-slide-plans@2": validateSlidePlansV2,
     "logic.prepare-slideshow-image-requests@1": prepareSlideshowImageRequests,
+    "logic.prepare-slideshow-image-requests@2": prepareSlideshowImageRequestsV2,
     "generation.image@1": imageGenerationV1,
     "generation.image@2": imageGenerationV2,
+    "media.text-overlay@1": textOverlay,
     "output.add-to-canvas@1": addToCanvas,
     "output.add-to-canvas@2": addToCanvasV2,
     "output.add-to-canvas@3": addToCanvasV3,

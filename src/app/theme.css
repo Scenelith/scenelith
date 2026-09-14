@@ -2845,13 +2845,14 @@ button.automation-editor-validation-state.is-attention[aria-expanded="true"] { b
   padding: 14px;
   display: grid;
   grid-template-columns: minmax(0, 1180px);
+  grid-auto-rows: max-content;
   justify-content: start;
   align-content: start;
   gap: 12px;
   background: var(--color-ink-2);
 }
 .identity-page-record {
-  min-height: 0;
+  min-height: auto;
   padding: 10px;
   display: grid;
   grid-template-columns: 148px minmax(0, 1fr);

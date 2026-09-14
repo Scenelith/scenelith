@@ -33,17 +33,19 @@ Node defaults are runtime behavior. Changing a default, port, field meaning, out
 | `logic.map-subworkflow@1` | Deployment slot, fixed child inputs, item limit, concurrency and failure behavior | Runs the pinned child once per item and preserves item order/index in results | Item, depth, recursion and policy concurrency caps |
 | `integration.http-request@1` | URL, method, body, headers, credential slot, timeout, attempts and failure mode | Sends the rendered request and returns the declared JSON or text response | Public-network only, response-size limit, redaction and idempotency requirement for mutating retries |
 | `logic.validate-slide-plans@2` | Visible `Recreate TikTok v1` profile, slide limit and failure mode | Validates without repairing or rewriting; with the contract input it enforces that profile's visible choices, copy, prompt and reference rules | Schema, index, reference availability and bounded-size checks |
-| `logic.prepare-slideshow-image-requests@1` | Connected validated plans and references | Serializes every approved prompt unchanged and preserves ordered reference IDs/labels | Rejects unavailable, reordered or mismatched references |
+| `logic.prepare-slideshow-image-requests@2` | Connected validated plans and references | Preserves approved prompts in model mode; explicit local-overlay mode separates captions from clean-image instructions. Preserves ordered reference IDs/labels | Rejects unavailable, reordered or mismatched references |
 | `generation.image@2` | Model, ratio, resolution, concurrency, attempts and failure behavior | Sends each exact prompt and ordered reference package and returns the provider result; the transport adds only an ordered reference-label map | Each request's actual text/reference mode, model capacity, access, cost, workflow policy and admission limits stop work but do not rewrite it |
 | `output.add-to-canvas@3` | Layout and plan-note flag | Accepts only canonical generated assets, then creates editable generated-image nodes, complete bounded plan notes and source lineage links | Preview/test runs are side-effect free; repeated completion is idempotent; long plans split without data loss |
 | `output.finish@1` | Outcome and rendered message | Stores the exact final data on success or deliberately fails with the rendered message | Terminal output only |
 
 ## Domain boundary
 
-`input.creative-settings@1`, `logic.validate-slide-plans@2` and `logic.prepare-slideshow-image-requests@1` are Recreate TikTok domain nodes. The generic AI, data, HTTP, child-workflow and image-generation nodes do not contain TikTok, wardrobe, location or text-policy semantics.
+`input.creative-settings@1`, `logic.validate-slide-plans@2` and `logic.prepare-slideshow-image-requests@2` are Recreate TikTok domain nodes. The generic AI, data, HTTP, child-workflow and image-generation nodes do not contain TikTok, wardrobe, location or text-policy semantics.
 
 The current creative-direction chain deliberately accepts a generic settings object at `logic.prepare-creative-direction@3`. This makes custom control paths real graph behavior rather than a handler-only capability.
 
 ## Automated evidence
 
 The automation test suite checks that every current definition has a handler, every handler has a registered historical or current definition, the system graph validates, current creative-direction versions reject other contract versions, custom nested paths remain exact, unconfigured root fields are not inserted, prompt/reference payloads remain byte-for-byte stable and test previews do not perform canvas side effects.
+
+`media.text-overlay@1` reads authorized image assets and exact captions, applies bounded local typography settings, and returns new image assets plus optional transparent layers. Disabled or empty-text items pass through. Results are persisted by run/node/item/input digest, preserve source and generation accounting, and respect storage/asset limits. See [Text overlay](automation/text-overlay.md).

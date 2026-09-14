@@ -242,6 +242,7 @@ export type AutomationNodeFieldDefinition = {
   requiredWhenVisible?: boolean;
   runtimeValueType?: AutomationRuntimeValueType;
   required?: boolean;
+  step?: number | "any";
   min?: number;
   max?: number;
   secret?: boolean;
@@ -282,7 +283,7 @@ export type AutomationNodeDefinition = {
   description: string;
   example?: string;
   category: "trigger" | "input" | "ai" | "logic" | "integration" | "generation" | "output";
-  icon: "play" | "source" | "identity" | "references" | "choices" | "inbox" | "ai" | "transform" | "select-one" | "select-path" | "condition" | "prepare-direction" | "interpret-direction" | "resolve-direction" | "limit" | "merge" | "workflow" | "repeat" | "retry" | "http" | "validate" | "image-requests" | "generate" | "canvas" | "finish";
+  icon: "play" | "source" | "identity" | "references" | "choices" | "inbox" | "ai" | "transform" | "select-one" | "select-path" | "condition" | "prepare-direction" | "interpret-direction" | "resolve-direction" | "limit" | "merge" | "workflow" | "repeat" | "retry" | "http" | "validate" | "image-requests" | "text-overlay" | "generate" | "canvas" | "finish";
   accent: "mint" | "amber" | "blue" | "rose" | "image" | "neutral";
   inputs: AutomationNodePortDefinition[];
   outputs: AutomationNodePortDefinition[];

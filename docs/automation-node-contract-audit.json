@@ -212,10 +212,32 @@
         "failureMode": "Selects stop or explicit error-output routing when the node fails."
       }
     },
-    "logic.prepare-slideshow-image-requests@1": {
+    "logic.prepare-slideshow-image-requests@2": {
       "inputs": ["plans", "source", "identity", "references"],
       "outputs": ["requests"],
-      "settings": {}
+      "settings": { "textRendering": "Selects unchanged model typography or clean backgrounds with captions retained for local overlay." }
+    },
+    "media.text-overlay@1": {
+      "inputs": [
+        "assets",
+        "captions"
+      ],
+      "outputs": [
+        "assets",
+        "layers"
+      ],
+      "settings": {
+        "enabled": "Bypasses rendering and returns original images when false.",
+        "text": "Uses manual text for every image unless connected captions are supplied; empty falls back to each presentation caption.",
+        "x": "Positions the center of the text block horizontally as percent of image width.",
+        "y": "Positions the center of the text block vertically as percent of image height.",
+        "fontSize": "Selects font size in output pixels, with zero enabling width-based automatic size.",
+        "sizeScale": "Multiplies the selected or automatic font size before rendering.",
+        "maxWidth": "Bounds wrapping width as a percentage of the output image.",
+        "lineHeight": "Multiplies font size to set baseline spacing between wrapped lines.",
+        "stroke": "Sets the black outline thickness in output pixels.",
+        "transparent": "Saves transparent PNG text layers and exposes their asset IDs and URLs."
+      }
     },
     "output.add-to-canvas@3": {
       "inputs": ["assets", "source"],

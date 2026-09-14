@@ -16,7 +16,7 @@ test("MCP Automation catalog stays in exact parity with every latest canonical n
   const catalog = getAutomationCapabilities({ includeHelp: true });
   assert.equal(catalog.node_count, definitions.length);
   assert.equal(catalog.latest_registry_node_count, definitions.length);
-  assert.equal(definitions.length, 25);
+  assert.equal(definitions.length, 26);
 
   for (const definition of definitions) {
     const capability = catalog.nodes.find((node) => node.type === definition.type);
