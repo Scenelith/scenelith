@@ -4618,10 +4618,7 @@ function CanvasWorkspace({ initialProject, projects: initialProjects, initialWor
           setAutomationRuntimePreview({ workflowId: automationWorkflowId, values: runtimeInputs });
           void runAutomationWorkflow(runtimeInputs, mode);
         }}
-        onRun={(runtimeInputs, mode) => void runAutomationWorkflow({
-          ...(automationRuntimePreview?.workflowId === automationWorkflowId ? automationRuntimePreview.values : {}),
-          ...runtimeInputs,
-        }, mode)}
+        onRun={(runtimeInputs, mode) => void runAutomationWorkflow(runtimeInputs, mode)}
         onCancel={() => void cancelAutomationWorkflow()}
         onResume={(runId, nodeId) => void resumeAutomationWorkflowFromNode(runId, nodeId)}
         onClose={() => { setTikTokAutomationOpen(false); setAutomationEditorWorkflowId(null); }}
