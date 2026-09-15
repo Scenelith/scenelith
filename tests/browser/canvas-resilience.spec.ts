@@ -144,3 +144,51 @@ test("real browser preserves canvas state across reload, switching, concurrent s
     await Promise.all([primaryContext.close(), peerContext.close()]);
   }
 });
+
+test("automation uses the selected TikTok across opening, workflow switches, and submission", async ({ browser }) => {
+  const context = await authenticatedContext(browser, seedState());
+  try {
+    const headers = { origin: process.env.SCENELITH_E2E_BASE_URL || "http://localhost" };
+    const created = await context.request.post("/api/projects", { headers, data: { name: `Source selection ${crypto.randomUUID()}` } });
+    expect(created.ok()).toBeTruthy();
+    const project = (await created.json()).project;
+    const nodes = ["a", "b"].flatMap((key, index) => [
+      { id: `source-${key}`, type: "frameNode", position: { x: 100 + index * 600, y: 100 }, data: { kind: "source", title: `TikTok ${key.toUpperCase()}`, postId: key, tiktokMediaType: "slideshow" } },
+      { id: `slide-${key}`, type: "frameNode", position: { x: 100 + index * 600, y: 400 }, data: { kind: "scene", title: "Screen 01", assetId: `asset-${key}`, tiktokSourceNodeId: `source-${key}` } },
+    ]);
+    const updated = await context.request.patch(`/api/projects/${project.id}`, { headers, data: { revision: project.revision, graph: { nodes, edges: [] } } });
+    expect(updated.ok()).toBeTruthy();
+    const workflows = ["one", "two"].map((id) => ({ id, name: `Workflow ${id}`, status: "published", publishedVersionId: `version-${id}` }));
+    const capabilities = { run: true, edit: true, publish: true };
+    await context.route("**/api/automation-workflows?*", (route) => route.fulfill({ json: { workflows, capabilities } }));
+    await context.route(/\/api\/automation-workflows\/(one|two)$/, (route) => {
+      const id = route.request().url().split("/").pop()!;
+      return route.fulfill({ json: { workflow: workflows.find((w) => w.id === id), capabilities,
+        runInputs: [{ key: `${id}.source`, nodeId: id, valueType: "tiktok-source", label: "Source slideshow", required: true, value: "source-a" }],
+      } });
+    });
+    const page = await waitForLiveCanvas(context, project.id);
+    await page.locator('.react-flow__node[data-id="source-b"]').click();
+    await page.getByRole("button", { name: "Open automation", exact: true }).click();
+    const panel = page.locator(".tiktok-automation-panel");
+    await expect(panel.getByRole("button", { name: "Source slideshow", exact: true })).toContainText("TikTok B");
+    await panel.getByRole("button", { name: "Workflow", exact: true }).click();
+    await page.getByRole("option", { name: /Workflow two/ }).click();
+    await expect(panel.getByRole("button", { name: "Source slideshow", exact: true })).toContainText("TikTok B");
+    await expect(panel.getByRole("button", { name: "Run automation", exact: true })).toBeEnabled();
+    await panel.getByRole("button", { name: "Close automation", exact: true }).click();
+    await page.getByRole("button", { name: "Open automation", exact: true }).click();
+    await expect(panel.getByRole("button", { name: "Source slideshow", exact: true })).toContainText("TikTok B");
+    let submitted: unknown;
+    await context.route("**/api/automation-runs", async (route) => {
+      submitted = route.request().postDataJSON();
+      await route.fulfill({ status: 400, json: { error: "Submission captured without running generation" } });
+    });
+    await panel.getByRole("button", { name: "Run automation", exact: true }).click();
+    await expect.poll(() => submitted).toMatchObject({ inputs: { "two.source": "source-b" } });
+    await panel.getByRole("button", { name: "Source slideshow", exact: true }).click();
+    await page.getByRole("option", { name: /TikTok A/ }).click();
+    await expect(panel.getByRole("button", { name: "Source slideshow", exact: true })).toContainText("TikTok A");
+    await expect(page.locator('.react-flow__node[data-id="source-a"]')).toHaveClass(/selected/);
+  } finally { await context.close(); }
+});

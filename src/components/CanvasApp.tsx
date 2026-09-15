@@ -4560,7 +4560,11 @@ function CanvasWorkspace({ initialProject, projects: initialProjects, initialWor
       )}
 
       <aside className={`tool-rail ${tiktokAutomationOpen || hookLibraryOpen || identityLibraryOpen || productPanelFocus ? "has-open-panel" : ""}`}>
-        <button className={tiktokAutomationOpen ? "is-active" : ""} data-tooltip="Automation" aria-label="Open automation" onClick={() => { const nextOpen = !tiktokAutomationOpen; setTikTokAutomationOpen(nextOpen); setHookLibraryOpen(false); setIdentityLibraryOpen(false); setProductPanelFocus(null); if (nextOpen && selectedAutomationSourceId) focusAutomationSource(selectedAutomationSourceId); }}><Workflow size={18} /></button>
+        <button className={tiktokAutomationOpen ? "is-active" : ""} data-tooltip="Automation" aria-label="Open automation" onClick={() => { const nextOpen = !tiktokAutomationOpen; setTikTokAutomationOpen(nextOpen); setHookLibraryOpen(false); setIdentityLibraryOpen(false); setProductPanelFocus(null); if (nextOpen) {
+          const sourceId = (!["planning", "building", "generating"].includes(automationStatus) && tiktokAutomationSources.find((source) => source.id === selectedId)?.id) || selectedAutomationSourceId;
+          setAutomationSourceId(sourceId);
+          if (sourceId) { selectCanvasNode(sourceId); focusAutomationSource(sourceId); }
+        } }}><Workflow size={18} /></button>
         <button className={hookLibraryOpen ? "is-active" : ""} data-tooltip="Hooks" aria-label="Open hooks" onClick={() => { setHookLibraryOpen((value) => !value); setIdentityLibraryOpen(false); setTikTokAutomationOpen(false); setProductPanelFocus(null); }}><Quote size={18} /></button>
         <button className={identityLibraryOpen ? "is-active" : ""} data-tooltip="Library" aria-label="Open Library" onClick={() => { setIdentityLibraryOpen((value) => !value); setHookLibraryOpen(false); setTikTokAutomationOpen(false); setProductPanelFocus(null); }}><Images size={18} /></button>
         {editionClient.railItems.length > 0 && <span className="tool-rail-divider" />}
@@ -4595,6 +4599,7 @@ function CanvasWorkspace({ initialProject, projects: initialProjects, initialWor
           setAutomationEditorWorkflowId((current) => current === workflowId ? null : workflowId);
         }}
         sources={tiktokAutomationSources}
+        sourceId={selectedAutomationSourceId}
         personas={personas}
         models={models}
         status={automationStatus}
@@ -4602,7 +4607,7 @@ function CanvasWorkspace({ initialProject, projects: initialProjects, initialWor
         planningProgress={automationPlanningProgress}
         slideStates={automationSlideStates}
         execution={automationExecution}
-        onSourceSelected={(value) => { setAutomationSourceId(value); setAutomationStatus("idle"); setAutomationChoiceConfirmation(null); focusAutomationSource(value); }}
+        onSourceSelected={(value) => { selectCanvasNode(value); setAutomationSourceId(value); setAutomationStatus("idle"); setAutomationChoiceConfirmation(null); focusAutomationSource(value); }}
         onRuntimeValuesChange={(workflowId, values) => setAutomationRuntimePreview((current) => ({
           workflowId,
           values: current?.workflowId === workflowId ? { ...current.values, ...values } : values,
@@ -4614,8 +4619,8 @@ function CanvasWorkspace({ initialProject, projects: initialProjects, initialWor
           void runAutomationWorkflow(runtimeInputs, mode);
         }}
         onRun={(runtimeInputs, mode) => void runAutomationWorkflow({
-          ...runtimeInputs,
           ...(automationRuntimePreview?.workflowId === automationWorkflowId ? automationRuntimePreview.values : {}),
+          ...runtimeInputs,
         }, mode)}
         onCancel={() => void cancelAutomationWorkflow()}
         onResume={(runId, nodeId) => void resumeAutomationWorkflowFromNode(runId, nodeId)}
@@ -4742,6 +4747,10 @@ function CanvasWorkspace({ initialProject, projects: initialProjects, initialWor
           onNodeClick={(_, node) => {
             setNodeHookSettingsOpen(false);
             selectCanvasNode(node.id);
+            if (tiktokAutomationSources.some((source) => source.id === node.id) && !["planning", "building", "generating"].includes(automationStatus)) {
+              setAutomationSourceId(node.id);
+              setAutomationChoiceConfirmation(null);
+            }
             setSidebarOpen(!["prompt", "assistant", "note", "scene", "videoMaster"].includes(node.data.kind) && !(node.data.kind === "source" && Boolean(node.data.videoSegments?.length)));
             if (node.data.kind === "source" && node.data.sourceUrl && !node.data.postStats) void refreshSourceStats(node);
           }}

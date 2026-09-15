@@ -69,6 +69,7 @@ export function TikTokAutomationPanel({
   demo,
   onConfigure,
   sources,
+  sourceId,
   personas,
   models,
   status,
@@ -95,6 +96,8 @@ export function TikTokAutomationPanel({
   demo?: TikTokAutomationPanelDemo;
   onConfigure: (workflowId: string) => void;
   sources: TikTokSlideshowSource[];
+  /** Canvas-owned source survives panel remounts and workflow changes. */
+  sourceId?: string;
   personas: PersonaRecord[];
   models: GeneratorModelOption[];
   status: TikTokAutomationStatus;
@@ -125,6 +128,7 @@ export function TikTokAutomationPanel({
   const [runInputs, setRunInputs] = useState<AutomationRunInputField[]>(() => initialDemoInputs);
   const [productionRunInputs, setProductionRunInputs] = useState<AutomationRunInputField[]>(() => demo?.productionRunInputs || []);
   const [runtimeValuesByWorkflow, setRuntimeValuesByWorkflow] = useState<Record<string, Record<string, unknown>>>(() => demo ? { [demo.detail.workflow.id]: demo.runtimeValues || {} } : {});
+  const [loadedWorkflowId, setLoadedWorkflowId] = useState(demo ? workflowId : "");
   const workflowIdRef = useRef(workflowId);
   const setWorkflowIdRef = useRef(setWorkflowId);
   const busy = status === "planning" || status === "building" || status === "generating";
@@ -139,7 +143,11 @@ export function TikTokAutomationPanel({
   const selectedWorkflow = workflows.find((workflow) => workflow.id === workflowId);
   const visibleWorkflows = useMemo(() => workflows.filter((workflow) => workflow.status !== "archived"), [workflows]);
   const selectedAlertCount = openTriggerAlerts[workflowId] || 0;
-  const runtimeValues = useMemo(() => runtimeValuesByWorkflow[workflowId] || {}, [runtimeValuesByWorkflow, workflowId]);
+  const runtimeValues = useMemo(() => {
+    const saved = runtimeValuesByWorkflow[workflowId] || {};
+    const sourceField = runInputs.find((field) => field.valueType === "tiktok-source");
+    return sourceField && sourceId !== undefined ? { ...saved, [sourceField.key]: sourceId } : saved;
+  }, [runtimeValuesByWorkflow, workflowId, runInputs, sourceId]);
   const runInputVisible = useCallback((field: AutomationRunInputField) => !field.visibleWhen || field.visibleWhen.values.some((value) => Object.is(value, runtimeValues[field.visibleWhen!.key] ?? field.visibleWhen!.value)), [runtimeValues]);
   const visibleRunInputs = useMemo(() => runInputs.filter(runInputVisible), [runInputVisible, runInputs]);
   const visibleProductionRunInputs = useMemo(() => productionRunInputs.filter(runInputVisible), [productionRunInputs, runInputVisible]);
@@ -190,6 +198,7 @@ export function TikTokAutomationPanel({
         setProductionRunInputs(publishedFields);
         if (body.capabilities) setCapabilities(body.capabilities);
         setRunInputs(fields);
+        setLoadedWorkflowId(workflowId);
         setWorkflows((current) => current.map((workflow) => workflow.id === body.workflow.id ? body.workflow : workflow));
         setRuntimeValuesByWorkflow((current) => {
           const saved = current[workflowId] || {};
@@ -250,7 +259,7 @@ export function TikTokAutomationPanel({
     runtimeValuesChangeRef.current?.(workflowId, nextValues);
     onConfirmChanges(nextValues, confirmation.mode);
   };
-  const runnable = Boolean(selectedWorkflow?.publishedVersionId || selectedWorkflow?.status === "system");
+  const runnable = loadedWorkflowId === workflowId && Boolean(selectedWorkflow?.publishedVersionId || selectedWorkflow?.status === "system");
   const finishedSlides = slideStates.filter((slide) => slide.status === "ready" || slide.status === "failed").length;
   const visibleProgress = status === "complete" ? 100 : status === "generating"
     ? Math.min(99, 84 + Math.round((finishedSlides / Math.max(1, slideStates.length)) * 15))
