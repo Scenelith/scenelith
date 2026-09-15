@@ -1879,3 +1879,49 @@ select.panel-input { color-scheme: dark; }
 .master-model-switch-backdrop p { margin: 0; color: var(--color-text-soft); line-height: 1.5; }
 
 .master-model-switch-inputs { margin: 12px 0; padding-left: 20px; max-height: 220px; overflow: auto; }
+
+/* Editable text uses the same renderer as automation; controls stay outside the image. */
+.text-overlay-popover { position:fixed; z-index:150; width:288px; max-width:calc(100vw - 24px); padding:14px; border:1px solid var(--color-border-faint); border-radius:14px; background:var(--color-ink-3); color:var(--color-text); box-shadow:0 16px 48px #0005; }
+.text-overlay-popover header,.text-overlay-panel-content header { display:flex; align-items:center; gap:8px; margin-bottom:18px; font-size:12px; }
+.text-overlay-popover header > button { margin-left:auto; display:grid; place-items:center; border:0; background:transparent; color:var(--color-text-muted); cursor:pointer; }
+.text-overlay-form { display:flex; flex-direction:column; gap:12px; }
+.text-overlay-form > label { color:var(--color-text-muted); font:600 9px/1.5 ui-monospace,monospace; letter-spacing:.06em; }
+.text-overlay-form textarea { display:block; width:100%; min-height:92px; max-height:180px; resize:vertical; padding:11px; border:1px solid var(--color-border-faint); border-radius:8px; background:var(--color-ink-2); color:var(--color-text); font-family:inherit; font-size:12px; line-height:1.6; }
+.text-overlay-form textarea:focus { outline:1px solid var(--color-mint); outline-offset:1px; }
+.text-overlay-apply { min-height:34px; display:flex; align-items:center; justify-content:center; gap:7px; border:0; border-radius:8px; background:var(--color-text); color:var(--color-ink-1); font-size:11px; cursor:pointer; }
+.text-overlay-apply:hover:not(:disabled) { background:var(--color-mint); }
+.text-overlay-form button:disabled,.text-overlay-edit-link:disabled { opacity:.45; cursor:default; }
+.text-overlay-edit-link { width:100%; margin-top:12px; padding:6px 0; display:flex; align-items:center; justify-content:space-between; border:0; background:transparent; color:var(--color-text-muted); font-size:11px; cursor:pointer; }
+.text-overlay-edit-link:hover:not(:disabled) { color:var(--color-text); }
+.text-overlay-error { margin:0; color:#e5a29a; font-size:11px; line-height:1.5; }
+.text-overlay-hint { margin:0; color:var(--color-text-muted); font-size:10px; line-height:1.6; }
+.text-overlay-panel { padding-top:16px; border-top:1px solid var(--color-border-faint); }
+.text-overlay-panel-content > .text-overlay-hint { margin-top:16px; }
+.text-overlay-size { display:flex; flex-wrap:wrap; align-items:center; gap:12px; }
+.text-overlay-size output { margin-left:auto; color:var(--color-text-soft); }
+.text-overlay-size input { width:100%; accent-color:var(--color-mint); cursor:pointer; }
+.media-viewer.is-editing.has-text-editor .media-viewer-canvas { right:308px; }
+.media-viewer.is-editing.has-text-editor .media-edit-composer { width:min(640px,calc(100% - 340px)); left:calc((100% - 300px) / 2); }
+.text-overlay-layer { position:absolute; z-index:2; outline:1px solid #83dfc9; outline-offset:4px; }
+.text-overlay-drag { display:block; width:100%; height:100%; padding:0; border:0; background:transparent; cursor:grab; touch-action:none; }
+.text-overlay-drag:active { cursor:grabbing; }
+.text-overlay-drag > img { display:block; width:100%; height:100%; pointer-events:none; user-select:none; }
+.text-overlay-resize { position:absolute; right:-8px; bottom:-8px; width:12px; height:12px; border:1px solid #111; border-radius:3px; padding:0; background:#83dfc9; cursor:nwse-resize; touch-action:none; }
+.text-overlay-drag:focus-visible,.text-overlay-resize:focus-visible { outline:2px solid white; outline-offset:5px; }
+@media(max-width:820px) {
+  .media-viewer.is-editing.has-text-editor .media-viewer-details { display:flex; width:200px; top:52px; right:8px; bottom:190px; padding:12px; }
+  .media-viewer.is-editing.has-text-editor .media-viewer-canvas { right:220px; left:12px; }
+  .media-viewer.is-editing.has-text-editor .media-edit-composer { width:calc(100% - 16px); left:50%; }
+}
+@media(max-width:540px) {
+  .media-viewer.is-editing.has-text-editor .media-viewer-details { width:auto; left:8px; top:auto; bottom:190px; max-height:190px; }
+  .text-overlay-panel-content header { margin-bottom:8px; }
+  .text-overlay-panel .text-overlay-form { display:grid; grid-template-columns:1fr 110px; gap:8px 12px; }
+  .text-overlay-panel .text-overlay-form > label:first-child,.text-overlay-panel .text-overlay-hint { display:none; }
+  .text-overlay-panel textarea { grid-row:span 2; min-height:72px; max-height:100px; }
+  .text-overlay-panel .text-overlay-error { grid-column:1/-1; }
+  .media-viewer.is-editing.has-text-editor .media-viewer-canvas { right:12px; bottom:385px; }
+}
+
+.generator-node-toolbar button.text-overlay-trigger { width:auto; min-width:58px; padding:0 8px; font-size:10px; white-space:nowrap; }
+.media-viewer-topbar button:disabled { opacity:.35; cursor:default; }

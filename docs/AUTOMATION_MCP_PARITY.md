@@ -41,7 +41,7 @@ Every capability entry includes:
 | Integration | `integration.http-request@1` | Call an external service through a safe deployment credential slot |
 | Logic | `logic.validate-slide-plans@2` | Validate Recreate TikTok plans before generation |
 | Generation | `generation.image@2` | Generate images from exact prepared requests |
-| Logic | `logic.prepare-slideshow-image-requests@2` | Serialize approved plans and ordered references, optionally requesting clean backgrounds |
+| Logic | `logic.prepare-slideshow-image-requests@3` | Serialize approved plans and ordered references, optionally requesting clean backgrounds |
 | Generation | `media.text-overlay@1` | Render exact captions onto image assets locally |
 | Output | `output.add-to-canvas@3` | Add all generated slideshow images to the Canvas |
 | Output | `output.finish@1` | End a route and return its result without Canvas mutation |
@@ -84,4 +84,6 @@ Three separate layers guard parity:
 
 Any new node or changed field causes layer 1 to fail until the capability remains exact. Runtime changes must pass layers 2 and 3 before release.
 
-The catalog also exposes `media.text-overlay@1`: canonical image results in/out, optional caption input and transparent-layer output, with the same settings and help as the visual editor.
+The catalog also exposes `media.text-overlay@1`: canonical image results in/out, optional caption input and transparent-layer output, with the same settings and help as the visual editor. Its generated canvas images retain editable text metadata: the Text menu replaces captions, Edit moves/resizes them, and downloads use the flattened saved variant. See [editable text](automation/text-overlay.md#edit-after-a-run).
+
+Preparation version 3 has optional `source` (TikTok image references) and `sourceReferences` (`connected` / `omit`, default `connected`). Omission removes source image bindings from outgoing requests while preserving identity/visual references and upstream analysis. Keep the source connected separately to analysis and canvas output for provenance and nearby placement. Existing versions 1 and 2 retain their source-required contracts.

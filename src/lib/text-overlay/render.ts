@@ -2,19 +2,9 @@ import { execFile } from "node:child_process";
 import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { z } from "zod";
+import { textOverlaySettingsSchema, type TextOverlaySettings } from "./settings";
+export { textOverlaySettingsSchema, type TextOverlaySettings } from "./settings";
 
-export const textOverlaySettingsSchema = z.object({
-  x: z.number().finite().min(0).max(100).default(50),
-  y: z.number().finite().min(0).max(100).default(50),
-  fontSize: z.number().finite().min(0).max(300).default(0),
-  sizeScale: z.number().finite().min(0.25).max(3).default(1),
-  maxWidth: z.number().finite().min(10).max(100).default(90),
-  lineHeight: z.number().finite().min(1).max(3).default(80 / 66.37931561026407),
-  stroke: z.number().finite().min(0).max(20).default(4.5),
-  transparent: z.boolean().default(false),
-}).strict();
-export type TextOverlaySettings = z.infer<typeof textOverlaySettingsSchema>;
 
 export async function renderTextOverlay(bytes: Buffer, text: string, settings: TextOverlaySettings, signal?: AbortSignal) {
   if (!text.trim() || text.length > 2_000) throw new Error("Overlay text must contain 1–2000 characters");

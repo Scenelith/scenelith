@@ -1,5 +1,8 @@
 "use client";
 
+import { getTextOverlay, saveTextOverlay } from "@/lib/text-overlay/client";
+import type { TextOverlaySettings } from "@/lib/text-overlay/settings";
+
 /* eslint-disable @next/next/no-img-element */
 
 import { readCanvasViewportSession, writeCanvasViewportSession } from "@/lib/canvas-viewport";
@@ -4040,6 +4043,25 @@ function CanvasWorkspace({ initialProject, projects: initialProjects, initialWor
     }
   }
 
+  async function applyTextOverlay(nodeId: string, expectedAssetId: string, text: string, settings: TextOverlaySettings) {
+    const current = nodesRef.current.find((node) => node.id === nodeId);
+    if (!current || current.data.assetId !== expectedAssetId || foregroundGenerationsRef.current.has(nodeId) || activeGenerationNodeIds.includes(nodeId)) throw new Error("The image changed. Reopen Text on the current image.");
+    const output = await saveTextOverlay(project.id, expectedAssetId, text, settings);
+    const latest = nodesRef.current.find((node) => node.id === nodeId);
+    if (!latest || latest.data.assetId !== expectedAssetId || foregroundGenerationsRef.current.has(nodeId) || activeGenerationNodeIds.includes(nodeId)) throw new Error("The image changed while saving. Reopen Text on the current image.");
+    if (output.assetId === expectedAssetId) return;
+    const previous = { url: String(latest.data.outputUrl || latest.data.imageUrl), assetId: expectedAssetId, mediaType: "image" as const, modelId: latest.data.modelId };
+    const nextOutput = { ...previous, ...output };
+    const history = [...(latest.data.generatedOutputs || []), previous, nextOutput]
+      .filter((item, index, items) => items.findIndex((candidate) => candidate.url === item.url) === index).slice(-20);
+    pushHistory();
+    const data = { assetId: output.assetId, outputUrl: output.url, generatedOutputs: history, activeGeneratedOutputIndex: history.findIndex((item) => item.assetId === output.assetId) };
+    updateNode(nodeId, data);
+    setPreviewNode((preview) => preview?.id === nodeId ? { ...preview, data: { ...preview.data, ...data } } : preview);
+    if (!await save(true, true)) throw new Error("Text is applied locally. Canvas sync is pending; keep this tab open until it reconnects.");
+    setNotice(text.trim() ? "Text saved" : "Text removed");
+  }
+
   async function editImageInPlace(
     sourceNode: FrameNode,
     prompt: string,
@@ -4050,8 +4072,8 @@ function CanvasWorkspace({ initialProject, projects: initialProjects, initialWor
     if (foregroundGenerationsRef.current.has(sourceNode.id) || activeGenerationNodeIds.includes(sourceNode.id)) throw new Error("This node already has a generation in progress");
     const currentNode = nodesRef.current.find((node) => node.id === sourceNode.id) || sourceNode;
     const sourceUrl = String(currentNode.data.outputUrl || currentNode.data.imageUrl || "");
-    const sourceAssetId = currentNode.data.assetId;
-    if (!sourceAssetId || !sourceUrl) throw new Error("This image is not available as an editable asset yet");
+    const displayedAssetId = currentNode.data.assetId;
+    if (!displayedAssetId || !sourceUrl) throw new Error("This image is not available as an editable asset yet");
     const requestedModel = models.find((model) => model.id === options.modelId);
     const currentModel = models.find((model) => model.id === currentNode.data.modelId);
     const editModel = requestedModel?.mediaType === "image" && requestedModel.maxReferences > 0
@@ -4105,6 +4127,8 @@ function CanvasWorkspace({ initialProject, projects: initialProjects, initialWor
       onPhase?.("preparing");
       setNotice("Preparing image edit…");
       try {
+        const overlayDocument = await getTextOverlay(project.id, displayedAssetId, generationSignal);
+        const sourceAssetId = overlayDocument.sourceAssetId;
         if (!(await save(true))) throw new Error("Could not save this node before starting the edit");
         onPhase?.("queued");
         releaseSlot = await generationCapacityQueue.current.acquire(liveCreditUsage.generationConcurrency, generationSignal);
@@ -4160,7 +4184,12 @@ function CanvasWorkspace({ initialProject, projects: initialProjects, initialWor
               modelId: pollBody.generation.modelId || editModel.id,
             };
             const latestNode = nodesRef.current.find((node) => node.id === currentNode.id) || currentNode;
-            const previousOutput = { url: sourceUrl, assetId: sourceAssetId, mediaType: "image" as const, modelId: currentNode.data.modelId };
+            let overlayWarning = "";
+            if (overlayDocument.text.trim() && output.assetId) {
+              try { Object.assign(output, await saveTextOverlay(project.id, output.assetId, overlayDocument.text, overlayDocument.settings)); }
+              catch { overlayWarning = "Image edited. Text could not be reapplied; the previous version still has your text."; }
+            }
+            const previousOutput = { url: sourceUrl, assetId: displayedAssetId, mediaType: "image" as const, modelId: currentNode.data.modelId };
             const outputHistory = [...(latestNode.data.generatedOutputs || []), previousOutput, output]
               .filter((item, index, items) => items.findIndex((candidate) => candidate.url === item.url) === index)
               .slice(-20);
@@ -4192,7 +4221,7 @@ function CanvasWorkspace({ initialProject, projects: initialProjects, initialWor
             setPreviewNode((preview) => preview?.id === currentNode.id
               ? { ...preview, data: { ...preview.data, ...nextData } }
               : preview);
-            setNotice("Edited image ready in the same node");
+            setNotice(overlayWarning || "Edited image ready in the same node");
             return output;
           }
         }
@@ -4369,6 +4398,8 @@ function CanvasWorkspace({ initialProject, projects: initialProjects, initialWor
   const inspectorVideoReference = inspectorGeneratorReferences.find((reference) => reference.role === "reference-video" || reference.role === "motion-video");
   const inspectorInputVideoDuration = inspectorVideoReference && "durationSeconds" in inspectorVideoReference ? inspectorVideoReference.durationSeconds : undefined;
   const generatorNodeActionsImpl: GeneratorNodeActions = {
+    projectId: project.id,
+    applyTextOverlay,
     models,
     personas,
     selectNode: selectCanvasNode,
@@ -4431,6 +4462,8 @@ function CanvasWorkspace({ initialProject, projects: initialProjects, initialWor
   const generatorNodeActionsImplRef = useRef(generatorNodeActionsImpl);
   generatorNodeActionsImplRef.current = generatorNodeActionsImpl;
   const generatorNodeActions = useMemo<GeneratorNodeActions>(() => ({
+    projectId: project.id,
+    applyTextOverlay: (...args) => generatorNodeActionsImplRef.current.applyTextOverlay!(...args),
     models,
     personas,
     selectNode: (...args) => generatorNodeActionsImplRef.current.selectNode(...args),
@@ -4464,7 +4497,7 @@ function CanvasWorkspace({ initialProject, projects: initialProjects, initialWor
     queueLabel: liveCreditUsage.profileName,
     runningAssistantNodeId,
     activePreviewNodeId: previewNode?.id || null,
-  }), [activeGenerationNodeIds, liveCreditUsage.generationConcurrency, liveCreditUsage.profileName, models, personas, preparingMasterClipIds, previewNode?.id, runningAssistantNodeId]);
+  }), [project.id, activeGenerationNodeIds, liveCreditUsage.generationConcurrency, liveCreditUsage.profileName, models, personas, preparingMasterClipIds, previewNode?.id, runningAssistantNodeId]);
 
   return (
     <main className="app-shell">
@@ -4848,6 +4881,8 @@ function CanvasWorkspace({ initialProject, projects: initialProjects, initialWor
         onDeleteNode={() => deleteCanvasNode(previewNode.id)}
       /> : previewNode && previewUrl ? <MediaViewer
         node={previewNode}
+        projectId={project.id}
+        onApplyTextOverlay={previewNode.id.startsWith("library:") ? undefined : (...args) => applyTextOverlay(previewNode.id, ...args)}
         url={previewUrl}
         videoStart={previewMedia?.start}
         videoEnd={previewMedia?.end}

@@ -11,6 +11,7 @@ import { generationCreditCost } from "@/lib/generation-pricing";
 import { appendEditReferenceMention, editReferenceMentionToken } from "@/lib/reference-mentions";
 import { ImageEditReferencePicker, type ImageEditPersona, type ImageEditReference } from "./ImageEditReferencePicker";
 import { AddToIdentityPopover } from "./AddToIdentityPopover";
+import { TextOverlayEditor, type ApplyTextOverlay } from "./TextOverlayEditor";
 import type { PersonaRecord } from "@/lib/types";
 
 type PreviewReference = { id: string; url: string; title: string; personaId?: string; variant?: "reference" | "before" | "after" };
@@ -81,6 +82,8 @@ function loadEditedImageWhenReady(url: string) {
 }
 
 export function MediaViewer({
+  projectId,
+  onApplyTextOverlay,
   node,
   url,
   videoStart = 0,
@@ -106,6 +109,8 @@ export function MediaViewer({
   onAddToIdentity,
   onCreateIdentityFromAsset,
 }: {
+  projectId?: string;
+  onApplyTextOverlay?: ApplyTextOverlay;
   node: FrameNode;
   url: string;
   videoStart?: number;
@@ -137,6 +142,9 @@ export function MediaViewer({
   onCreateIdentityFromAsset: (name: string, role: "reference" | "before" | "after", sourceAssetId: string) => Promise<void>;
 }) {
   const [mode, setMode] = useState(initialMode);
+  const [textPanel, setTextPanel] = useState<HTMLElement | null>(null);
+  const [textDirty, setTextDirty] = useState(false);
+  const hasTextEditor = Boolean(projectId && onApplyTextOverlay && node.data.assetId && node.data.mediaType !== "video");
   const [editRequest, setEditRequest] = useState(() => initialEditReferences.map((reference) => editReferenceMentionToken(reference.title, reference.assetId)).join(" "));
   const [refining, setRefining] = useState(false);
   const [submitting, setSubmitting] = useState(false);
@@ -275,11 +283,11 @@ export function MediaViewer({
 
   useEffect(() => {
     const closeOnEscape = (event: KeyboardEvent) => {
-      if (event.key === "Escape") onClose();
+      if (event.key === "Escape" && !textDirty) onClose();
     };
     window.addEventListener("keydown", closeOnEscape);
     return () => window.removeEventListener("keydown", closeOnEscape);
-  }, [onClose]);
+  }, [onClose, textDirty]);
 
   useEffect(() => {
     if (submitting || blockedDisplayUrlRef.current === url) return;
@@ -333,7 +341,7 @@ export function MediaViewer({
   };
 
   const submit = async () => {
-    if (!editRequest.trim() || submitting) return;
+    if (!editRequest.trim() || submitting || textDirty) return;
     setSubmitting(true);
     setEditPhase("preparing");
     setError("");
@@ -362,13 +370,13 @@ export function MediaViewer({
       ? { starting: "Preparing image edit…", generating: "Creating edited image. This may take a moment." }
       : { starting: "Preparing image edit…", generating: "Preparing image edit…" };
 
-  return <div className="media-viewer-backdrop nodrag nopan" role="presentation" onPointerDown={(event) => { if (event.target === event.currentTarget) onClose(); }}>
-    <div className={`media-viewer ${mode === "edit" ? "is-editing" : "is-viewing"}`} role="dialog" aria-modal="true" aria-label={`${mediaTitle || node.data.title} preview`}>
+  return <div className="media-viewer-backdrop nodrag nopan" role="presentation" onPointerDown={(event) => { if (event.target === event.currentTarget && !textDirty) onClose(); }}>
+    <div className={`media-viewer ${mode === "edit" ? "is-editing" : "is-viewing"} ${hasTextEditor ? "has-text-editor" : ""}`} role="dialog" aria-modal="true" aria-label={`${mediaTitle || node.data.title} preview`}>
       <header className="media-viewer-topbar">
-        <button type="button" aria-label={mode === "edit" ? "Back to preview" : "Back to canvas"} onPointerDown={() => { if (mode === "edit") setMode("view"); else onClose(); }}><ArrowLeft size={17} /></button>
+        <button type="button" disabled={textDirty} aria-label={mode === "edit" ? "Back to preview" : "Back to canvas"} onPointerDown={() => { if (mode === "edit") setMode("view"); else onClose(); }}><ArrowLeft size={17} /></button>
         <div className="media-viewer-top-actions">
           {mode === "view" && editable && <button type="button" className="media-viewer-edit-mobile" aria-label="Edit image" onPointerDown={() => setMode("edit")}><WandSparkles size={15} /></button>}
-          <button type="button" className="media-viewer-close" aria-label="Close preview" onPointerDown={onClose}><X size={17} /></button>
+          <button type="button" className="media-viewer-close" disabled={textDirty} aria-label="Close preview" onPointerDown={onClose}><X size={17} /></button>
         </div>
       </header>
 
@@ -432,7 +440,7 @@ export function MediaViewer({
                 </div>
               </div>
               : <div className={`media-viewer-media-frame ${submitting ? "is-generating" : ""}`} style={mediaFrame ? { width: mediaFrame.width, height: mediaFrame.height } : undefined}>
-                <img ref={imageRef} src={displayUrl} alt={node.data.title} onLoad={syncMediaFrame} />
+                {mode === "edit" && hasTextEditor ? <TextOverlayEditor projectId={projectId!} assetId={node.data.assetId!} fallbackUrl={displayUrl} imageRef={imageRef} onImageLoad={syncMediaFrame} panel={textPanel} disabled={submitting} onApply={onApplyTextOverlay!} onDraftChange={setTextDirty} /> : <img ref={imageRef} src={displayUrl} alt={node.data.title} onLoad={syncMediaFrame} />}
                 {submitting && <div className="media-edit-generation" aria-live="polite">
                   <ImageGeneration key={editPhase || "preparing"} startingLabel={editGenerationCopy.starting} generatingLabel={editGenerationCopy.generating}>
                     <div className="media-edit-generation-preview" aria-hidden="true" />
@@ -472,6 +480,7 @@ export function MediaViewer({
               </div>)}
             </div>}
             <textarea ref={editRequestRef} aria-label="Image edit request" autoFocus disabled={submitting} value={editRequest} onChange={(event) => setEditRequest(event.target.value)} placeholder="What do you want to change?" onKeyDown={(event) => { if ((event.metaKey || event.ctrlKey) && event.key === "Enter") void submit(); }} />
+            {textDirty && <p className="media-edit-error">Apply or reset your text changes before editing the image.</p>}
             {error && <p className="media-edit-error">{error}</p>}
             <div className="media-edit-settings">
               <GeneratorSelect menuKey="edit-model" openMenu={openEditMenu} setOpenMenu={setOpenEditMenu} className="generator-model-control media-edit-model" value={editModel?.id || editModelId} label="EDIT MODEL" options={editableModels.map((item) => ({
@@ -509,19 +518,19 @@ export function MediaViewer({
                 onChange={changeEditReferences}
                 onUpload={onUploadEditReferences}
               />
-              <button type="button" className="media-edit-helper" title="Improve this edit request with Assistant" aria-label="Improve with assistant" disabled={!editRequest.trim() || refining || submitting} onPointerDown={() => void refine()}>{refining ? <span className="generator-spinner" /> : <Sparkles size={14} />}</button>
+              <button type="button" className="media-edit-helper" title="Improve this edit request with Assistant" aria-label="Improve with assistant" disabled={!editRequest.trim() || refining || submitting || textDirty} onPointerDown={() => void refine()}>{refining ? <span className="generator-spinner" /> : <Sparkles size={14} />}</button>
               <div className="media-edit-run">
                 <span id={`media-edit-cost-${node.id}`} role="tooltip" className="generator-credit-tooltip">Run {editCredits} credits</span>
-                <button type="button" className="media-edit-submit" aria-label={`Create edited version · ${editCredits} credits`} aria-describedby={`media-edit-cost-${node.id}`} disabled={!editRequest.trim() || refining || submitting} onPointerDown={() => void submit()}>{submitting ? <span className="generator-spinner" /> : <Play size={14} fill="currentColor" />}</button>
+                <button type="button" className="media-edit-submit" aria-label={`Create edited version · ${editCredits} credits`} aria-describedby={`media-edit-cost-${node.id}`} disabled={!editRequest.trim() || refining || submitting || textDirty} onPointerDown={() => void submit()}>{submitting ? <span className="generator-spinner" /> : <Play size={14} fill="currentColor" />}</button>
               </div>
             </div>
           </div>}
         </section>
 
-        {mode === "view" && <aside className="media-viewer-details">
+        {(mode === "view" || hasTextEditor) && <aside className="media-viewer-details">
           <div className="media-viewer-quick-actions">
-            {editable && <button type="button" title="Edit image" aria-label="Edit image" onPointerDown={() => setMode("edit")}><WandSparkles size={14} /></button>}
-            <a href={assetDownloadUrl(url)} download title="Download current media" aria-label="Download current media"><Download size={14} /></a>
+            {editable && mode === "view" && <button type="button" title="Edit image" aria-label="Edit image" onPointerDown={() => setMode("edit")}><WandSparkles size={14} /></button>}
+            <a href={textDirty ? undefined : assetDownloadUrl(url)} aria-disabled={textDirty} download title={textDirty ? "Apply text changes before downloading" : "Download current media"} aria-label="Download current media"><Download size={14} /></a>
             {onDelete && <button type="button" className="is-danger" title="Delete node" aria-label="Delete node" onPointerDown={onDelete}><Trash2 size={14} /></button>}
           </div>
           <div className="media-viewer-context"><strong>{mediaTitle || relativeTime(createdAt)}</strong><span>{projectName} / {canvasName}</span></div>
@@ -529,10 +538,11 @@ export function MediaViewer({
           <section><label>SETTINGS</label><div className="media-viewer-chips"><span>{model?.label || (node.data.kind === "prompt" ? "Image generation" : "Original media")}</span><span>{node.data.aspectRatio || "Original ratio"}</span>{node.data.resolution && <span>{node.data.resolution}</span>}{node.data.role && <span>{node.data.role}</span>}</div></section>
           {persona && <section><label>IDENTITY</label><div className="media-viewer-persona">{persona.avatarUrl ? <img src={persona.avatarUrl} alt={persona.name} /> : references.find((reference) => reference.personaId)?.url ? <img src={references.find((reference) => reference.personaId)?.url} alt={persona.name} /> : null}<span><strong>{persona.name}</strong><small>{persona.variant ? `${persona.variant[0].toUpperCase()}${persona.variant.slice(1)} references` : "Identity references"}</small></span></div></section>}
           {references.length > 0 && <section><label>REFERENCES</label><div className="media-viewer-references">{references.map((reference) => <figure key={reference.id}><img src={reference.url} alt={reference.title} /><figcaption>{reference.title}</figcaption></figure>)}</div></section>}
+          {mode === "edit" && hasTextEditor && <section className="text-overlay-panel" ref={setTextPanel} aria-label="Text settings" />}
           <div className="media-viewer-spacer" />
           <div className="media-viewer-side-actions">
             {!isVideo && node.data.assetId && <AddToIdentityPopover variant="wide" personas={identities} sourceUrl={url} sourceAssetId={node.data.assetId} onAdd={onAddToIdentity} onCreate={onCreateIdentityFromAsset} />}
-            {editable && <button type="button" className="is-primary" onPointerDown={() => setMode("edit")}><WandSparkles size={14} />Edit image</button>}
+            {editable && mode === "view" && <button type="button" className="is-primary" onPointerDown={() => setMode("edit")}><WandSparkles size={14} />Edit image</button>}
           </div>
         </aside>}
 

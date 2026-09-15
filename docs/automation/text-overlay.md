@@ -4,9 +4,9 @@ Add **Text overlay** between **Image Generator** and **Add slideshow to canvas**
 
 ## Prepare clean backgrounds
 
-Use **Prepare slideshow image requests, version 2**, and choose **Local Text overlay node** under **Who draws the text?**. This keeps each slide's caption in `presentation.overlayText`, removes its approved typography instruction from the image prompt, and asks for a clean background. The rewrite and review nodes still decide the wording.
+Use **Prepare slideshow image requests, version 3**, and choose **Local Text overlay node** under **Who draws the text?**. This keeps each slide's caption in `presentation.overlayText`, removes its approved typography instruction from the image prompt, and asks for a clean background. The rewrite and review nodes still decide the wording.
 
-Connect: checked plans → Prepare slideshow image requests v2 → Image Generator → Text overlay → Add slideshow to canvas. Existing workflows retain their pinned node versions. Replace the old preparation node with version 2 from the node picker and reconnect the same plans, source and optional references when adopting this path.
+Connect: checked plans → Prepare slideshow image requests v3 → Image Generator → Text overlay → Add slideshow to canvas. Existing workflows retain their pinned node versions. Replace the old preparation node with version 3 from the node picker and reconnect the same plans, source and optional references when adopting this path.
 
 To let the image model render lettering instead, choose **Image model** and connect Image Generator directly to Add slideshow to canvas. Turning **Apply text overlay** off also passes images through unchanged. Local rendering cannot erase lettering already baked into an image.
 
@@ -27,3 +27,15 @@ Text that cannot fit fails explicitly rather than being cropped. Move the block 
 ## Runtime dependency
 
 The production image includes Python 3 and Pillow. For development, install Pillow into the Python selected by `SCENELITH_PYTHON` (default `python3`). On Debian/Ubuntu use `python3-pil`. The supplied rendering algorithm, font, preset and OFL license are bundled under `src/lib/text-overlay/`; rendering does not download a font or make a network call.
+
+## Edit after a run
+
+Results retain the clean source image, exact text and layout settings in asset metadata. Select the resulting image node and use **Text** for a compact caption editor. **Move & resize in Edit** opens the image editor: drag the text, pull its corner handle, or use the Size slider in the side panel. Apply saves a new image variant; clearing the text restores the clean source. Previous variants remain in the node history. Existing local-overlay automation results support the same editor without rerunning generation. Text drawn by a generation model is part of the image and cannot be separated automatically.
+
+Downloads, downstream image inputs and library additions use the flattened saved image. Subsequent AI image edits use the clean source and reapply the saved text. If reapplication fails, the clean edited result is retained and the previous variant still contains the editable caption.
+
+`GET /api/assets/text-overlay?projectId=…&assetId=…` returns the authorized clean source ID, text and settings. `POST` accepts `projectId`, `assetId`, `text`, `settings`, and `mode` (`preview` or `save`). Preview returns a transparent cropped PNG with source dimensions and placement bounds; it creates no stored asset. Save returns an immutable asset ID and URL; empty text returns the clean source. Clients must attach the returned asset through the revision-aware canvas write path, checking the selected image has not changed. The same 2,000-character, 32 MB, 16-megapixel and typography bounds apply as in automation.
+
+## Optional TikTok reference images
+
+In **Prepare slideshow image requests v3**, the **TikTok image references** input is optional. Connect it to send source frames to the model, or leave it disconnected to generate from the written plan and your selected identity/visual references. **TikTok frames in generation → Do not send TikTok frames** also omits frames even when connected. Keep TikTok connected to analysis and separately to Add slideshow to canvas for nearby placement. The adapter removes source bindings from its outgoing prompt and keeps all remaining reference IDs, labels and roles aligned; it never adds source frames back later. Saved v1/v2 nodes keep their previous behavior; replace the preparation node with v3 to adopt this choice.

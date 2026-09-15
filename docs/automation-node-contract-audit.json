@@ -212,10 +212,12 @@
         "failureMode": "Selects stop or explicit error-output routing when the node fails."
       }
     },
-    "logic.prepare-slideshow-image-requests@2": {
+    "logic.prepare-slideshow-image-requests@3": {
       "inputs": ["plans", "source", "identity", "references"],
       "outputs": ["requests"],
-      "settings": { "textRendering": "Selects unchanged model typography or clean backgrounds with captions retained for local overlay." }
+      "settings": {
+        "sourceReferences": "Uses connected TikTok frames or omits their assets and prompt bindings without changing upstream analysis.",
+        "textRendering": "Selects unchanged model typography or clean backgrounds with captions retained for local overlay." }
     },
     "media.text-overlay@1": {
       "inputs": [
