@@ -34,7 +34,16 @@ export function relationalPool() {
   return shared.scenelithRelationalPool;
 }
 
-const transactionClient = new AsyncLocalStorage<PoolClient>();
+type TransactionContext = { client: PoolClient; active: boolean; afterCommit: Array<() => void> };
+const transactionClient = new AsyncLocalStorage<TransactionContext>();
+
+// Timers inherit async context. Durable workers must start after admission
+// commits, outside its connection, and must never start for rolled-back work.
+export function afterDatabaseCommit(callback: () => void) {
+  const context = transactionClient.getStore();
+  if (context?.active) context.afterCommit.push(callback);
+  else transactionClient.exit(callback);
+}
 
 function appendConflictDoNothing(sql: string) {
   const trimmed = sql.trim().replace(/;$/, "");
@@ -76,9 +85,9 @@ function normalizeSql(source: string, params: unknown[] | Record<string, unknown
 
 async function execute(source: string, params: unknown[] | Record<string, unknown>): Promise<QueryResult> {
   const normalized = normalizeSql(source, params);
-  const client = transactionClient.getStore();
-  return client
-    ? client.query(normalized.sql, normalized.values)
+  const context = transactionClient.getStore();
+  return context?.active
+    ? context.client.query(normalized.sql, normalized.values)
     : relationalPool().query(normalized.sql, normalized.values);
 }
 
@@ -110,19 +119,23 @@ export const relationalDb = {
   transaction<TArgs extends unknown[], TResult>(operation: (...args: TArgs) => Promise<TResult>) {
     return async (...args: TArgs) => {
       const nested = transactionClient.getStore();
-      if (nested) return operation(...args);
+      if (nested?.active) return operation(...args);
       const client = await relationalPool().connect();
+      const context: TransactionContext = { client, active: true, afterCommit: [] };
+      let result: TResult;
       try {
         await client.query("BEGIN");
-        const result = await transactionClient.run(client, () => operation(...args));
+        result = await transactionClient.run(context, () => operation(...args));
         await client.query("COMMIT");
-        return result;
       } catch (error) {
         await client.query("ROLLBACK").catch(() => undefined);
         throw error;
       } finally {
+        context.active = false;
         client.release();
       }
+      for (const callback of context.afterCommit) transactionClient.exit(callback);
+      return result;
     };
   },
 };

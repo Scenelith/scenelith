@@ -1,7 +1,7 @@
 import { usageAuthority } from "@/modules/usage";
 import { db } from "./postgres-db";
 
-const imageTimeoutMs = 5 * 60 * 1000;
+const imageTimeoutMs = 30 * 60 * 1000;
 const videoTimeoutMs = 45 * 60 * 1000;
 const terminalStatuses = new Set(["completed", "complete", "succeeded", "success", "fail", "failed", "error", "cancelled", "canceled"]);
 const lifecycleSweepIntervalMs = 30 * 1000;
@@ -42,7 +42,7 @@ export function publicGenerationErrorMessage(value: string) {
 
 export async function timeoutGeneration(generationId: string, mediaType: string, now = Date.now()) {
   return await db.transaction(async () => {
-    const generation = await db.prepare("SELECT status, output_url, output_asset_id FROM generations WHERE id = ?").get(generationId) as
+    const generation = await db.prepare("SELECT status, output_url, output_asset_id FROM generations WHERE id = ? FOR UPDATE").get(generationId) as
       | { status: string; output_url: string | null; output_asset_id: string | null }
       | undefined;
     if (!generation || generation.output_url || generation.output_asset_id || terminalStatuses.has(generation.status.toLowerCase())) return false;

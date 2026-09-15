@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { createHmac } from "node:crypto";
 import { after, before, test } from "node:test";
 import type { ProjectGraph } from "../src/lib/types";
 
@@ -315,4 +316,55 @@ test("the newest genuine failure remains visible and old success cannot clear it
   await state.reconcileGeneration(seeded.generationId);
   node = (await database.readProjectGraphSnapshot(seeded.projectId)).graph.nodes[0];
   assert.equal(node.data.status, "failed"); assert.equal(node.data.generationError, "Current failure");
+});
+
+test("late success saves refunded media once and cannot be undone by an older callback", async () => {
+  const { generationTimeoutMessage } = await import("../src/lib/generation-lifecycle");
+  const seeded = await seedGeneration();
+  await db.prepare("UPDATE generations SET status = 'failed', error = ?, created_at = ? WHERE id = ?")
+    .run(generationTimeoutMessage("image"), new Date(Date.now() - 35 * 60_000).toISOString(), seeded.generationId);
+  const taskId = crypto.randomUUID();
+  await db.prepare("UPDATE generations SET provider_task_id = ? WHERE id = ?").run(taskId, seeded.generationId);
+  const previousSecret = process.env.KIE_WEBHOOK_HMAC_KEY;
+  process.env.KIE_WEBHOOK_HMAC_KEY = "test-late-result-webhook-secret";
+  try {
+    const { POST } = await import("../src/app/api/webhooks/kie/route");
+    const timestamp = String(Math.floor(Date.now() / 1000));
+    const signature = createHmac("sha256", process.env.KIE_WEBHOOK_HMAC_KEY).update(`${taskId}.${timestamp}`).digest("base64");
+    const response = await POST(new Request("https://example.test/api/webhooks/kie", {
+      method: "POST",
+      headers: { "x-webhook-timestamp": timestamp, "x-webhook-signature": signature },
+      body: JSON.stringify({ data: { taskId, state: "success", resultUrls: [tinyPng] } }),
+    }));
+    assert.equal(response.status, 200);
+  } finally {
+    if (previousSecret === undefined) delete process.env.KIE_WEBHOOK_HMAC_KEY; else process.env.KIE_WEBHOOK_HMAC_KEY = previousSecret;
+  }
+  const result = await state.readGenerationState(seeded.generationId);
+  assert.equal(result?.status, "success");
+  assert.ok(result?.output_asset_id);
+  assert.equal(result?.error, null);
+  assert.equal(result?.credit_cost, 0);
+  await state.finalizeGenerationFromWebhook({ generationId: seeded.generationId, status: "waiting" });
+  await state.finalizeGenerationFromWebhook({ generationId: seeded.generationId, status: "success", outputUrl: tinyPng });
+  const persisted = await state.readGenerationState(seeded.generationId);
+  assert.equal(persisted?.status, "success");
+  assert.equal(persisted?.output_asset_id, result.output_asset_id);
+  assert.deepEqual(await db.prepare("SELECT count(*) AS count FROM assets WHERE project_id = ? AND role = 'generated'").get(seeded.projectId), { count: 1 });
+});
+
+test("late pending callbacks, provider failures and cancellations never resurrect terminal tasks", async () => {
+  const { generationTimeoutMessage } = await import("../src/lib/generation-lifecycle");
+  for (const [status, error, callback] of [
+    ["failed", generationTimeoutMessage("image"), "waiting"],
+    ["failed", "Rejected by provider", "success"],
+    ["cancelled", "Cancelled by user", "success"],
+  ]) {
+    const seeded = await seedGeneration();
+    await db.prepare("UPDATE generations SET status = ?, error = ? WHERE id = ?").run(status, error, seeded.generationId);
+    const result = await state.finalizeGenerationFromWebhook({ generationId: seeded.generationId, status: callback, outputUrl: callback === "success" ? tinyPng : undefined });
+    assert.equal(result?.status, status);
+    assert.equal(result?.error, error);
+    assert.equal(result?.output_asset_id, null);
+  }
 });

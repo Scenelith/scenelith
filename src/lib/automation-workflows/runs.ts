@@ -1,6 +1,7 @@
 import { createHash, randomUUID } from "node:crypto";
 import { db, userCanAccessProject, workspaceIdForProject } from "@/lib/postgres-db";
 import { workerIdentity } from "@/lib/worker-identity";
+import { afterDatabaseCommit } from "@/lib/relational-db";
 import { coreAutomationNodeHandlers } from "./node-handlers";
 import { parseAutomationDeploymentSnapshot, validateAutomationDeploymentBindings } from "./deployment-validation";
 import type { AutomationDeploymentSnapshot } from "./deployment-validation";
@@ -74,7 +75,7 @@ const shared = globalThis as RunsGlobal;
 const workerId = workerIdentity("automation");
 const concurrency = Math.min(8, Math.max(1, Number(process.env.AUTOMATION_WORKFLOW_CONCURRENCY || 3)));
 const workspaceConcurrency = Math.min(32, Math.max(1, Number(process.env.AUTOMATION_WORKSPACE_CONCURRENCY || 4)));
-const staleAfterMs = Math.max(5 * 60_000, Number(process.env.AUTOMATION_WORKFLOW_STALE_MS || 20 * 60_000));
+const staleAfterMs = Math.max(60_000, Number(process.env.AUTOMATION_WORKFLOW_STALE_MS || 2 * 60_000));
 
 function jsonValue<T>(value: unknown): T {
   if (typeof value === "string") return JSON.parse(value) as T;
@@ -1056,6 +1057,10 @@ export function drainAutomationWorkflowRuns() {
 }
 
 export function scheduleWorkflowRunDrain(delayMs = 100) {
+  afterDatabaseCommit(() => scheduleCommittedWorkflowRunDrain(delayMs));
+}
+
+function scheduleCommittedWorkflowRunDrain(delayMs: number) {
   if (shared.scenelithWorkflowRunTimer) return;
   shared.scenelithWorkflowRunTimer = setTimeout(() => {
     shared.scenelithWorkflowRunTimer = undefined;
