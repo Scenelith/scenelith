@@ -1502,13 +1502,14 @@ async function waitForGeneration(runId: string, generationId: string, expectedWo
   throw new Error("Image generation timed out");
 }
 
-async function prepareSlideshowImageRequests(execution: AutomationNodeExecution) {
+async function prepareSlideshowImageRequests(execution: AutomationNodeExecution, sourcePolicy: "required" | "connected" | "omit" = "required") {
   const planSet = parseAutomationSlidePlanSet(execution.inputs.plans);
   const plans = planSet.slides;
   if (!plans.length) throw new Error("The workflow produced no slide plans");
   const source = execution.inputs.source && typeof execution.inputs.source === "object" ? execution.inputs.source as Record<string, unknown> : {};
   const sourceSlides = Array.isArray(source.slides) ? source.slides as Array<Record<string, unknown>> : [];
-  if (sourceSlides.length !== plans.length) throw new Error(`The final plan has ${plans.length} slides but the source has ${sourceSlides.length}`);
+  const includeSource = sourcePolicy === "required" || (sourcePolicy === "connected" && execution.inputs.source != null);
+  if (includeSource && sourceSlides.length !== plans.length) throw new Error(`The final plan has ${plans.length} slides but the source has ${sourceSlides.length}`);
   const sourceByIndex = new Map(sourceSlides.map((slide) => [Number(slide.index), slide]));
   const identity = execution.inputs.identity && typeof execution.inputs.identity === "object" ? execution.inputs.identity as Record<string, unknown> : null;
   const identityAssets = identity && Array.isArray(identity.assets) ? identity.assets as Array<Record<string, unknown>> : [];
@@ -1518,21 +1519,35 @@ async function prepareSlideshowImageRequests(execution: AutomationNodeExecution)
   const visualById = new Map(visualAssets.map((asset) => [String(asset.id), asset]));
   const requests = plans.map((plan) => {
     const sourceSlide = sourceByIndex.get(plan.index);
-    if (!sourceSlide) throw new Error(`Source slide ${plan.index} is missing`);
-    const sourceAssetId = String(sourceSlide.assetId);
-    if (!sourceAssetId) throw new Error(`Source slide ${plan.index} has no asset id`);
-    const unknownReferenceIds = plan.referenceAssetIds.filter((id) => id !== sourceAssetId && !identityById.has(id) && !visualById.has(id));
+    if (includeSource && !sourceSlide) throw new Error(`Source slide ${plan.index} is missing`);
+    const sourceAssetId = sourceSlide?.assetId ? String(sourceSlide.assetId) : null;
+    if (includeSource && !sourceAssetId) throw new Error(`Source slide ${plan.index} has no asset id`);
+    const sourceIds = new Set(sourceSlides.map((slide) => String(slide.assetId || "")));
+    const unknownReferenceIds = plan.referenceAssetIds.filter((id) => id !== sourceAssetId && (includeSource || !sourceIds.has(id)) && !identityById.has(id) && !visualById.has(id));
     if (unknownReferenceIds.length) throw new Error(`Slide ${plan.index} requested unavailable visual reference ${unknownReferenceIds[0]}`);
-    const referenceAssetIds = [...new Set([sourceAssetId, ...plan.referenceAssetIds.filter((id) => id !== sourceAssetId)])];
-    if (referenceAssetIds.length !== plan.prompt.reference_plan.length) {
+    const bindings = plan.prompt.reference_plan.slice(1).map((binding, index) => ({binding, assetId:plan.referenceAssetIds[index]}));
+    const includedBindings = includeSource ? bindings : bindings.filter((entry) => !sourceIds.has(entry.assetId));
+    const referenceAssetIds = includeSource
+      ? [...new Set([sourceAssetId!, ...plan.referenceAssetIds.filter((id) => id !== sourceAssetId)])]
+      : includedBindings.map((entry) => entry.assetId);
+    let prompt = plan.prompt;
+    if (!includeSource) {
+      const removedTokens = [plan.prompt.reference_plan[0].token, ...bindings.filter((entry) => sourceIds.has(entry.assetId)).map((entry) => entry.binding.token)];
+      const rewrite = (value: unknown): unknown => typeof value === "string"
+        ? value.replace(/@[\p{L}\p{N}_]+/gu, (token) => removedTokens.includes(token) ? "the written scene description" : token)
+        : Array.isArray(value) ? value.map(rewrite)
+        : value && typeof value === "object" ? Object.fromEntries(Object.entries(value).map(([key, child]) => [key, rewrite(child)])) : value;
+      prompt = rewrite({ ...plan.prompt, reference_plan: includedBindings.map((entry) => entry.binding) }) as typeof prompt;
+    }
+    if (referenceAssetIds.length !== prompt.reference_plan.length) {
       throw new Error(`Slide ${plan.index} reference plan does not match its exact attached asset list`);
     }
     return {
       key: String(plan.index),
-      prompt: serializeImageGenerationPrompt(plan.prompt),
+      prompt: serializeImageGenerationPrompt(prompt),
       referenceAssetIds,
       referenceRoles: referenceAssetIds.map(() => "reference-image"),
-      referenceLabels: plan.prompt.reference_plan.map((binding) => binding.token),
+      referenceLabels: prompt.reference_plan.map((binding) => binding.token),
       presentation: {
         index: plan.index,
         role: plan.role,
@@ -1541,21 +1556,22 @@ async function prepareSlideshowImageRequests(execution: AutomationNodeExecution)
       },
       metadata: {
         ...plan,
-        promptContract: plan.prompt,
+        promptContract: prompt,
+        ...(sourcePolicy !== "required" ? { sourceReferences: includeSource ? "connected" : "omit" } : {}),
       },
     };
   });
   return { requests: { schemaVersion: 1, requests } };
 }
 
-async function prepareSlideshowImageRequestsV2(execution: AutomationNodeExecution) {
+async function prepareSlideshowImageRequestsV2(execution: AutomationNodeExecution, sourcePolicy: "required" | "connected" | "omit" = "required") {
   const mode = enumSetting(execution, "textRendering", ["model", "local-overlay"] as const);
-  const result = await prepareSlideshowImageRequests(execution);
+  const result = await prepareSlideshowImageRequests(execution, sourcePolicy);
   if (mode === "model") return result;
   const plans = parseAutomationSlidePlanSet(execution.inputs.plans).slides;
   for (const [index, request] of result.requests.requests.entries()) {
     const plan = plans[index];
-    const prompt = structuredClone(plan.prompt);
+    const prompt = structuredClone(request.metadata.promptContract);
     const clean = "Create a clean image without on-screen text. Remove all source captions and typography. Do not draw replacement letters; the exact caption will be added in a separate local text overlay step.";
     prompt.preserve = prompt.preserve.filter((instruction) => instruction !== plan.text.instruction);
     prompt.change = prompt.change.filter((instruction) => instruction !== plan.text.instruction);
@@ -1565,6 +1581,10 @@ async function prepareSlideshowImageRequestsV2(execution: AutomationNodeExecutio
     request.metadata = { ...request.metadata, promptContract: prompt, textRendering: mode } as typeof request.metadata;
   }
   return result;
+}
+
+async function prepareSlideshowImageRequestsV3(execution: AutomationNodeExecution) {
+  return prepareSlideshowImageRequestsV2(execution, enumSetting(execution, "sourceReferences", ["connected", "omit"] as const));
 }
 
 async function imageGenerationV2(execution: AutomationNodeExecution) {
@@ -2013,6 +2033,7 @@ export function coreAutomationNodeHandlers(): AutomationNodeHandlers {
     "logic.validate-slide-plans@2": validateSlidePlansV2,
     "logic.prepare-slideshow-image-requests@1": prepareSlideshowImageRequests,
     "logic.prepare-slideshow-image-requests@2": prepareSlideshowImageRequestsV2,
+    "logic.prepare-slideshow-image-requests@3": prepareSlideshowImageRequestsV3,
     "generation.image@1": imageGenerationV1,
     "generation.image@2": imageGenerationV2,
     "media.text-overlay@1": textOverlay,

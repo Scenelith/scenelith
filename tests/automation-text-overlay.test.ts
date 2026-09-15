@@ -96,3 +96,81 @@ test('preparation v2 keeps exact copy separate from clean-image instructions wit
   assert.equal(local.requests[0].presentation.overlayText, 'New words');
   assert.deepEqual(input.inputs, original);
 });
+
+test('canvas text editor recovers automation layers and replaces/removes text from the clean source', async () => {
+  const { resolveTextOverlay, updateTextOverlay } = await import('../src/lib/text-overlay/assets');
+  const { renderTextOverlay, textOverlaySettingsSchema } = await import('../src/lib/text-overlay/render');
+  const automatic = parseCurrentAutomationGeneratedAssets((await textOverlay(execution())).assets).items[0];
+  const recovered = await resolveTextOverlay('overlay-owner', 'overlay-project', automatic.assetId);
+  assert.equal(recovered.document.sourceAssetId, 'overlay-source');
+  assert.equal(recovered.document.text, 'Slide 1');
+  const settings = textOverlaySettingsSchema.parse({fontSize:30, x:50, y:65});
+  const updated = await updateTextOverlay('overlay-owner', 'overlay-project', automatic.assetId, 'New caption', settings, 'save');
+  assert.ok('assetId' in updated);
+  const stored = await db.prepare('SELECT storage_path FROM assets WHERE id = ?').get(updated.assetId) as {storage_path:string};
+  const original = await db.prepare("SELECT storage_path FROM assets WHERE id='overlay-source'").get() as {storage_path:string};
+  const expected = await renderTextOverlay(await readStorageObject(original.storage_path), 'New caption', settings);
+  assert.deepEqual(await readStorageObject(stored.storage_path), expected.image);
+  const reloaded = await resolveTextOverlay('overlay-owner', 'overlay-project', updated.assetId!);
+  assert.equal(reloaded.document.sourceAssetId, 'overlay-source');
+  assert.equal(reloaded.document.text, 'New caption');
+  assert.equal(reloaded.document.settings.y, 65);
+  assert.deepEqual(await updateTextOverlay('overlay-owner', 'overlay-project', updated.assetId!, 'New caption', settings, 'save'), updated);
+  assert.deepEqual(await updateTextOverlay('overlay-owner', 'overlay-project', updated.assetId!, '', settings, 'save'), {assetId:'overlay-source',url:'/api/assets/overlay-source'});
+});
+
+test('text preview matches flattened export pixels and creates no stored assets', async () => {
+  const { updateTextOverlay } = await import('../src/lib/text-overlay/assets');
+  const { renderTextOverlay, textOverlaySettingsSchema } = await import('../src/lib/text-overlay/render');
+  const settings = textOverlaySettingsSchema.parse({fontSize:30});
+  const count = await db.prepare('SELECT COUNT(*) AS count FROM assets').get();
+  const preview = await updateTextOverlay('overlay-owner', 'overlay-project', 'overlay-source', 'Exact preview', settings, 'preview');
+  assert.ok('bounds' in preview);
+  assert.deepEqual(await db.prepare('SELECT COUNT(*) AS count FROM assets').get(), count);
+  const source = await db.prepare("SELECT storage_path FROM assets WHERE id='overlay-source'").get() as {storage_path:string};
+  const bytes = await readStorageObject(source.storage_path);
+  const [left, top] = preview.bounds!;
+  const composite = await sharp(bytes).ensureAlpha().composite([{input:Buffer.from(preview.url.split(',')[1], 'base64'),left,top}]).raw().toBuffer();
+  const exportImage = await renderTextOverlay(bytes, 'Exact preview', settings);
+  const exported = await sharp(exportImage.image).raw().toBuffer();
+  // libvips/Pillow rounding may differ by one channel level during compositing.
+  assert.equal(composite.length, exported.length);
+  for(let i=0;i<composite.length;i++) assert.ok(Math.abs(composite[i]-exported[i]) <= 1);
+  await assert.rejects(updateTextOverlay('foreign', 'overlay-project', 'overlay-source', 'Denied', settings, 'save'), /not found/);
+  const now = new Date().toISOString();
+  await db.prepare("INSERT INTO assets (id,workspace_id,project_id,kind,filename,storage_path,size_bytes,mime_type,metadata_json,created_at) VALUES ('overlay-image-bad-base','overlay-space','overlay-project','image','bad.png',?,1,'image/png',?,?)").run(source.storage_path,JSON.stringify({sourceAssetId:'missing-private-image',text:'Private',settings}),now);
+  await assert.rejects(updateTextOverlay('overlay-owner','overlay-project','overlay-image-bad-base','Denied',settings,'save'), /not found/);
+});
+
+test('preparation v3 optionally excludes TikTok images without losing identity references or overlay copy', async () => {
+  const {parseAutomationImageGenerationRequestBatch} = await import('../src/lib/automation-workflows/image-generation-request');
+  const input = execution();
+  const prompt = {title:'Portrait',task:'Create the scene described by @Source_1 with @Person_2',reference_plan:[{token:'@Source_1',title:'Source',role:'source composition',instruction:'Keep composition'},{token:'@Person_2',title:'Person',role:'identity',instruction:'Keep identity'}],subject:{identity:'Person',appearance:[],pose:'Standing',expression:'Calm'},scene:{environment:'Home',composition:'Portrait',lighting:'Daylight',camera:'Phone'},preserve:['Identity'],change:['Render exact caption'],avoid:[],output:{format:'photo',style:'natural'}};
+  input.inputs = {plans:{schemaVersion:2,contract:null,decisions:null,slides:[{index:1,role:'scene',prompt,referenceAssetIds:['person-asset'],text:{strategy:'rewrite',sourceText:'Old',overlayText:'New caption',instruction:'Render exact caption'},confidence:1}]},source:{slides:[{index:1,assetId:'overlay-source'}]},identity:{assets:[{id:'person-asset'}]}};
+  const original = structuredClone(input.inputs);
+  const handler = coreAutomationNodeHandlers()['logic.prepare-slideshow-image-requests@3'];
+  input.config={textRendering:'local-overlay',sourceReferences:'omit'};
+  const without = parseAutomationImageGenerationRequestBatch((await handler(input)).requests).requests[0];
+  assert.deepEqual(without.referenceAssetIds,['person-asset']);
+  assert.deepEqual(without.referenceLabels,['@Person_2']);
+  assert.deepEqual(without.referenceRoles,['reference-image']);
+  assert.ok(!without.prompt.includes('@Source_1'));
+  assert.ok(without.prompt.includes('@Person_2'));
+  assert.equal(without.presentation.overlayText,'New caption');
+  assert.equal(without.presentation.sourceAssetId,'overlay-source');
+  assert.deepEqual(JSON.parse(without.prompt).reference_plan.map((entry:{role:string})=>entry.role),['identity']);
+  assert.deepEqual(input.inputs,original);
+  input.config={textRendering:'model',sourceReferences:'connected'};
+  const withSource = parseAutomationImageGenerationRequestBatch((await handler(input)).requests).requests[0];
+  assert.deepEqual(withSource.referenceAssetIds,['overlay-source','person-asset']);
+  assert.deepEqual(withSource.referenceLabels,['@Source_1','@Person_2']);
+  assert.deepEqual(JSON.parse(withSource.prompt),prompt);
+  delete input.inputs.source;
+  const disconnected = parseAutomationImageGenerationRequestBatch((await handler(input)).requests).requests[0];
+  assert.deepEqual(disconnected.referenceAssetIds,['person-asset']);
+  assert.equal(disconnected.presentation.sourceAssetId,null);
+  assert.ok(!disconnected.prompt.includes('@Source_1'));
+  await assert.rejects(coreAutomationNodeHandlers()['logic.prepare-slideshow-image-requests@2'](input),/source has 0/);
+  const definition = automationNodeDefinition('logic.prepare-slideshow-image-requests',3)!;
+  assert.equal(definition.inputs.find(port=>port.id==='source')?.required,undefined);
+});

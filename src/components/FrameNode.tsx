@@ -26,6 +26,7 @@ import { CanvasVideoPlayer, type CanvasVideoPlaybackRequest } from "@/components
 import { VideoMasterPlayer } from "@/components/VideoMasterPlayer";
 import { editorPlaybackUrl } from "@/lib/editor-media";
 import { AddToIdentityPopover } from "@/components/AddToIdentityPopover";
+import { TextOverlayPopover, type ApplyTextOverlay } from "@/components/TextOverlayEditor";
 import { ReferenceMenuShell } from "@/components/ReferenceMenuShell";
 import { imagePromptSystemInstruction, videoPromptSystemInstruction } from "@/lib/generation-prompt-system";
 
@@ -1197,6 +1198,8 @@ export function GeneratorReferencePreview({ reference, compact = false }: { refe
   return <img src={assetThumbnailUrl(reference.url)} alt="" loading="lazy" decoding="async" />;
 }
 export type GeneratorNodeActions = {
+  projectId?: string;
+  applyTextOverlay?: (nodeId: string, ...args: Parameters<ApplyTextOverlay>) => Promise<void>;
   models: GeneratorModelOption[];
   personas: PersonaRecord[];
   selectNode: (nodeId: string) => void;
@@ -2177,6 +2180,7 @@ function FrameNodeCardComponent({ id, data, selected }: NodeProps<FrameNode>) {
         <i />
         <button type="button" disabled={!readyOutputUrl} title="Open preview" onPointerDown={(event) => { event.preventDefault(); event.stopPropagation(); generator.openPreview(id); }}><Expand size={15} /></button>
         <button type="button" disabled={!readyOutputUrl || outputMediaType === "video" || !data.assetId} title="Edit image" onPointerDown={(event) => { event.preventDefault(); event.stopPropagation(); generator.openEdit(id); }}><WandSparkles size={15} /></button>
+        {outputMediaType === "image" && readyOutputUrl && data.assetId && generator.projectId && generator.applyTextOverlay && <TextOverlayPopover projectId={generator.projectId} assetId={data.assetId} disabled={busy || queued} onApply={(...args) => generator.applyTextOverlay!(id, ...args)} onEdit={() => generator.openEdit(id)} />}
         {outputMediaType === "image" && readyOutputUrl && data.assetId && <AddToIdentityPopover personas={generator.personas} sourceUrl={readyOutputUrl} sourceAssetId={data.assetId} onAdd={generator.addToIdentity} onCreate={generator.createIdentityFromAsset} />}
         {readyOutputUrl ? <a href={assetDownloadUrl(readyOutputUrl)} download title="Download" onPointerDown={(event) => event.stopPropagation()}><Download size={15} /></a> : <button type="button" disabled title="Download"><Download size={15} /></button>}
         <i />

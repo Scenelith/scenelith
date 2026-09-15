@@ -64,6 +64,7 @@ jobs:
           jq -e '[.providers.connections[].name] == ["Kie", "OpenRouter", "Tikwm"]' /tmp/scenelith-runtime.json
       - name: Exercise owner onboarding, canvas persistence, and realtime collaboration
         run: npm run selfhost:e2e -- --phase seed --state /tmp/scenelith-e2e.json
+      - run: sudo apt-get update && sudo apt-get install -y python3-pil
       - name: Install the pinned Chromium browser
         run: npx playwright install --with-deps chromium
       - name: Exercise reload, switching, concurrent browser sessions, and reconnect

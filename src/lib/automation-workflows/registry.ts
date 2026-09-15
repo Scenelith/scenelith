@@ -201,10 +201,10 @@ const helpByType: Record<string, AutomationNodeHelp> = {
   },
   "logic.prepare-slideshow-image-requests": {
     whenToUse: "Use this after TikTok slide-plan validation to turn the checked domain contract into the one generic image-request contract.",
-    setup: ["Connect Checked plans and the original slideshow.", "Connect the same optional identity and visual-reference packages used by validation.", "Choose Image model for model-rendered lettering, or Local Text overlay node for clean backgrounds and a separate text layer.", "Connect Image requests to the generic Image Generator."],
+    setup: ["Connect Checked plans. In version 3, connect TikTok image references only when its frames should guide generation; leave this input disconnected or choose Do not send TikTok frames to omit them.", "Connect the same optional identity and visual-reference packages used by validation.", "Choose Image model for model-rendered lettering, or Local Text overlay node for clean backgrounds and a separate text layer.", "Connect Image requests to the generic Image Generator."],
     exampleFlow: { before: "Validated TikTok slide plans", after: "Image Generator", explanation: "This visible adapter serializes each approved prompt and exact reference list; the generator itself does not know about TikTok, clothing, locations or text policy." },
     tips: ["Keep domain-specific transformations in explicit adapter nodes.", "Do not bypass validation when the source plans came from an AI step."],
-    technicalNotes: ["Outputs schemaVersion 1 image requests with one exact prompt, ordered asset ids, roles and labels per item.", "It does not call a provider or choose model settings."],
+    technicalNotes: ["Outputs schemaVersion 1 image requests with one exact prompt, ordered asset ids, roles and labels per item.", "Version 3 can omit TikTok image references without removing the original source from analysis or canvas placement. It removes source bindings from the outgoing prompt and keeps other labels aligned with their assets. Saved versions 1 and 2 retain their mandatory source behavior.", "It does not call a provider or choose model settings."],
   },
   "generation.image": {
     whenToUse: "Use this when one or more explicit image requests should become generated assets with the selected model settings.",
@@ -724,6 +724,17 @@ const rawDefinitions: Array<Omit<AutomationNodeDefinition, "help">> = [
     fields: [{ id: "textRendering", label: "Who draws the text?", description: "Local overlay removes the typography instruction from the image prompt while keeping the exact caption for Text overlay.", kind: "select", defaultValue: "model", options: [{ value: "model", label: "Image model" }, { value: "local-overlay", label: "Local Text overlay node" }] }],
   },
   {
+    type: "logic.prepare-slideshow-image-requests", version: 3, title: "Prepare slideshow image requests", description: "Converts checked TikTok slide plans into exact generic image requests with optional TikTok image references and an explicit choice of model-rendered text or a local overlay.", example: "Serialize every approved slide prompt and its ordered references before provider execution.", category: "logic", icon: "image-requests", accent: "neutral", retrySafe: true,
+    inputs: [
+      { id: "plans", label: "Checked slide plans", type: "slide-plan-set", required: true },
+      { id: "source", label: "TikTok image references (optional)", type: "tiktok-source" },
+      { id: "identity", label: "Person or character", type: "identity" },
+      { id: "references", label: "Visual references", type: "visual-references" },
+    ],
+    outputs: [{ id: "requests", label: "Image requests", type: "image-request-batch", required: true }],
+    fields: [{ id: "sourceReferences", label: "TikTok frames in generation", description: "Use connected TikTok frames as image references, or omit them while retaining the written plan and selected identities. An unconnected input sends no TikTok frames.", kind: "select", defaultValue: "connected", options: [{ value: "connected", label: "Use when connected" }, { value: "omit", label: "Do not send TikTok frames" }] }, { id: "textRendering", label: "Who draws the text?", description: "Local overlay removes the typography instruction from the image prompt while keeping the exact caption for Text overlay.", kind: "select", defaultValue: "model", options: [{ value: "model", label: "Image model" }, { value: "local-overlay", label: "Local Text overlay node" }] }],
+  },
+  {
     type: "generation.image", version: 2, title: "Image Generator", description: "Creates images from exact prompts and reference roles prepared by connected workflow nodes.", example: "Create a batch of images without adding or reinterpreting creative instructions.", category: "generation", icon: "generate", accent: "image",
     inputs: [
       { id: "requests", label: "Image requests", type: "image-request-batch", required: true },
@@ -742,7 +753,7 @@ const rawDefinitions: Array<Omit<AutomationNodeDefinition, "help">> = [
     ],
   },
   {
-    type: "media.text-overlay", version: 1, title: "Text overlay", description: "Adds exact text to finished images locally, without asking an image model to draw letters.", example: "Image Generator → Text overlay → Add slideshow to canvas. Use clean images to avoid overlapping existing text.", category: "generation", icon: "text-overlay", accent: "image", retrySafe: true,
+    type: "media.text-overlay", version: 1, title: "Text overlay", description: "Adds exact text to finished images locally. Canvas results keep editable text: select Text to replace it, or Edit to move and resize. Downloads include the text.", example: "Image Generator → Text overlay → Add slideshow to canvas. Use clean images to avoid overlapping existing text.", category: "generation", icon: "text-overlay", accent: "image", retrySafe: true,
     inputs: [{ id: "assets", label: "Images", type: "generated-assets", required: true }, { id: "captions", label: "Rewritten slide text (optional)", type: "data" }],
     outputs: [{ id: "assets", label: "Images with text", type: "generated-assets", required: true }, { id: "layers", label: "Transparent text layers", type: "data" }],
     fields: [
