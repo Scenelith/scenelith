@@ -86,9 +86,10 @@ test("main canvas keeps explicit modifier zoom and hold-Space pan controls", () 
 });
 
 test("viewport movement stays local and never dirties the collaboration graph", () => {
-  const moveBody = canvasApp.slice(canvasApp.indexOf("onMoveEnd={(_, viewport) =>"), canvasApp.indexOf("defaultViewport={viewportRef.current}"));
+  const moveBody = canvasApp.slice(canvasApp.indexOf("onViewportChange={(viewport) =>"), canvasApp.indexOf("defaultViewport={viewportRef.current}"));
   assert.match(moveBody, /viewportRef\.current = viewport/);
   assert.match(moveBody, /writeCanvasViewportSession\(project\.id, viewport\)/);
+  assert.match(moveBody, /const viewport = getViewport\(\)/);
   assert.doesNotMatch(moveBody, /dirtyProjectIdsRef/);
   assert.doesNotMatch(moveBody, /projectGraphRevisionRef/);
   assert.doesNotMatch(moveBody, /save\(/);

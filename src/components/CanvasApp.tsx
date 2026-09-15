@@ -444,7 +444,7 @@ function CanvasWorkspace({ initialProject, projects: initialProjects, initialWor
   const ProductPanelRouter = editionClient.PanelRouter;
   const EditionWorkspaceNotice = editionClient.WorkspaceNotice;
   const AccountOverlayExtension = editionClient.AccountOverlayExtension;
-  const { fitView, setViewport, screenToFlowPosition } = useReactFlow<FrameNode, FrameEdge>();
+  const { fitView, getViewport, setViewport, screenToFlowPosition } = useReactFlow<FrameNode, FrameEdge>();
   const initialCanvasGraph = useMemo(() => {
     const graphNodes = stableGraphNodes(initialProject.graph.nodes || []);
     const graphEdges = normalizeEdgePorts(initialProject.graph.edges || [], graphNodes);
@@ -4773,8 +4773,11 @@ function CanvasWorkspace({ initialProject, projects: initialProjects, initialWor
               }
             });
           }}
-          onMove={(_, viewport) => { viewportRef.current = viewport; }}
-          onMoveEnd={(_, viewport) => {
+          // The first wheel event emits move-start only; transform changes cover it too.
+          onViewportChange={(viewport) => { viewportRef.current = viewport; }}
+          onMoveEnd={() => {
+            // End callbacks are delayed and can describe an older gesture.
+            const viewport = getViewport();
             viewportRef.current = viewport;
             if (viewportReadyProjectRef.current === project.id) writeCanvasViewportSession(project.id, viewport);
           }}
