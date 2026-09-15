@@ -27,11 +27,11 @@ test('generated image text can be replaced, dragged, resized, saved and reopened
     }
     return route.fulfill({contentType:'image/png',body:route.request().url().includes('/sample') ? bytes : result.image});
   });
-  await page.route('https://scenelith.test/', route => route.fulfill({contentType:'text/html',body:'<div id="root"></div>'}));
+  const css = (readFileSync('src/app/globals.css','utf8')+readFileSync('src/app/theme.css','utf8')).replace(/@import[^;]+;/g, '');
+  await page.route('https://scenelith.test/', route => route.fulfill({contentType:'text/html',body:`<style>${css}</style><div id="root"></div>`}));
   const fixture = (await build({entryPoints:['tests/browser/fixtures/editable-image-text.tsx'],absWorkingDir:process.cwd(),tsconfig:path.resolve('tsconfig.json'),bundle:true,write:false,platform:'browser',jsx:'automatic',define:{'process.env.NODE_ENV':'"production"'}})).outputFiles[0].text;
   await page.setViewportSize({width:1440,height:1000});
   await page.goto('https://scenelith.test/');
-  await page.addStyleTag({content:readFileSync('src/app/globals.css','utf8')+readFileSync('src/app/theme.css','utf8')});
   await page.addScriptTag({content:fixture});
   await page.getByRole('button',{name:'Text overlay',exact:true}).click();
   await expect(page.getByRole('textbox',{name:'Overlay text'})).toHaveValue('A calmer day');
