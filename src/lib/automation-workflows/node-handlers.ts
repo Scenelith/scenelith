@@ -1,3 +1,4 @@
+import { placeAutomationCanvasResults } from "./canvas-layout";
 import { textOverlay } from "./text-overlay";
 import { lookup } from "node:dns/promises";
 import { isIP } from "node:net";
@@ -1820,15 +1821,7 @@ async function addToCanvas(execution: AutomationNodeExecution, planNoteMode: "tr
     if ([...nodeIds, ...noteIds].every((id) => existingIds.has(id))) return graph;
     const nodes = [...(graph.nodes || [])];
     const edges = [...(graph.edges || [])];
-    const minX = nodes.length ? Math.min(...nodes.map((node) => node.position.x)) : 0;
-    const bottom = nodes.length ? Math.max(...nodes.map((node) => node.position.y + Number(node.measured?.height || node.height || node.data.nodeHeight || 520))) : 0;
-    const sourceNode = nodes.find((node) => node.id === sourceNodeId);
-    const blockLeft = layout === "new-row"
-      ? minX
-      : sourceNode
-        ? sourceNode.position.x + Number(sourceNode.measured?.width || sourceNode.width || sourceNode.data.nodeWidth || 580) + 180
-        : minX;
-    const blockTop = layout === "new-row" ? bottom + 180 : sourceNode?.position.y || bottom + 180;
+    const additions: FrameNode[] = [];
     if (includePlanNote && planNoteMode === "truncate" && !existingIds.has(noteId)) {
       const planText = items.map((item, position) => {
         const index = item.presentation.index ?? position + 1;
@@ -1844,7 +1837,7 @@ async function addToCanvas(execution: AutomationNodeExecution, planNoteMode: "tr
       const note: FrameNode = {
         id: noteId,
         type: "frameNode",
-        position: { x: blockLeft, y: blockTop },
+        position: { x: 0, y: 0 },
         data: {
           kind: "note",
           title: "Slideshow generation plan",
@@ -1858,7 +1851,7 @@ async function addToCanvas(execution: AutomationNodeExecution, planNoteMode: "tr
           automationRunId: execution.context.runId,
         },
       };
-      nodes.push(note);
+      additions.push(note);
       existingIds.add(noteId);
     }
     if (includePlanNote && planNoteMode === "preserve") {
@@ -1868,7 +1861,7 @@ async function addToCanvas(execution: AutomationNodeExecution, planNoteMode: "tr
         const note: FrameNode = {
           id: currentNoteId,
           type: "frameNode",
-          position: { x: blockLeft, y: blockTop + noteIndex * 1_040 },
+          position: { x: 0, y: 0 },
           data: {
             kind: "note",
             title: fullPlanNotes.length > 1 ? `Slideshow generation plan · ${noteIndex + 1}/${fullPlanNotes.length}` : "Slideshow generation plan",
@@ -1882,7 +1875,7 @@ async function addToCanvas(execution: AutomationNodeExecution, planNoteMode: "tr
             automationRunId: execution.context.runId,
           },
         };
-        nodes.push(note);
+        additions.push(note);
         existingIds.add(currentNoteId);
       }
     }
@@ -1892,13 +1885,11 @@ async function addToCanvas(execution: AutomationNodeExecution, planNoteMode: "tr
       if (existingIds.has(nodeId)) continue;
       const sourceAssetId = item.presentation.sourceAssetId;
       const sourceScene = nodes.find((node) => String(node.data.assetId || "") === sourceAssetId);
-      const column = position % 2;
-      const row = Math.floor(position / 2);
       const outputUrl = item.outputUrl;
       const output: FrameNode = {
         id: nodeId,
         type: "frameNode",
-        position: { x: blockLeft + (includePlanNote ? 490 : 0) + column * 520, y: blockTop + row * 890 },
+        position: { x: 0, y: 0 },
         data: {
           kind: "prompt",
           title: `Slide ${String(index).padStart(2, "0")} · ${item.presentation.role}`,
@@ -1924,7 +1915,7 @@ async function addToCanvas(execution: AutomationNodeExecution, planNoteMode: "tr
           automationRunId: execution.context.runId,
         },
       };
-      nodes.push(output);
+      additions.push(output);
       existingIds.add(nodeId);
       if (sourceScene) {
         const edgeId = `automation-edge-${execution.context.runId}-${index}`;
@@ -1949,7 +1940,7 @@ async function addToCanvas(execution: AutomationNodeExecution, planNoteMode: "tr
         }
       }
     }
-    return { ...graph, nodes, edges };
+    return { ...graph, nodes: [...nodes, ...placeAutomationCanvasResults(graph, additions, sourceNodeId, layout)], edges };
   });
   const result = { nodeIds, noteId: includePlanNote ? noteId : null, sourceNodeId, added: nodeIds.length, failures };
   await db.prepare(`INSERT INTO automation_artifacts (id, run_id, node_id, item_key, workspace_id, project_id, kind, value_json, created_at)

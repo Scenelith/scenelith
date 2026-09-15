@@ -2,6 +2,7 @@
 
 /* eslint-disable @next/next/no-img-element */
 
+import { readCanvasViewportSession, writeCanvasViewportSession } from "@/lib/canvas-viewport";
 import { generationAttemptTime, preserveLocalGenerationStatus, restoreGeneratorTask } from "@/lib/generator-task-state";
 import { assignCanvasNodeNumbers } from "../../collaboration/node-numbers.mjs";
 import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState, type CSSProperties, type Dispatch, type SetStateAction } from "react";
@@ -382,28 +383,6 @@ function graphNodePositionsChanged(before: FrameNode[], after: FrameNode[]) {
 }
 
 const projectSessionCachePrefix = "scenelith:canvas-graph:v1:";
-const canvasViewportSessionPrefix = "scenelith:canvas-viewport:v1:";
-
-function readCanvasViewportSession(projectId: string, fallback?: ProjectRecord["graph"]["viewport"]) {
-  if (typeof window === "undefined") return fallback || { x: 0, y: 0, zoom: 1 };
-  try {
-    const raw = window.sessionStorage.getItem(`${canvasViewportSessionPrefix}${projectId}`);
-    if (!raw) return fallback || { x: 0, y: 0, zoom: 1 };
-    const viewport = JSON.parse(raw) as { x?: unknown; y?: unknown; zoom?: unknown };
-    if (![viewport.x, viewport.y, viewport.zoom].every((value) => typeof value === "number" && Number.isFinite(value))) {
-      return fallback || { x: 0, y: 0, zoom: 1 };
-    }
-    return { x: Number(viewport.x), y: Number(viewport.y), zoom: Number(viewport.zoom) };
-  } catch {
-    return fallback || { x: 0, y: 0, zoom: 1 };
-  }
-}
-
-function writeCanvasViewportSession(projectId: string, viewport: { x: number; y: number; zoom: number }) {
-  if (typeof window === "undefined") return;
-  try { window.sessionStorage.setItem(`${canvasViewportSessionPrefix}${projectId}`, JSON.stringify(viewport)); } catch {}
-}
-
 function readProjectSessionCache(projectId: string, expectedRevision?: number) {
   if (typeof window === "undefined") return null;
   try {
@@ -465,7 +444,7 @@ function CanvasWorkspace({ initialProject, projects: initialProjects, initialWor
   const ProductPanelRouter = editionClient.PanelRouter;
   const EditionWorkspaceNotice = editionClient.WorkspaceNotice;
   const AccountOverlayExtension = editionClient.AccountOverlayExtension;
-  const { fitView, setViewport, screenToFlowPosition } = useReactFlow<FrameNode, FrameEdge>();
+  const { fitView, getViewport, setViewport, screenToFlowPosition } = useReactFlow<FrameNode, FrameEdge>();
   const initialCanvasGraph = useMemo(() => {
     const graphNodes = stableGraphNodes(initialProject.graph.nodes || []);
     const graphEdges = normalizeEdgePorts(initialProject.graph.edges || [], graphNodes);
@@ -604,7 +583,17 @@ function CanvasWorkspace({ initialProject, projects: initialProjects, initialWor
   activeProjectIdRef.current = project.id;
   const [graphCommitSignal, setGraphCommitSignal] = useState({ projectId: initialProject.id, revision: 0 });
   const [remoteGraphRevision, setRemoteGraphRevision] = useState(0);
-  const viewportRef = useRef(readCanvasViewportSession(initialProject.id, initialProject.graph.viewport));
+  const viewportRef = useRef(readCanvasViewportSession(initialProject.id, initialProject.graph.viewport) || { x: 0, y: 0, zoom: 1 });
+  const viewportReadyProjectRef = useRef<string | null>(null);
+  useEffect(() => {
+    const persist = () => {
+      if (viewportReadyProjectRef.current === activeProjectIdRef.current) writeCanvasViewportSession(activeProjectIdRef.current, viewportRef.current);
+    };
+    const onVisibility = () => { if (document.visibilityState === "hidden") persist(); };
+    window.addEventListener("pagehide", persist);
+    document.addEventListener("visibilitychange", onVisibility);
+    return () => { persist(); window.removeEventListener("pagehide", persist); document.removeEventListener("visibilitychange", onVisibility); };
+  }, []);
   const nodeDragBaselineRef = useRef<FrameNode[] | null>(null);
   const savedProjectSignatures = useRef<Record<string, string>>({});
   if (!savedProjectSignatures.current[initialProject.id]) {
@@ -647,11 +636,21 @@ function CanvasWorkspace({ initialProject, projects: initialProjects, initialWor
       graph: { ...graph, nodes: stableNodes, edges: normalizedEdges },
     });
     if (projectHydratingIdRef.current === project.id) {
+      // A cold project switch hydrates through collaboration, not applyLoadedProject.
+      if (viewportReadyProjectRef.current !== project.id) {
+        const restored = readCanvasViewportSession(project.id, graph.viewport);
+        viewportReadyProjectRef.current = project.id;
+        window.requestAnimationFrame(() => {
+          if (activeProjectIdRef.current !== project.id) return;
+          if (restored) { viewportRef.current = restored; void setViewport(restored, { duration: 0 }); }
+          else if (viewNodes.length) void fitView({ nodes: viewNodes.slice(0, 4), padding: 0.2, duration: 0, maxZoom: 1.08 });
+        });
+      }
       projectHydratingIdRef.current = null;
       setProjectHydratingId(null);
       setProjectSwitchingId(null);
     }
-  }, [models, project]);
+  }, [fitView, models, project, setViewport]);
   const { status: collaborationStatus, ready: collaborationReady, peerCount, mutate: mutateCollaborativeGraph, flush: flushCollaborativeGraph } = useCanvasCollaboration({ projectId: project.id, user, onRemoteGraph: applyCollaborativeGraph });
   const mutateCollaborativeGraphRef = useRef(mutateCollaborativeGraph);
   mutateCollaborativeGraphRef.current = mutateCollaborativeGraph;
@@ -2298,6 +2297,7 @@ function CanvasWorkspace({ initialProject, projects: initialProjects, initialWor
       localEdgesStateRef.current = previousEdges;
       setNodesState(previousNodes);
       setEdgesState(previousEdges);
+      viewportReadyProjectRef.current = previousProject.id;
       viewportRef.current = previousViewport;
       void setViewport(previousViewport, { duration: 0 });
     };
@@ -2321,8 +2321,10 @@ function CanvasWorkspace({ initialProject, projects: initialProjects, initialWor
       refreshHistoryControls();
       setSelectedId(null);
       const restoredViewport = readCanvasViewportSession(latest.id, latest.graph.viewport);
+      viewportReadyProjectRef.current = latest.id;
       viewportRef.current = restoredViewport || { x: 0, y: 0, zoom: 1 };
       window.setTimeout(() => {
+        if (activeProjectIdRef.current !== latest.id) return;
         if (restoredViewport) {
           void setViewport(restoredViewport, { duration: 0 });
           return;
@@ -2330,6 +2332,8 @@ function CanvasWorkspace({ initialProject, projects: initialProjects, initialWor
         void fitView({ nodes: latestNodes.slice(0, 4), padding: 0.2, duration: 0, maxZoom: 1.08 });
       }, 0);
     };
+    writeCanvasViewportSession(project.id, previousViewport);
+    viewportReadyProjectRef.current = null;
     setProjectSwitchingId(next.id);
     setProjectLibraryOpen(false);
     setWorkspaceLibraryOpen(false);
@@ -2368,7 +2372,7 @@ function CanvasWorkspace({ initialProject, projects: initialProjects, initialWor
       setNodesState([]);
       setEdgesState([]);
       setSelectedId(null);
-      viewportRef.current = { x: 0, y: 0, zoom: 1 };
+      viewportRef.current = readCanvasViewportSession(next.id, next.graph.viewport) || { x: 0, y: 0, zoom: 1 };
       void setViewport(viewportRef.current, { duration: 0 });
     }
     if (cachedTarget) {
@@ -4755,12 +4759,27 @@ function CanvasWorkspace({ initialProject, projects: initialProjects, initialWor
           }}
           onPaneClick={() => { stopAllVideoPlayback(); setSelectedId(null); setNodeCreator(null); setCanvasAddMenuOpen(false); setProjectLibraryOpen(false); setWorkspaceLibraryOpen(false); }}
           onInit={(instance) => {
-            if (initialProject.graph.viewport || !initialCanvasGraph.nodes.length) return;
-            window.requestAnimationFrame(() => void instance.fitView({ nodes: initialCanvasGraph.nodes.slice(0, 4), padding: 0.2, duration: 0, maxZoom: 1.08 }));
+            const restored = readCanvasViewportSession(initialProject.id, initialProject.graph.viewport);
+            viewportReadyProjectRef.current = initialProject.id;
+            if (restored) {
+              viewportRef.current = restored;
+              void instance.setViewport(restored, { duration: 0 });
+              return;
+            }
+            if (!initialCanvasGraph.nodes.length) return;
+            window.requestAnimationFrame(() => {
+              if (activeProjectIdRef.current === initialProject.id && !readCanvasViewportSession(initialProject.id)) {
+                void instance.fitView({ nodes: initialCanvasGraph.nodes.slice(0, 4), padding: 0.2, duration: 0, maxZoom: 1.08 });
+              }
+            });
           }}
-          onMoveEnd={(_, viewport) => {
+          // The first wheel event emits move-start only; transform changes cover it too.
+          onViewportChange={(viewport) => { viewportRef.current = viewport; }}
+          onMoveEnd={() => {
+            // End callbacks are delayed and can describe an older gesture.
+            const viewport = getViewport();
             viewportRef.current = viewport;
-            writeCanvasViewportSession(project.id, viewport);
+            if (viewportReadyProjectRef.current === project.id) writeCanvasViewportSession(project.id, viewport);
           }}
           onlyRenderVisibleElements
           defaultViewport={viewportRef.current}
