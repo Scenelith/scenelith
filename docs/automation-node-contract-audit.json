@@ -243,7 +243,7 @@
       "inputs": ["assets", "source"],
       "outputs": ["result"],
       "settings": {
-        "layout": "Selects beside-source or new-row placement.",
+        "layout": "Places a compact group in nearby free space with up to three slides per row. beside-source anchors to the source; new-row anchors below its imported slides.",
         "includePlanNote": "Selects whether the complete plan is preserved across bounded editable notes beside generated images."
       }
     },

@@ -53,6 +53,37 @@ async function expectPersistedSource(context: BrowserContext, state: SeedState) 
   expect(body.project?.sourceUrl).toBe(`https://example.test/${state.graphMarker}`);
 }
 
+test("saved pan and zoom survive reload when the shared graph has no viewport", async ({ browser }) => {
+  const context = await authenticatedContext(browser, seedState());
+  try {
+    const headers = { origin: process.env.SCENELITH_E2E_BASE_URL || "http://localhost" };
+    const created = await context.request.post("/api/projects", { headers, data: { name: `Camera reload ${crypto.randomUUID()}` } });
+    expect(created.ok()).toBeTruthy();
+    const project = (await created.json()).project;
+    const updated = await context.request.patch(`/api/projects/${project.id}`, { headers, data: {
+      revision: project.revision,
+      graph: { nodes: [{ id: "camera-note", type: "frameNode", position: { x: 400, y: 9000 }, data: { kind: "note", title: "Camera test", noteText: "Keep my place" } }], edges: [] },
+    } });
+    expect(updated.ok()).toBeTruthy();
+    expect((await updated.json()).project.graph.viewport).toBeUndefined();
+    const page = await waitForLiveCanvas(context, project.id);
+    const viewport = page.locator(".canvas-stage .react-flow__viewport");
+    await page.getByRole("button", { name: /zoom out/i }).click();
+    const pane = (await page.locator(".canvas-stage .react-flow__pane").boundingBox())!;
+    await page.mouse.move(pane.x + pane.width - 120, pane.y + 180);
+    const before = await viewport.evaluate((element) => (element as HTMLElement).style.transform);
+    await page.mouse.wheel(600, 1000);
+    await expect.poll(() => viewport.evaluate((element) => (element as HTMLElement).style.transform)).not.toBe(before);
+    await expect.poll(() => page.evaluate((id) => sessionStorage.getItem(`scenelith:canvas-viewport:v1:${id}`), project.id)).not.toBeNull();
+    const saved = await viewport.evaluate((element) => (element as HTMLElement).style.transform);
+    await page.reload();
+    await expect(page.getByTestId("collaboration-status")).toHaveAttribute("data-status", "synced");
+    await expect.poll(() => viewport.evaluate((element) => (element as HTMLElement).style.transform)).toBe(saved);
+    await page.getByTestId("project-switcher").click();
+    await expect.poll(() => viewport.evaluate((element) => (element as HTMLElement).style.transform)).toBe(saved);
+  } finally { await context.close(); }
+});
+
 test("real browser preserves canvas state across reload, switching, concurrent sessions, and reconnect", async ({ browser }) => {
   const state = seedState();
   const primaryContext = await authenticatedContext(browser, state);
@@ -63,10 +94,25 @@ test("real browser preserves canvas state across reload, switching, concurrent s
     await expect(page.getByTestId("project-switcher")).toContainText(state.projectName);
     await expectPersistedSource(primaryContext, state);
 
+    const viewport = page.locator(".canvas-stage .react-flow__viewport");
+    const initialCamera = await viewport.evaluate((element) => (element as HTMLElement).style.transform);
+    const pane = await page.locator(".canvas-stage .react-flow__pane").boundingBox();
+    expect(pane).not.toBeNull();
+    await page.mouse.move(pane!.x + pane!.width / 2, pane!.y + pane!.height / 2);
+    await page.mouse.wheel(650, 1400);
+    await expect.poll(() => viewport.evaluate((element) => (element as HTMLElement).style.transform)).not.toBe(initialCamera);
+    await page.getByRole("button", { name: /zoom out/i }).click();
+    await expect.poll(() => page.evaluate((id) => {
+      const raw = sessionStorage.getItem(`scenelith:canvas-viewport:v1:${id}`);
+      return raw ? JSON.parse(raw).y : 0;
+    }, state.projectId)).not.toBe(0);
+    const savedCamera = await viewport.evaluate((element) => (element as HTMLElement).style.transform);
+
     await page.reload();
     await expect(page.getByTestId("collaboration-status")).toHaveAttribute("data-status", "synced");
     await expect(page.getByTestId("project-switcher")).toContainText(state.projectName);
     await expectPersistedSource(primaryContext, state);
+    await expect.poll(() => viewport.evaluate((element) => (element as HTMLElement).style.transform)).toBe(savedCamera);
 
     const secondName = `Browser switch ${crypto.randomUUID()}`;
     const created = await primaryContext.request.post("/api/projects", {
@@ -83,6 +129,7 @@ test("real browser preserves canvas state across reload, switching, concurrent s
       await page.getByTestId("project-card").filter({ hasText: projectName }).click();
       await expect(page).toHaveURL(new RegExp(`project=${projectId.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}`));
       await expect(page.getByTestId("collaboration-status")).toHaveAttribute("data-status", "synced");
+      if (projectId === state.projectId) await expect.poll(() => viewport.evaluate((element) => (element as HTMLElement).style.transform)).toBe(savedCamera);
     }
 
     const peer = await waitForLiveCanvas(peerContext, secondId);

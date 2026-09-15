@@ -4,6 +4,7 @@ import test from "node:test";
 
 const canvasPage = readFileSync(new URL("../src/app/canvas/page.tsx", import.meta.url), "utf8");
 const canvasApp = readFileSync(new URL("../src/components/CanvasApp.tsx", import.meta.url), "utf8");
+const canvasViewport = readFileSync(new URL("../src/lib/canvas-viewport.ts", import.meta.url), "utf8");
 const theme = readFileSync(new URL("../src/app/theme.css", import.meta.url), "utf8");
 const globals = readFileSync(new URL("../src/app/globals.css", import.meta.url), "utf8");
 const database = readFileSync(new URL("../src/lib/postgres-db.ts", import.meta.url), "utf8");
@@ -39,7 +40,7 @@ test("canvas switching uses realtime sync without prefetching duplicate full gra
   assert.match(canvasApp, /onlyRenderVisibleElements/);
   assert.match(canvasApp, /dirtyProjectIdsRef\.current\.has\(project\.id\)/);
   assert.match(canvasApp, /defaultViewport=\{viewportRef\.current\}/);
-  assert.match(canvasApp, /canvasViewportSessionPrefix = "scenelith:canvas-viewport:v1:"/);
+  assert.match(canvasViewport, /"scenelith:canvas-viewport:v1:"/);
   assert.match(canvasApp, /writeCanvasViewportSession\(project\.id, viewport\)/);
   assert.match(canvasApp, /fitView\(\{ nodes: latestNodes\.slice\(0, 4\)/);
   assert.match(canvasApp, /if \(!collaborationReady\) return false/);

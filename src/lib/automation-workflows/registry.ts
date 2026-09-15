@@ -761,7 +761,7 @@ const rawDefinitions: Array<Omit<AutomationNodeDefinition, "help">> = [
   {
     type: "output.add-to-canvas", version: 1, title: "Add slideshow to canvas", description: "Places the created slideshow images back on the content canvas where they stay editable.", example: "Put the new slideshow beside its TikTok source so you can compare, edit and continue from either version.", category: "output", icon: "canvas", accent: "mint", terminal: true,
     inputs: [{ id: "assets", label: "Created images", type: "generated-assets", required: true }, { id: "source", label: "Original source", type: "tiktok-source" }], outputs: [{ id: "result", label: "Canvas update receipt", type: "canvas-result", connectable: false }], fields: [
-      { id: "layout", label: "Where should results appear?", description: "Choose whether to keep the new branch beside the source or place it on a separate row.", kind: "select", defaultValue: "beside-source", options: [
+      { id: "layout", label: "Where should results appear?", description: "Keep results together in nearby free space, up to three slides per row. New row starts below the source and its imported slides.", kind: "select", defaultValue: "beside-source", options: [
         { value: "beside-source", label: "Beside the source" }, { value: "new-row", label: "On a new row" },
       ] },
       { id: "includePlanNote", label: "Show the plan beside the images", description: "Adds a note explaining what each generated slide was meant to do.", kind: "boolean", defaultValue: true },
@@ -770,7 +770,7 @@ const rawDefinitions: Array<Omit<AutomationNodeDefinition, "help">> = [
   {
     type: "output.add-to-canvas", version: 2, title: "Add slideshow to canvas", description: "Places canonical generated-image results on the content canvas without guessing an older output format.", example: "Put the new slideshow beside its TikTok source so you can compare, edit and continue from either version.", category: "output", icon: "canvas", accent: "mint", terminal: true,
     inputs: [{ id: "assets", label: "Created images", type: "generated-assets", required: true }, { id: "source", label: "Original source", type: "tiktok-source" }], outputs: [{ id: "result", label: "Canvas update receipt", type: "canvas-result", connectable: false }], fields: [
-      { id: "layout", label: "Where should results appear?", description: "Choose whether to keep the new branch beside the source or place it on a separate row.", kind: "select", defaultValue: "beside-source", options: [
+      { id: "layout", label: "Where should results appear?", description: "Keep results together in nearby free space, up to three slides per row. New row starts below the source and its imported slides.", kind: "select", defaultValue: "beside-source", options: [
         { value: "beside-source", label: "Beside the source" }, { value: "new-row", label: "On a new row" },
       ] },
       { id: "includePlanNote", label: "Show the plan beside the images", description: "Adds a note explaining what each generated slide was meant to do.", kind: "boolean", defaultValue: true },
@@ -779,7 +779,7 @@ const rawDefinitions: Array<Omit<AutomationNodeDefinition, "help">> = [
   {
     type: "output.add-to-canvas", version: 3, title: "Add slideshow to canvas", description: "Places canonical generated-image results on the content canvas and preserves the complete plan without silent truncation.", example: "Put the new slideshow beside its TikTok source so you can compare, edit and continue from either version.", category: "output", icon: "canvas", accent: "mint", terminal: true,
     inputs: [{ id: "assets", label: "Created images", type: "generated-assets", required: true }, { id: "source", label: "Original source", type: "tiktok-source" }], outputs: [{ id: "result", label: "Canvas update receipt", type: "canvas-result", connectable: false }], fields: [
-      { id: "layout", label: "Where should results appear?", description: "Choose whether to keep the new branch beside the source or place it on a separate row.", kind: "select", defaultValue: "beside-source", options: [
+      { id: "layout", label: "Where should results appear?", description: "Keep results together in nearby free space, up to three slides per row. New row starts below the source and its imported slides.", kind: "select", defaultValue: "beside-source", options: [
         { value: "beside-source", label: "Beside the source" }, { value: "new-row", label: "On a new row" },
       ] },
       { id: "includePlanNote", label: "Show the plan beside the images", description: "Adds as many bounded notes as needed to preserve the complete generation plan.", kind: "boolean", defaultValue: true },
