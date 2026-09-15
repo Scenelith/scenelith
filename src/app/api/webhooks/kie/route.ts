@@ -1,6 +1,5 @@
 import { db } from "@/lib/postgres-db";
 import { generationProvider } from "@/platform/providers/registry";
-import { isGenerationTimeoutError } from "@/lib/generation-lifecycle";
 import { finalizeGenerationFromWebhook } from "@/lib/generation-state";
 
 export const runtime = "nodejs";
@@ -26,21 +25,7 @@ export async function POST(request: Request) {
   const providerError = task.error
     ? typeof task.error === "string" ? task.error : JSON.stringify(task.error)
     : null;
-  const existing = await db.prepare("SELECT id, status, error FROM generations WHERE provider_task_id = ?").get(task.task_id) as
-    | { id: string; status: string; error: string | null }
-    | undefined;
-  if (existing?.status === "failed" && isGenerationTimeoutError(existing.error)) {
-    console.warn("[kie:webhook-late-timeout]", JSON.stringify({ taskId: task.task_id, status: task.status, generationId: existing.id }));
-    return Response.json({ ok: true, ignored: "generation_timed_out" });
-  }
   const status = String(task.status || "").toLowerCase();
-  const result = await db.prepare("UPDATE generations SET status = ?, output_url = COALESCE(?, output_url), error = COALESCE(?, error), updated_at = ? WHERE provider_task_id = ?").run(
-    String(task.status || "updated").toLowerCase(),
-    task.generated?.[0] || null,
-    providerError,
-    new Date().toISOString(),
-    task.task_id,
-  );
   const generation = await db.prepare("SELECT id FROM generations WHERE provider_task_id = ?").get(task.task_id) as { id: string } | undefined;
   if (generation) {
     try {
@@ -58,7 +43,7 @@ export async function POST(request: Request) {
     taskId: task.task_id,
     status: task.status,
     outputCount: task.generated?.length || 0,
-    matchedGenerations: result.changes,
+    matchedGenerations: generation ? 1 : 0,
     hasError: Boolean(providerError),
   }));
   return Response.json({ ok: true });

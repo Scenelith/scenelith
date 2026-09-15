@@ -6,6 +6,7 @@ import { createAssetThumbnail } from "./image-thumbnails";
 import { getGeneration, KieRateLimitError } from "./kie";
 import {
   generationTimedOut,
+  isGenerationTimeoutError,
   publicGenerationErrorMessage,
   timeoutGeneration,
 } from "./generation-lifecycle";
@@ -265,7 +266,7 @@ export async function persistGenerationOutput(id: string, outputUrl: string) {
     : undefined;
   const now = new Date().toISOString();
   const persisted = await db.transaction(async () => {
-    const current = await db.prepare("SELECT output_asset_id FROM generations WHERE id = ?").get(id) as { output_asset_id: string | null } | undefined;
+    const current = await db.prepare("SELECT output_asset_id FROM generations WHERE id = ? FOR UPDATE").get(id) as { output_asset_id: string | null } | undefined;
     if (current?.output_asset_id) return { assetId: current.output_asset_id, inserted: false };
     await db.prepare(`INSERT INTO assets
       (id, workspace_id, project_id, kind, role, filename, storage_path, storage_provider, storage_bucket, object_key, size_bytes, content_hash, mime_type, metadata_json, created_at)
@@ -397,19 +398,7 @@ export async function reconcileGeneration(id: string) {
         ? emptyResultExpired ? "failed" : "finalizing"
         : providerStatus;
     const error = reportedError || (emptyResultExpired ? emptyCompletedMessage : null);
-    const now = new Date().toISOString();
-    await db.prepare("UPDATE generations SET status = ?, output_url = ?, error = ?, updated_at = ? WHERE id = ?")
-      .run(status, outputUrl, error, now, id);
-    if (status === "failed") {
-      await (await usageAuthority()).releaseGeneration(id, "provider_generation_failed");
-      await updateGenerationNode((await readGenerationState(id))!, { error });
-    }
-    if (outputUrl) {
-      await persistGenerationOutput(id, outputUrl);
-      if (completedGenerationStatuses.has(providerStatus)) await (await usageAuthority()).settleGeneration(id);
-    }
-    generation = (await readGenerationState(id))!;
-    return generation;
+    return (await finalizeGenerationFromWebhook({ generationId: id, status, outputUrl, error }))!;
   } catch (error) {
     if (error instanceof KieRateLimitError) return (await readGenerationState(id))!;
     if (generationTimedOut(generation.created_at, generation.media_type)) {
@@ -428,13 +417,29 @@ export async function finalizeGenerationFromWebhook(input: {
   outputUrl?: string | null;
   error?: string | null;
 }) {
-  const current = await readGenerationState(input.generationId);
-  if (current && ["cancelled", "canceled"].includes(String(current.status).toLowerCase())) return current;
-  if (current?.output_asset_id && completedGenerationStatuses.has(current.status.toLowerCase())) {
+  const normalizedStatus = input.status.toLowerCase();
+  const accepted = await db.transaction(async () => {
+    const current = await db.prepare("SELECT * FROM generations WHERE id = ? FOR UPDATE").get(input.generationId) as GenerationStateRow | undefined;
+    if (!current) return { current, ignored: true, late: false };
+    const status = current.status.toLowerCase();
+    const late = status === "failed" && isGenerationTimeoutError(current.error);
+    // Only a successful late timeout result may recover a refunded task.
+    // Cancellation, provider failure, and newer nonterminal callbacks stay terminal.
+    if ((failedGenerationStatuses.has(status) && !(late && !input.error && input.outputUrl && completedGenerationStatuses.has(normalizedStatus)))
+      || (current.output_asset_id && completedGenerationStatuses.has(status))) {
+      return { current, ignored: true, late: false };
+    }
+    await db.prepare(`UPDATE generations SET status = ?, output_url = COALESCE(?, output_url), error = ?,
+      credit_cost = CASE WHEN ? THEN 0 ELSE credit_cost END, updated_at = ? WHERE id = ?`)
+      .run(input.error ? "failed" : normalizedStatus, input.outputUrl || null, input.error || null, late, new Date().toISOString(), input.generationId);
+    return { current, ignored: false, late };
+  })();
+  const current = accepted.current;
+  if (accepted.ignored) {
+    if (!current?.output_asset_id || !completedGenerationStatuses.has(current.status.toLowerCase())) return current;
     await (await usageAuthority()).settleGeneration(current.id);
     return current;
   }
-  const normalizedStatus = input.status.toLowerCase();
   if (input.error || failedGenerationStatuses.has(normalizedStatus)) {
     await (await usageAuthority()).releaseGeneration(input.generationId, "provider_webhook_failed");
     const failed = await readGenerationState(input.generationId);
@@ -443,7 +448,8 @@ export async function finalizeGenerationFromWebhook(input: {
   }
   if (input.outputUrl) {
     await persistGenerationOutput(input.generationId, input.outputUrl);
-    if (completedGenerationStatuses.has(normalizedStatus)) await (await usageAuthority()).settleGeneration(input.generationId);
+    // The timeout refund is final; saving late media must not charge again.
+    if (!accepted.late && completedGenerationStatuses.has(normalizedStatus)) await (await usageAuthority()).settleGeneration(input.generationId);
   }
   return await readGenerationState(input.generationId);
 }

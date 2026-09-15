@@ -1673,7 +1673,7 @@ async function imageGenerationV2(execution: AutomationNodeExecution) {
       try {
         const generated = await waitForGeneration(execution.context.runId, reusable.id, execution.context.workerId, execution.context.deadlineAt, execution.context.signal);
         await persistGenerated(generated, reusable.id);
-        await execution.context.budget?.settle(budgetReservationId, requestedCredits);
+        await execution.context.budget?.settle(budgetReservationId, generated.creditCost);
         return;
       } catch (error) {
         await execution.context.budget?.release(budgetReservationId);
@@ -1715,7 +1715,7 @@ async function imageGenerationV2(execution: AutomationNodeExecution) {
         try {
           const generated = await waitForGeneration(execution.context.runId, admission.generationId, execution.context.workerId, execution.context.deadlineAt, execution.context.signal);
           await persistGenerated(generated, admission.generationId);
-          await execution.context.budget?.settle(budgetReservationId, admission.creditCost);
+          await execution.context.budget?.settle(budgetReservationId, generated.creditCost);
           return;
         } catch (error) {
           await execution.context.budget?.release(budgetReservationId);

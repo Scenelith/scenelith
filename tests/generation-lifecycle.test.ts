@@ -9,14 +9,14 @@ import {
 } from "../src/lib/generation-lifecycle";
 
 test("generation timeout windows are media-specific", () => {
-  assert.equal(generationTimeoutMs("image"), 5 * 60 * 1000);
+  assert.equal(generationTimeoutMs("image"), 30 * 60 * 1000);
   assert.equal(generationTimeoutMs("video"), 45 * 60 * 1000);
 });
 
-test("image timeout starts at five minutes without firing early", () => {
+test("image timeout starts at thirty minutes without firing early", () => {
   const now = Date.parse("2026-08-04T16:00:00.000Z");
-  assert.equal(generationTimedOut("2026-08-04T15:55:00.001Z", "image", now), false);
-  assert.equal(generationTimedOut("2026-08-04T15:55:00.000Z", "image", now), true);
+  assert.equal(generationTimedOut("2026-08-04T15:30:00.001Z", "image", now), false);
+  assert.equal(generationTimedOut("2026-08-04T15:30:00.000Z", "image", now), true);
 });
 
 test("video timeout starts at forty-five minutes", () => {
