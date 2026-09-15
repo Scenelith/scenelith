@@ -185,7 +185,7 @@ test("automation uses the selected TikTok across opening, workflow switches, and
       await route.fulfill({ status: 400, json: { error: "Submission captured without running generation" } });
     });
     await panel.getByRole("button", { name: "Run automation", exact: true }).click();
-    await expect.poll(() => submitted).toMatchObject({ inputs: { "two.source": "source-b" } });
+    await expect.poll(() => submitted).toEqual({ projectId: project.id, workflowId: "two", inputs: { "two.source": "source-b" }, mode: "production" });
     await panel.getByRole("button", { name: "Source slideshow", exact: true }).click();
     await page.getByRole("option", { name: /TikTok A/ }).click();
     await expect(panel.getByRole("button", { name: "Source slideshow", exact: true })).toContainText("TikTok A");
