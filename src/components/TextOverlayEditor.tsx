@@ -144,7 +144,7 @@ export function TextOverlayEditor({ projectId, assetId, fallbackUrl, imageRef, o
   }
   const bounds = preview?.bounds;
   return <>
-    <img ref={imageRef} src={document ? `/api/assets/${document.sourceAssetId}?delivery=direct` : fallbackUrl} alt="Image with editable text" onLoad={onImageLoad} draggable={false} />
+    <img ref={imageRef} src={document ? `/api/assets/${encodeURIComponent(document.sourceAssetId)}?delivery=direct` : fallbackUrl} alt="Image with editable text" onLoad={onImageLoad} draggable={false} />
     {document && preview && bounds && !disabled && <div className="text-overlay-layer" style={{
       left: `${document.settings.x + (bounds[0] / preview.width - .5) * 100}%`,
       top: `${document.settings.y + (bounds[1] / preview.height - .5) * 100}%`,
