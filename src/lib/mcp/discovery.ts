@@ -32,7 +32,7 @@ Use Library tools for durable media, not for graph layout. \`list_library_assets
 
 ### Identities
 
-Use Identity tools for reusable visual subjects. First obtain approved image \`asset_id\` values from Library. Choose \`identity_type=single\` for one consistent Character group or \`identity_type=before_after\` for separate transformation stages. Use \`create_identity_from_assets\` to create and initially fill it, then \`add_identity_references\`, \`reorder_identity_references\`, or \`remove_identity_reference\` without changing that type. \`list_identities\` returns explicit \`type\` and \`groups.character/before/after\` fields; call \`inspect_identity_reference\` to see one returned group image. Use \`place_canvas_identity\` only when one group should appear on a Canvas.
+Use Identity tools for reusable visual subjects. First obtain approved image \`asset_id\` values from Library. Choose \`identity_type=single\` for one consistent Character group or \`identity_type=before_after\` for separate transformation stages. Use \`create_identity_from_assets\` to create and initially fill it, then \`add_identity_references\`, \`reorder_identity_references\`, or \`remove_identity_reference\` without changing that type. Removing an identity reference also detaches it from all canvases in its workspace, including image/video/edit inputs; generated outputs are retained. \`list_identities\` returns explicit \`type\` and \`groups.character/before/after\` fields; call \`inspect_identity_reference\` to see one returned group image. Use \`place_canvas_identity\` only when one group should appear on a Canvas.
 
 ### Automations
 

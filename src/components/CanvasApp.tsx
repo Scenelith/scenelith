@@ -1,5 +1,7 @@
 "use client";
 
+import { detachAssetReferences } from "@/lib/detach-asset-references";
+
 import { getTextOverlay, saveTextOverlay } from "@/lib/text-overlay/client";
 import type { TextOverlaySettings } from "@/lib/text-overlay/settings";
 
@@ -2595,6 +2597,13 @@ function CanvasWorkspace({ initialProject, projects: initialProjects, initialWor
       if (!response.ok || !Array.isArray(body.personas)) throw new Error(body.error || "Could not remove reference");
       setPersonas(body.personas);
       setSelectedPersonaAssets((current) => Object.fromEntries(Object.entries(current).map(([key, ids]) => [key, ids.filter((id) => id !== assetId)])));
+      const deletedIds = new Set([assetId]);
+      // Undo can restore layout or prompts, but cannot resurrect a deleted file.
+      pastRef.current = pastRef.current.map((graph) => detachAssetReferences(graph, deletedIds));
+      futureRef.current = futureRef.current.map((graph) => detachAssetReferences(graph, deletedIds));
+      const detached = detachAssetReferences({ nodes: nodesRef.current, edges: edgesRef.current }, deletedIds);
+      setNodes(detached.nodes);
+      setEdges(detached.edges);
       setNotice("Reference removed");
     } catch (error) {
       setNotice(error instanceof Error ? error.message : "Could not remove reference");

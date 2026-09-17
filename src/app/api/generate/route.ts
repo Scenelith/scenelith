@@ -1,3 +1,4 @@
+import { loadGenerationReferenceAssets } from "@/lib/generation-reference-assets";
 import { newKieRoleError } from "@/lib/kie-new-models";
 import { z } from "zod";
 import { requireApiUser } from "@/lib/auth";
@@ -84,18 +85,21 @@ export async function POST(request: Request) {
     return Response.json({ error: `${model.label} accepts prompts up to ${(model.maxPromptLength || 5000).toLocaleString("en-US")} characters` }, { status: 400 });
   }
   const selectedDuration = model.durations?.includes(parsed.data.duration) ? parsed.data.duration : model.defaultDuration || model.durations?.[0] || parsed.data.duration;
-  const references = await Promise.all(parsed.data.referenceAssetIds.map(async (id, index) => {
-    if (!await userCanAccessAsset(auth.user.id, id)) throw new Error(`Reference ${id} was not found`);
-    const asset = await db.prepare("SELECT storage_path, mime_type, kind, role, metadata_json, size_bytes FROM assets WHERE id = ?").get(id) as
-      | { storage_path: string; mime_type: string; kind: string; role: string | null; metadata_json: string | null; size_bytes?: number }
-      | undefined;
-    if (!asset) throw new Error(`Reference ${id} was not found`);
+  const loaded = await loadGenerationReferenceAssets(auth.user.id, parsed.data.referenceAssetIds);
+  if (!loaded.ok) {
+    return Response.json({
+      error: "A reference was deleted or is no longer available. Refresh the canvas and check its references before trying again.",
+      code: "REFERENCE_UNAVAILABLE",
+    }, { status: 409 });
+  }
+  const references = [];
+  for (const [index, asset] of loaded.assets.entries()) {
     const requestedRole = parsed.data.referenceRoles[index] || "reference-image";
     const role = model.id === "kling-3-motion"
       ? requestedRole === "reference-image" ? "start-frame" : requestedRole === "motion-video" ? "reference-video" : requestedRole
       : requestedRole;
     const expectedMime = role === "motion-video" || role === "reference-video" ? "video/" : role === "reference-audio" ? "audio/" : "image/";
-    if (!asset.mime_type.startsWith(expectedMime)) throw new Error(`${role} requires a ${expectedMime.slice(0, -1)} asset`);
+    if (!asset.mime_type.startsWith(expectedMime)) return Response.json({ error: `${role} requires a ${expectedMime.slice(0, -1)} asset`, code: "INCOMPATIBLE_MODEL_INPUTS" }, { status: 400 });
     let width: number | undefined;
     let height: number | undefined;
     let durationSeconds = 0;
@@ -105,7 +109,7 @@ export async function POST(request: Request) {
       height = metadata.height;
       durationSeconds = Number(metadata.durationSeconds || metadata.duration || 0) || 0;
     } catch {}
-    return {
+    references.push({
       path: asset.storage_path,
       mimeType: asset.mime_type,
       role,
@@ -113,8 +117,8 @@ export async function POST(request: Request) {
       sizeBytes: asset.size_bytes,
       width, height,
       label: parsed.data.referenceLabels[index] || (asset.kind === "persona_ref" ? `Identity ${asset.role === "after" ? "After" : asset.role === "before" ? "Before" : "Character"} reference ${index + 1}` : `Composition reference ${index + 1}`),
-    };
-  }));
+    });
+  }
   if (references.length > model.maxReferences) return Response.json({ error: `${model.label} accepts at most ${model.maxReferences} reference inputs` }, { status: 400 });
   const contractError = newKieRoleError(model.id, references);
   if (contractError) return Response.json({ error: contractError, code: "INCOMPATIBLE_MODEL_INPUTS" }, { status: 400 });

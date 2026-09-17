@@ -1,3 +1,4 @@
+import { detachWorkspaceAssetReferences } from "@/lib/identity-reference-deletion";
 import { newKieRoleError } from "@/lib/kie-new-models";
 import { canvasNodeBounds, canvasNodeSize, placeChangedCanvasNodes } from "../canvas-node-placement";
 import { generatorReferenceChanges, reconcileGeneratorReferenceChanges } from "../generator-reference-modes";
@@ -2312,6 +2313,7 @@ export async function removeMcpIdentityReference(principal: McpPrincipal, input:
   if (!asset) throw Object.assign(new Error("Identity reference not found"), { status: 404 });
   const remaining = Number((await db.prepare("SELECT COUNT(*) AS count FROM assets WHERE persona_id = ?").get(input.identityId) as { count: number }).count || 0);
   if (remaining <= 1) throw new Error("An identity needs at least one reference");
+  await detachWorkspaceAssetReferences(input.workspaceId, [asset.id]);
   await db.transaction(async () => {
     await enqueueStorageDeletion(asset.storage_path, input.workspaceId, "mcp-identity-reference-deleted");
     await enqueueStorageDeletion(asset.thumbnail_storage_path, input.workspaceId, "mcp-identity-thumbnail-deleted");
