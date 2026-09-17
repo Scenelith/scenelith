@@ -1,3 +1,4 @@
+import { detachWorkspaceAssetReferences } from "@/lib/identity-reference-deletion";
 import { requireApiUser, sameOriginRequest } from "@/lib/auth";
 import { db, userCanAccessAsset, userCanAccessWorkspace } from "@/lib/postgres-db";
 import { createIdentityThumbnail } from "@/lib/image-thumbnails";
@@ -304,6 +305,11 @@ export async function DELETE(request: Request) {
   if (!asset) return Response.json({ error: "Reference not found" }, { status: 404 });
   const remaining = Number((await db.prepare("SELECT COUNT(*) AS count FROM assets WHERE persona_id = ?").get(personaId) as { count: number }).count || 0);
   if (remaining <= 1) return Response.json({ error: "An identity needs at least one reference" }, { status: 400 });
+  try {
+    await detachWorkspaceAssetReferences(workspaceId, [assetId]);
+  } catch {
+    return Response.json({ error: "Could not detach the reference from all canvases. It is still in Library; please try again." }, { status: 409 });
+  }
   await db.transaction(async () => {
     await enqueueStorageDeletion(asset.storage_path, workspaceId, "persona-reference-deleted");
     await enqueueStorageDeletion(asset.thumbnail_storage_path, workspaceId, "persona-thumbnail-deleted");

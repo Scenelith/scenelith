@@ -83,7 +83,7 @@ Status values:
 | Add generated output to identity | `create_identity_from_assets` | implemented | Source asset and variant integration test |
 | Add Library images to an existing identity | `add_identity_references` | implemented | Copy semantics, duplicate guard and 100-image limit |
 | Reorder Character/Before/After references | `reorder_identity_references` | implemented | Complete-set concurrency validation |
-| Remove identity reference | `remove_identity_reference` | implemented | Storage deletion queue and at-least-one-reference guard |
+| Remove identity reference | `remove_identity_reference` | implemented | Workspace-wide input detachment (including live canvases, clips and edit references), storage deletion queue and at-least-one-reference guard |
 
 ## Intelligence and generation
 
