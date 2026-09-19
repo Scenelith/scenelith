@@ -44,6 +44,7 @@ export interface UsageAuthority {
   releaseGeneration(generationId: string, reason: string): Promise<boolean>;
   reserveAutomation(input: AutomationUsageReservation): Promise<boolean>;
   settleAutomation(input: AutomationUsageSettlement): Promise<{ chargedCredits: number; capped: boolean; settled: boolean }>;
+  checkpointAutomation?(reservationId: string, metadata: Record<string, unknown>): Promise<void>;
   releaseAutomation(reservationId: string, reason: string, metadata?: Record<string, unknown>): Promise<boolean>;
 }
 

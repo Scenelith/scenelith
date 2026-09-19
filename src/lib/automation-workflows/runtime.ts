@@ -27,6 +27,7 @@ export type AutomationExecutionContext = {
     release: (reservationId: string | null) => Promise<void>;
   };
   usage?: {
+    nodeRunId?: (nodeId: string, attempt: number) => string | undefined;
     reserveGeneratedAssets: (count: number, usageKey: string) => Promise<void>;
   };
   subworkflow?: {
@@ -526,7 +527,7 @@ export async function executeAutomationGraph(input: {
           const failure = executionContext.signal?.aborted ? executionAbortError(executionContext) : error;
           latestError = failure;
           await input.observer?.nodeFailed?.(node, failure, observerAttempt);
-          if (executionContext.signal?.aborted) throw failure;
+          if (executionContext.signal?.aborted || (failure as { code?: string })?.code === "PROVIDER_USAGE_PENDING") throw failure;
           if ((failure as { automationRetryable?: unknown })?.automationRetryable === false) break;
           if (attempt < maxAttempts) await abortableDelay(Math.min(8_000, 800 * 2 ** (attempt - 1)), executionContext.signal);
         }

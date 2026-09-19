@@ -4,6 +4,15 @@ import { AlertTriangle, Check, ChevronDown, Clock3, GitBranch, RotateCcw, X } fr
 import { useCallback, useEffect, useMemo, useState } from "react";
 import type { AutomationCapabilities } from "@/editions/contracts/access";
 
+type ProviderUsage = {
+  status: "confirmed" | "pending";
+  requestCount: number;
+  promptTokens: number;
+  completionTokens: number;
+  totalTokens: number;
+  entries: Array<{ model: string; requestId: string; promptTokens: number; completionTokens: number; reasoningTokens?: number; cachedTokens?: number }>;
+};
+
 type RunSummary = {
   id: string;
   workflowVersionId: string;
@@ -33,6 +42,7 @@ type RunSummary = {
     status: string;
     error: string | null;
     chargedCredits: number;
+    providerUsage?: ProviderUsage | null;
     outputPorts: string[];
     reusedFromNodeRunId: string | null;
     startedAt: string | null;
@@ -43,6 +53,7 @@ type RunSummary = {
 type WorkflowNodeOption = { id: string; name: string };
 
 type NodeAttempt = {
+  providerUsage?: ProviderUsage | null;
   id: string;
   attempt: number;
   status: string;
@@ -244,7 +255,7 @@ export function AutomationWorkflowOperations({ projectId, workflowId, capabiliti
                     <span><StatusIcon status={nodeRun.status} size={13} /></span>
                     <em>{String(index + 1).padStart(2, "0")}</em>
                     <div><b>{stepName}</b><small>{statusLabel(nodeRun.status)}{nodeRun.attempt > 1 ? ` · attempt ${nodeRun.attempt}` : ""}{nodeRun.reusedFromNodeRunId ? " · reused previous output" : ""}</small>{meaningfulPorts.length > 0 && <p>Route: {meaningfulPorts.map(readablePort).join(" · ")}</p>}{skipped && <p className="automation-run-step-reason">Not used on this route</p>}{nodeRun.status === "failed" && nodeRun.error && <p className="is-error">{nodeRun.error}</p>}</div>
-                    <aside>{nodeRun.chargedCredits > 0 && <small>{nodeRun.chargedCredits} units</small>}<small>{duration(nodeRun.startedAt, nodeRun.completedAt)}</small><ChevronDown size={13} /></aside>
+                    <aside>{nodeRun.providerUsage && <small>{nodeRun.providerUsage.status === "pending" ? "Usage pending" : `${nodeRun.providerUsage.totalTokens.toLocaleString()} tokens`}</small>}{nodeRun.chargedCredits > 0 && <small>{nodeRun.chargedCredits} units</small>}<small>{duration(nodeRun.startedAt, nodeRun.completedAt)}</small><ChevronDown size={13} /></aside>
                   </button>
                   {expanded && <div className="automation-run-step-detail" id={`run-step-${nodeRun.id}`}>
                     {details?.loading ? <p>Loading step details…</p> : details?.error ? <p className="is-error">{details.error}</p> : <>
@@ -252,6 +263,15 @@ export function AutomationWorkflowOperations({ projectId, workflowId, capabiliti
                       {nodeRun.status === "failed" && <p className="is-error">{attempt?.error || nodeRun.error || "This step failed before it produced an output."}</p>}
                       {attempt?.errorCode && nodeRun.status === "failed" && <small>{attempt.errorCode}</small>}
                       {canRetry && <button type="button" className="automation-run-retry" disabled={Boolean(busyId)} onClick={() => void retryRun(selectedRun.id, nodeRun.nodeId)}><RotateCcw size={12} /> {selectedRun.status === "cancelled" ? "Resume from this step" : "Retry from this step"}</button>}
+                      {(attempt?.providerUsage || nodeRun.providerUsage) && <div className="automation-run-note"><div>
+                        <b>AI usage · {nodeRun.chargedCredits} units</b>
+                        {(attempt?.providerUsage || nodeRun.providerUsage)?.status === "pending" && <p>Provider cost is not confirmed yet. Reserved usage is held for reconciliation.</p>}
+                        {(attempt?.providerUsage || nodeRun.providerUsage)?.entries.map((entry, index) => <p key={`${entry.requestId}:${index}`}>
+                          {entry.model} · {entry.promptTokens.toLocaleString()} input / {entry.completionTokens.toLocaleString()} output tokens
+                          {entry.reasoningTokens ? ` · ${entry.reasoningTokens.toLocaleString()} reasoning` : ""}
+                          {entry.cachedTokens ? ` · ${entry.cachedTokens.toLocaleString()} cached` : ""}
+                        </p>)}
+                      </div></div>}
                       {attempt && !skipped && <div className="automation-run-step-payloads">
                         <details><summary>Input</summary><pre>{JSON.stringify(attempt.input ?? {}, null, 2)}</pre></details>
                         <details><summary>Output</summary><pre>{JSON.stringify(attempt.output ?? null, null, 2)}</pre></details>

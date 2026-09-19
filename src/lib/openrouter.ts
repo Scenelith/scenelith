@@ -19,16 +19,25 @@ export type OpenRouterUsageEntry = {
   promptTokens: number;
   completionTokens: number;
   totalTokens: number;
+  reasoningTokens?: number;
+  cachedTokens?: number;
+  costStatus?: "confirmed" | "pending";
 };
 
-export type OpenRouterUsageTracker = { entries: OpenRouterUsageEntry[] };
+export type OpenRouterUsageTracker = {
+  entries: OpenRouterUsageEntry[];
+  pendingRequests: number;
+  checkpoint?: () => Promise<void>;
+  checkpointTail?: Promise<void>;
+};
 type OpenRouterUsageStore = { tracker: OpenRouterUsageTracker; stage: string };
 const openRouterUsageStorage = new AsyncLocalStorage<OpenRouterUsageStore>();
 const openRouterModelStorage = new AsyncLocalStorage<string>();
+const openRouterOutputLimitStorage = new AsyncLocalStorage<number>();
 const openRouterSignalStorage = new AsyncLocalStorage<AbortSignal>();
 
 export function createOpenRouterUsageTracker(): OpenRouterUsageTracker {
-  return { entries: [] };
+  return { entries: [], pendingRequests: 0 };
 }
 
 export function withOpenRouterUsage<T>(tracker: OpenRouterUsageTracker, callback: () => Promise<T>) {
@@ -42,6 +51,44 @@ export function withOpenRouterUsageStage<T>(stage: string, callback: () => Promi
 
 export function withOpenRouterModel<T>(modelId: string | undefined, callback: () => Promise<T>) {
   return openRouterModelStorage.run(getAssistantModel(modelId).id, callback);
+}
+
+export function withOpenRouterOutputLimit<T>(limit: number, callback: () => Promise<T>) {
+  return openRouterOutputLimitStorage.run(limit, callback);
+}
+
+function boundedRequestBody(body: Record<string, unknown>, requestModel: string, temperature: number) {
+  const limit = openRouterOutputLimitStorage.getStore();
+  const requested = Number(body.max_tokens ?? limit);
+  const selected = getAssistantModel(requestModel);
+  const provider = body.provider && typeof body.provider === "object" ? body.provider as Record<string, unknown> : {};
+  const price = provider.max_price && typeof provider.max_price === "object" ? provider.max_price as Record<string, unknown> : {};
+  const ceiling = (value: unknown, maximum: number) => typeof value === "number" && Number.isFinite(value) && value >= 0 ? Math.min(value, maximum) : maximum;
+  return { temperature, ...body, model: requestModel, stream: false,
+    ...(limit ? {
+      max_tokens: Number.isFinite(requested) && requested > 0 ? Math.min(requested, limit) : limit,
+      provider: { ...provider, max_price: { ...price,
+        prompt: ceiling(price.prompt, selected.promptUsdPerToken * 1_000_000),
+        completion: ceiling(price.completion, selected.completionUsdPerToken * 1_000_000),
+      } },
+    } : {}),
+  };
+}
+
+async function checkpointUsage(tracker: OpenRouterUsageTracker) {
+  const previous = tracker.checkpointTail || Promise.resolve();
+  const next = previous.then(() => tracker.checkpoint?.());
+  tracker.checkpointTail = next;
+  await next;
+}
+
+async function beginOpenRouterRequest() {
+  openRouterSignalStorage.getStore()?.throwIfAborted();
+  const tracker = openRouterUsageStorage.getStore()?.tracker;
+  if (tracker) {
+    tracker.pendingRequests += 1;
+    await checkpointUsage(tracker);
+  }
 }
 
 export function withOpenRouterSignal<T>(signal: AbortSignal | undefined, callback: () => Promise<T>) {
@@ -69,22 +116,63 @@ export function summarizeOpenRouterUsage(tracker: OpenRouterUsageTracker) {
   }), { requestCount: 0, costUsd: 0, promptTokens: 0, completionTokens: 0, totalTokens: 0 });
 }
 
-function recordOpenRouterUsage(payload: {
+type ProviderUsagePayload = {
   id?: unknown;
   model?: unknown;
-  usage?: { cost?: unknown; prompt_tokens?: unknown; completion_tokens?: unknown; total_tokens?: unknown };
-}) {
+  usage?: { cost?: unknown; prompt_tokens?: unknown; completion_tokens?: unknown; total_tokens?: unknown;
+    completion_tokens_details?: { reasoning_tokens?: unknown }; prompt_tokens_details?: { cached_tokens?: unknown } };
+};
+
+function nonnegative(value: unknown): number | null {
+  if (value === null || value === undefined || value === "") return null;
+  const result = Number(value);
+  return Number.isFinite(result) && result >= 0 ? result : null;
+}
+
+async function recordOpenRouterUsage(payload: ProviderUsagePayload, requestModel: string, status: number) {
+  const ok = status < 400;
+  const uncertain = status >= 500 || status === 408;
   const store = openRouterUsageStorage.getStore();
-  if (!store || !payload.usage) return;
-  store.tracker.entries.push({
-    requestId: String(payload.id || ""),
-    model: String(payload.model || model),
-    stage: store.stage,
-    costUsd: Math.max(0, Number(payload.usage.cost) || 0),
-    promptTokens: Math.max(0, Number(payload.usage.prompt_tokens) || 0),
-    completionTokens: Math.max(0, Number(payload.usage.completion_tokens) || 0),
-    totalTokens: Math.max(0, Number(payload.usage.total_tokens) || 0),
+  if (!store) return;
+  const requestId = typeof payload.id === "string" ? payload.id : "";
+  let cost = nonnegative(payload.usage?.cost);
+  let promptTokens = nonnegative(payload.usage?.prompt_tokens) ?? 0;
+  let completionTokens = nonnegative(payload.usage?.completion_tokens) ?? 0;
+  // A missing receipt is not a free request. Recover by provider ID when possible.
+  if (cost === null && requestId) {
+    for (let attempt = 0; attempt < 3; attempt += 1) {
+      try {
+        const response = await fetch(`https://openrouter.ai/api/v1/generation?id=${encodeURIComponent(requestId)}`, {
+          headers: { authorization: `Bearer ${apiKey()}` }, signal: AbortSignal.timeout(10_000),
+        });
+        const receipt = await response.json() as { data?: { total_cost?: unknown; native_tokens_prompt?: unknown; native_tokens_completion?: unknown } };
+        if (response.ok) {
+          cost = nonnegative(receipt.data?.total_cost);
+          promptTokens = nonnegative(receipt.data?.native_tokens_prompt) ?? promptTokens;
+          completionTokens = nonnegative(receipt.data?.native_tokens_completion) ?? completionTokens;
+        }
+        if (cost !== null) break;
+      } catch { /* Keep the request pending if its receipt is unavailable. */ }
+      if (attempt < 2) await new Promise((resolve) => setTimeout(resolve, 250 * (attempt + 1)));
+    }
+  }
+  store.tracker.pendingRequests = Math.max(0, store.tracker.pendingRequests - 1);
+  if (ok || uncertain || payload.usage || requestId) store.tracker.entries.push({
+    requestId, model: String(payload.model || requestModel), stage: store.stage,
+    costUsd: cost ?? 0, costStatus: cost === null ? "pending" : "confirmed",
+    promptTokens, completionTokens,
+    totalTokens: nonnegative(payload.usage?.total_tokens) ?? promptTokens + completionTokens,
+    reasoningTokens: nonnegative(payload.usage?.completion_tokens_details?.reasoning_tokens) ?? 0,
+    cachedTokens: nonnegative(payload.usage?.prompt_tokens_details?.cached_tokens) ?? 0,
   });
+  await checkpointUsage(store.tracker);
+  if ((ok || uncertain || requestId || payload.usage) && cost === null) {
+    throw Object.assign(new Error("Provider usage is pending reconciliation; this request will not be retried automatically"), { code: "PROVIDER_USAGE_PENDING" });
+  }
+}
+
+export function openRouterUsagePending(tracker: OpenRouterUsageTracker) {
+  return tracker.pendingRequests > 0 || tracker.entries.some((entry) => entry.costStatus === "pending");
 }
 
 function apiKey() {
@@ -111,15 +199,17 @@ export function parseOpenRouterJson(text: string) {
 
 export async function requestOpenRouter(body: Record<string, unknown>) {
   const requestModel = selectedOpenRouterModel(body);
+  const key = apiKey();
+  await beginOpenRouterRequest();
   const response = await fetch(endpoint, {
     method: "POST",
     headers: {
-      authorization: `Bearer ${apiKey()}`,
+      authorization: `Bearer ${key}`,
       "content-type": "application/json",
       "HTTP-Referer": process.env.PUBLIC_URL || "https://scenelith.com",
       "X-Title": "Frameflow",
     },
-    body: JSON.stringify({ temperature: 0.2, ...body, model: requestModel }),
+    body: JSON.stringify(boundedRequestBody(body, requestModel, 0.2)),
     signal: openRouterRequestSignal(),
   });
   const payload = (await response.json().catch(() => ({}))) as {
@@ -129,7 +219,7 @@ export async function requestOpenRouter(body: Record<string, unknown>) {
     error?: { message?: string; metadata?: { raw?: unknown; provider_name?: string } };
     choices?: Array<{ message?: { content?: string | Array<{ type: string; text?: string }> } }>;
   };
-  recordOpenRouterUsage(payload);
+  await recordOpenRouterUsage(payload, requestModel, response.status);
   if (!response.ok) {
     const metadata = payload.error?.metadata;
     const raw = typeof metadata?.raw === "string" ? metadata.raw : metadata?.raw ? JSON.stringify(metadata.raw) : "";
@@ -143,15 +233,17 @@ export async function requestOpenRouter(body: Record<string, unknown>) {
 
 export async function requestOpenRouterText(body: Record<string, unknown>) {
   const requestModel = selectedOpenRouterModel(body);
+  const key = apiKey();
+  await beginOpenRouterRequest();
   const response = await fetch(endpoint, {
     method: "POST",
     headers: {
-      authorization: `Bearer ${apiKey()}`,
+      authorization: `Bearer ${key}`,
       "content-type": "application/json",
       "HTTP-Referer": process.env.PUBLIC_URL || "https://scenelith.com",
       "X-Title": "Frameflow",
     },
-    body: JSON.stringify({ temperature: 0.35, ...body, model: requestModel }),
+    body: JSON.stringify(boundedRequestBody(body, requestModel, 0.35)),
     signal: openRouterRequestSignal(),
   });
   const payload = (await response.json().catch(() => ({}))) as {
@@ -161,7 +253,7 @@ export async function requestOpenRouterText(body: Record<string, unknown>) {
     error?: { message?: string };
     choices?: Array<{ message?: { content?: string | Array<{ type: string; text?: string }> } }>;
   };
-  recordOpenRouterUsage(payload);
+  await recordOpenRouterUsage(payload, requestModel, response.status);
   if (!response.ok) throw new Error(payload.error?.message || `OpenRouter returned ${response.status}`);
   const content = payload.choices?.[0]?.message?.content;
   return (typeof content === "string" ? content : content?.map((item) => item.text || "").join("") || "").trim();
