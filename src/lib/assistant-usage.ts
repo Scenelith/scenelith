@@ -78,7 +78,7 @@ export async function runAssistantUsage<T>(input: {
     try { return await db.transaction(async () => {
       const settlement = metered ? await authority.settleAutomation({
         reservationId, actualCredits: providerCostToUsageUnits(usage.costUsd), actualCostUsd: usage.costUsd,
-        metadata: { ...metadata, ...usage, usageEntries: tracker.entries, providerRequestPending: false },
+        metadata: { ...metadata, ...summarizeOpenRouterUsage(tracker), usageEntries: tracker.entries, providerRequestPending: false },
       }) : { chargedCredits: 0 };
       const settledUsage = usageSnapshot(settlement.chargedCredits, true);
       await input.budget?.settle(budgetReservationId, settlement.chargedCredits);
