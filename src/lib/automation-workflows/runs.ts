@@ -469,8 +469,6 @@ export async function retryAutomationWorkflowRun(input: { userId: string; runId:
   if (!await canPerformAutomationAction(input.userId, source.workspace_id, "automation.run")) return { status: 403, error: "This workspace role cannot run automations" } as const;
   if (source.parent_run_id) return { status: 409, error: "Retry the parent automation run; child runs are recovered as part of their execution tree" } as const;
   if (!["failed", "cancelled", "completed_with_warnings"].includes(source.status)) return { status: 409, error: "Only failed, cancelled or warning runs can be resumed" } as const;
-  const uncertain = await db.prepare("SELECT id FROM automation_node_runs WHERE run_id = ? AND provider_usage_json->>'status' = 'pending' LIMIT 1").get(source.id);
-  if (uncertain) return { status: 409, error: "Provider usage must be reconciled before retrying this run" } as const;
   const version = await workflowVersionById(source.workflow_version_id);
   if (!version) return { status: 409, error: "The exact workflow version for this run is unavailable" } as const;
   const latestRows = await db.prepare(`SELECT DISTINCT ON (node_id) * FROM automation_node_runs

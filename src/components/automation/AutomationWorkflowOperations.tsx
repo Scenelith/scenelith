@@ -265,7 +265,7 @@ export function AutomationWorkflowOperations({ projectId, workflowId, capabiliti
                       {canRetry && <button type="button" className="automation-run-retry" disabled={Boolean(busyId)} onClick={() => void retryRun(selectedRun.id, nodeRun.nodeId)}><RotateCcw size={12} /> {selectedRun.status === "cancelled" ? "Resume from this step" : "Retry from this step"}</button>}
                       {(attempt?.providerUsage || nodeRun.providerUsage) && <div className="automation-run-note"><div>
                         <b>AI usage · {nodeRun.chargedCredits} units</b>
-                        {(attempt?.providerUsage || nodeRun.providerUsage)?.status === "pending" && <p>Provider cost is not confirmed yet. Reserved usage is held for reconciliation.</p>}
+                        {(attempt?.providerUsage || nodeRun.providerUsage)?.status === "pending" && <p>Provider usage is not confirmed yet. This attempt may still incur a charge.</p>}
                         {(attempt?.providerUsage || nodeRun.providerUsage)?.entries.map((entry, index) => <p key={`${entry.requestId}:${index}`}>
                           {entry.model} · {entry.promptTokens.toLocaleString()} input / {entry.completionTokens.toLocaleString()} output tokens
                           {entry.reasoningTokens ? ` · ${entry.reasoningTokens.toLocaleString()} reasoning` : ""}
