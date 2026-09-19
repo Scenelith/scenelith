@@ -961,7 +961,8 @@ async function aiTask(execution: AutomationNodeExecution) {
     workspaceId: execution.context.workspaceId,
     userId: execution.context.userId,
     kind: `automation:${execution.node.type}:v2`,
-    inputCharacters: systemPrompt.length + userPrompt.length,
+    nodeRunId: execution.context.usage?.nodeRunId?.(execution.node.id, execution.durableAttempt ?? execution.attempt),
+    inputCharacters: systemPrompt.length + userPrompt.length + JSON.stringify(responseSchema).length,
     imageCount: media.length,
     signal: execution.context.signal,
     budget: execution.context.budget ? {
@@ -987,10 +988,10 @@ async function aiTask(execution: AutomationNodeExecution) {
     const errors = validateAutomationStructuredValue(metered.result, responseSchema);
     if (errors.length) throw Object.assign(
       new Error(`AI response did not match this node's fields: ${errors.slice(0, 4).join("; ")}`),
-      { automationUsage: { chargedCredits: metered.chargedCredits, costUsd: metered.costUsd } },
+      { automationUsage: metered.usage },
     );
   }
-  return { result: metered.result, __usage: { chargedCredits: metered.chargedCredits, costUsd: metered.costUsd } };
+  return { result: metered.result, __usage: metered.usage };
 }
 
 async function transform(execution: AutomationNodeExecution) {

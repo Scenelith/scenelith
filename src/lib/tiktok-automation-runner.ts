@@ -8,7 +8,7 @@ import { db, readProjectGraphSnapshot, usageWorkspaceForUserProject, userCanAcce
 import { generationCreditCost } from "./generation-pricing";
 import { settleWithConcurrency } from "./generation-queue";
 import { getKieModel } from "./kie";
-import { createOpenRouterUsageTracker, summarizeOpenRouterUsage, withOpenRouterModel, withOpenRouterUsage, withOpenRouterUsageStage } from "./openrouter";
+import { createOpenRouterUsageTracker, summarizeOpenRouterUsage, withOpenRouterModel, withOpenRouterUsage, withOpenRouterUsageStage, openRouterUsagePending } from "./openrouter";
 import { referenceMentionToken } from "./reference-mentions";
 import { persistedProjectIdSchema } from "./project-id";
 import { matchesTikTokSlideshowSource } from "./tiktok-slideshow-sources";
@@ -180,7 +180,7 @@ export async function executeTikTokAutomationPlan(options: {
     metadata: {
       projectId: input.projectId, sourceNodeId: input.sourceNodeId, personaId: persona?.id || null,
       mode: input.preferences.mode, modelId: model.id, planningModelId: planningModel.id,
-      slideCount: input.sourceAssetIds.length, estimatedGenerationCredits,
+      slideCount: input.sourceAssetIds.length, estimatedGenerationCredits, accountingVersion: 1, providerRequestPending: false,
     },
   });
   if (!reserved) {
@@ -192,6 +192,12 @@ export async function executeTikTokAutomationPlan(options: {
   }
 
   const usageTracker = createOpenRouterUsageTracker();
+  usageTracker.checkpoint = async () => {
+    if (planningReserveCredits > 0) await authority.checkpointAutomation?.(planningReservationId, {
+      accountingVersion: 1, providerRequestPending: openRouterUsagePending(usageTracker), pendingRequestCount: usageTracker.pendingRequests,
+      providerUsage: summarizeOpenRouterUsage(usageTracker), usageEntries: usageTracker.entries,
+    });
+  };
   try {
     return await withOpenRouterUsage(usageTracker, () => withOpenRouterModel(planningModel.id, async () => {
       const planningInputHash = createHash("sha256").update(JSON.stringify({
@@ -435,9 +441,9 @@ export async function executeTikTokAutomationPlan(options: {
   } catch (error) {
     const usage = summarizeOpenRouterUsage(usageTracker);
     if (planningReserveCredits > 0) {
-      await authority.releaseAutomation(planningReservationId, "planning_failed", {
-        planningStage, modelId: planningModel.id, incurredCostUsd: usage.costUsd,
-        requestCount: usage.requestCount, totalTokens: usage.totalTokens,
+      if (!openRouterUsagePending(usageTracker)) await authority.settleAutomation({
+        reservationId: planningReservationId, actualCredits: providerCostToUsageUnits(usage.costUsd), actualCostUsd: usage.costUsd,
+        metadata: { planningStage, modelId: planningModel.id, ...usage, usageEntries: usageTracker.entries, failed: true },
       });
     }
     console.error("TikTok automation planning failed", { projectId: input.projectId, sourceNodeId: input.sourceNodeId, planningStage, error });

@@ -915,3 +915,69 @@ test("retention removes expired run trees while current automation history remai
     else process.env.AUTOMATION_SUCCESSFUL_RUN_RETENTION_DAYS = previous;
   }
 });
+
+test("AI receipts survive failed runs, previews and paid retries in run history", async () => {
+  const { usageAuthority } = await import("../src/modules/usage");
+  const authority = await usageAuthority();
+  const originalAuthority = { reserveAutomation: authority.reserveAutomation, settleAutomation: authority.settleAutomation, checkpointAutomation: authority.checkpointAutomation };
+  const originalFetch = globalThis.fetch;
+  const originalKey = process.env.OPENROUTER_API_KEY;
+  process.env.OPENROUTER_API_KEY = "test-step-usage";
+  authority.reserveAutomation = async () => true;
+  authority.settleAutomation = async (input) => ({ chargedCredits: input.actualCredits, capped: false, settled: true });
+  authority.checkpointAutomation = async () => {};
+  let requests = 0;
+  try {
+    for (const scenario of ["downstream-failure", "preview-failure", "retry", "pending"] as const) {
+      const owner = await seedOwner();
+      const workflow = await repository.createAutomationWorkflow({ userId: owner.userId, projectId: owner.projectId, name: `Usage ${scenario}` });
+      const graph = finishGraph(scenario === "downstream-failure" ? "failed" : "completed");
+      graph.settings.maxCredits = 100;
+      graph.nodes.push({ id: "ai", type: "ai.structured-task", version: 2, name: "AI", description: "", position: { x: 100, y: 0 }, groupId: null,
+        config: { modelId: "google/gemini-3.7-flash", userPrompt: "Return a result", outputMode: "structured", responseSchema: { type: "object", properties: { result: { type: "string" } }, required: ["result"], additionalProperties: false }, runWhen: "always", systemPrompt: "", creativity: "consistent", maxAttempts: scenario === "retry" || scenario === "pending" ? 2 : 1, fallbackModelId: "", failureMode: "stop" }, bindings: {}, disabled: false });
+      graph.edges = [
+        { id: "run-ai", source: "manual", sourcePort: "run", target: "ai", targetPort: "primary" },
+        { id: "ai-finish", source: "ai", sourcePort: "result", target: "finish", targetPort: "data" },
+      ];
+      await repository.saveAutomationWorkflowDraft({ userId: owner.userId, workflowId: workflow!.workflow.id, baseDraftVersionId: workflow!.draft!.id, graph });
+      requests = 0;
+      globalThis.fetch = async () => {
+        requests++;
+        if (scenario === "pending") throw new Error("connection reset after dispatch");
+        return new Response(JSON.stringify({ id: `test-${scenario}-${requests}`, model: "google/gemini-3.7-flash",
+          usage: { cost: 0.002, prompt_tokens: 100, completion_tokens: 50, total_tokens: 150 },
+          choices: [{ message: { content: scenario === "preview-failure" || (scenario === "retry" && requests === 1) ? "invalid JSON" : '{"result":"ok"}' } }],
+        }));
+      };
+      let runId: string;
+      if (scenario === "preview-failure") {
+        const fixture = await fixtures.createAutomationWorkflowFixture({ userId: owner.userId, workflowId: workflow!.workflow.id,
+          value: { name: "AI input", runtimeInputs: {}, nodeInputs: { ai: { primary: { test: true } } } } });
+        const queued = await fixtures.enqueueAutomationNodePreview({ userId: owner.userId, workflowId: workflow!.workflow.id, fixtureId: fixture!.id, nodeId: "ai" });
+        assert.ok("runId" in queued, JSON.stringify(queued)); runId = "runId" in queued ? queued.runId : "";
+      } else {
+        const queued = await runs.enqueueAutomationWorkflowRun({ userId: owner.userId, projectId: owner.projectId, workflowId: workflow!.workflow.id, runtimeInputs: {}, mode: "test" });
+        assert.ok("runId" in queued, JSON.stringify(queued)); runId = "runId" in queued ? queued.runId : "";
+      }
+      await runs.drainAutomationWorkflowRuns();
+      const run = await runs.getAutomationWorkflowRun(owner.userId, runId);
+      assert.equal(run?.status, scenario === "retry" ? "completed" : "failed", scenario);
+      const steps = run!.nodeRuns.filter((node) => node.nodeId === "ai");
+      assert.equal(steps.length, scenario === "retry" ? 2 : 1, scenario);
+      assert.equal(requests, scenario === "retry" ? 2 : 1, scenario);
+      for (const step of steps) {
+        const usage = step.providerUsage as { status: string; totalTokens: number; costUsd: number };
+        assert.equal(usage.status, scenario === "pending" ? "pending" : "confirmed");
+        assert.equal(usage.totalTokens, scenario === "pending" ? 0 : 150);
+        assert.equal(usage.costUsd, scenario === "pending" ? 0 : 0.002);
+      }
+      const detail = await runs.getAutomationWorkflowNodeRunDetails(owner.userId, runId, "ai");
+      assert.ok(detail?.every((attempt) => attempt.providerUsage));
+    }
+  } finally {
+    Object.assign(authority, originalAuthority);
+    globalThis.fetch = originalFetch;
+    if (originalKey === undefined) delete process.env.OPENROUTER_API_KEY; else process.env.OPENROUTER_API_KEY = originalKey;
+    stopScheduledWorkflowDrain();
+  }
+});

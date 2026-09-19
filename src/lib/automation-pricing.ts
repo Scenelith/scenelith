@@ -30,7 +30,7 @@ export function assistantRequestReserveCredits(input: {
 }) {
   const selected = getAssistantModel(input.modelId);
   if (!editionEconomics.assistantUsagePolicy(selected.id).metered) return 0;
-  const estimatedInputTokens = Math.ceil(Math.max(0, input.inputCharacters) / 3.5) + Math.max(0, input.imageCount) * 2_500;
+  const estimatedInputTokens = Math.ceil(Math.max(0, input.inputCharacters)) + Math.max(0, input.imageCount) * 4_096;
   const outputTokens = Math.max(256, input.maxOutputTokens || 4_096);
   const estimatedCost = estimatedInputTokens * selected.promptUsdPerToken + outputTokens * selected.completionUsdPerToken;
   return Math.max(1, providerCostToUsageUnits(estimatedCost * 1.2));

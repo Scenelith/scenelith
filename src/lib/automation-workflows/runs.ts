@@ -130,6 +130,7 @@ function publicRun(
     nodeRuns: nodeRuns.map((item) => ({
       id: String(item.id), nodeId: String(item.node_id), nodeType: String(item.node_type), attempt: Number(item.attempt), status: String(item.status),
       error: item.error ? String(item.error) : null, errorCode: item.error_code ? String(item.error_code) : null, chargedCredits: Number(item.charged_credits || 0), startedAt: item.started_at ? String(item.started_at) : null, completedAt: item.completed_at ? String(item.completed_at) : null,
+      providerUsage: item.provider_usage_json ? jsonValue(item.provider_usage_json) : null,
       outputPorts: jsonValue<string[]>(item.output_ports_json || []), hasCapturedInput: Boolean(item.input_json), reusedFromNodeRunId: item.reused_from_node_run_id ? String(item.reused_from_node_run_id) : null,
       input: row.run_kind === "node-preview" ? jsonValue(item.input_json || {}) : undefined,
       output: row.run_kind === "node-preview" && item.output_json ? jsonValue(item.output_json) : undefined,
@@ -287,7 +288,7 @@ export async function enqueueAutomationWorkflowRun(input: {
 export async function getAutomationWorkflowRun(userId: string, runId: string) {
   const row = await db.prepare("SELECT * FROM automation_runs WHERE id = ? AND user_id = ?").get(runId, userId) as RunRow | undefined;
   if (!row || !await userCanAccessProject(userId, row.project_id)) return null;
-  const nodeRuns = await db.prepare("SELECT id, node_id, node_type, attempt, status, input_json, output_json, error, error_code, charged_credits, output_ports_json, reused_from_node_run_id, started_at, completed_at FROM automation_node_runs WHERE run_id = ? ORDER BY created_at, attempt")
+  const nodeRuns = await db.prepare("SELECT id, node_id, node_type, attempt, status, input_json, output_json, error, error_code, provider_usage_json, charged_credits, output_ports_json, reused_from_node_run_id, started_at, completed_at FROM automation_node_runs WHERE run_id = ? ORDER BY created_at, attempt")
     .all(runId) as Array<Record<string, unknown>>;
   const events = await db.prepare("SELECT id, event_type, node_run_id, payload_json, created_at FROM automation_run_events WHERE run_id = ? ORDER BY id").all(runId) as Array<Record<string, unknown>>;
   const queuePosition = row.status === "queued" ? Number((await db.prepare(`SELECT COUNT(*) AS count FROM automation_runs
@@ -307,7 +308,7 @@ export async function getAutomationWorkflowNodeRunDetails(userId: string, runId:
   const run = await db.prepare("SELECT project_id FROM automation_runs WHERE id = ? AND user_id = ?").get(runId, userId) as { project_id: string } | undefined;
   if (!run || !await userCanAccessProject(userId, run.project_id)) return null;
   const rows = await db.prepare(`SELECT id, node_id, node_type, attempt, status, input_json, output_json, error, error_code,
-    charged_credits, output_ports_json, reused_from_node_run_id, started_at, completed_at
+    provider_usage_json, charged_credits, output_ports_json, reused_from_node_run_id, started_at, completed_at
     FROM automation_node_runs WHERE run_id = ? AND node_id = ? ORDER BY attempt DESC, created_at DESC`).all(runId, nodeId) as Array<Record<string, unknown>>;
   return rows.map((item) => ({
     id: String(item.id),
@@ -319,6 +320,7 @@ export async function getAutomationWorkflowNodeRunDetails(userId: string, runId:
     output: item.output_json ? jsonValue(item.output_json) : null,
     error: item.error ? String(item.error) : null,
     errorCode: item.error_code ? String(item.error_code) : null,
+    providerUsage: item.provider_usage_json ? jsonValue(item.provider_usage_json) : null,
     chargedCredits: Number(item.charged_credits || 0),
     outputPorts: jsonValue<string[]>(item.output_ports_json || []),
     reusedFromNodeRunId: item.reused_from_node_run_id ? String(item.reused_from_node_run_id) : null,
@@ -409,13 +411,13 @@ async function settleAutomationRunBudget(reservationId: string | null, actualCre
   await db.transaction(async () => {
     const reservation = await db.prepare("SELECT run_id, requested_credits, status FROM automation_run_budget_reservations WHERE id = ? FOR UPDATE")
       .get(reservationId) as { run_id: string; requested_credits: number; status: string } | undefined;
-    if (!reservation || reservation.status !== "reserved") return;
+    if (!reservation || reservation.status === "settled") return;
     const actual = Math.max(0, Math.ceil(Number(actualCredits) || 0));
     const now = new Date().toISOString();
     await db.prepare("UPDATE automation_run_budget_reservations SET status = 'settled', actual_credits = ?, updated_at = ? WHERE id = ?")
       .run(actual, now, reservationId);
     await db.prepare(`UPDATE automation_runs SET reserved_credits = GREATEST(0, reserved_credits - ?), charged_credits = charged_credits + ?, updated_at = ? WHERE id = ?`)
-      .run(reservation.requested_credits, actual, now, reservation.run_id);
+      .run(reservation.status === "reserved" ? reservation.requested_credits : 0, actual, now, reservation.run_id);
   })();
 }
 
@@ -535,6 +537,13 @@ async function recoverStaleRuns() {
     await db.transaction(async () => {
       await db.prepare(`UPDATE automation_node_runs SET status = 'failed', error = 'Worker interrupted', error_code = 'WORKER_INTERRUPTED', completed_at = ?, updated_at = ?
         WHERE run_id = ? AND status = 'running'`).run(now, now, run.id);
+      const uncertain = await db.prepare("SELECT id FROM automation_node_runs WHERE run_id = ? AND provider_usage_json->>'status' = 'pending' LIMIT 1").get(run.id);
+      if (uncertain) {
+        await db.prepare(`UPDATE automation_runs SET status = 'failed', stage_label = 'Provider usage pending', progress = 100,
+          error = 'An interrupted AI request needs usage reconciliation before retrying.', error_code = 'PROVIDER_USAGE_PENDING', locked_at = NULL, worker_id = NULL, completed_at = ?, updated_at = ?
+          WHERE id = ? AND status = 'running' AND worker_id IS NOT DISTINCT FROM ?`).run(now, now, run.id, run.worker_id);
+        return;
+      }
       // A child is an inline part of its parent's node attempt. It must never
       // enter the global queue independently after a worker interruption.
       if (run.parent_run_id) {
@@ -856,6 +865,7 @@ async function processRun(run: RunRow) {
             release: releaseAutomationRunBudget,
           },
           usage: {
+            nodeRunId: () => previewNodeRunId,
             reserveGeneratedAssets: (count, usageKey) => reserveAutomationTreeUsage(run.id, "asset", count, usageKey),
           },
           subworkflow: {
@@ -889,8 +899,9 @@ async function processRun(run: RunRow) {
             const now = new Date().toISOString();
             const message = error instanceof Error ? error.message : String(error);
             const code = typeof (error as { code?: unknown } | null)?.code === "string" ? String((error as { code: string }).code) : "NODE_PREVIEW_FAILED";
-            await db.prepare("UPDATE automation_node_runs SET status = 'failed', error = ?, error_code = ?, completed_at = ?, updated_at = ? WHERE id = ?")
-              .run(message, code, now, now, previewNodeRunId);
+            const chargedCredits = Math.max(0, Number((error as { automationUsage?: { chargedCredits?: number } })?.automationUsage?.chargedCredits || 0));
+            await db.prepare("UPDATE automation_node_runs SET status = 'failed', error = ?, error_code = ?, charged_credits = GREATEST(charged_credits, ?), completed_at = ?, updated_at = ? WHERE id = ?")
+              .run(message, code, chargedCredits, now, now, previewNodeRunId);
             await appendEvent(run.id, "preview.node.failed", { nodeId: node.id, message }, previewNodeRunId);
           },
         },
@@ -938,6 +949,7 @@ async function processRun(run: RunRow) {
           release: releaseAutomationRunBudget,
         },
         usage: {
+          nodeRunId: (nodeId, attempt) => nodeRunIds.get(`${nodeId}:${attempt}`)?.id,
           reserveGeneratedAssets: (count, usageKey) => reserveAutomationTreeUsage(run.id, "asset", count, usageKey),
         },
         subworkflow: {
@@ -982,7 +994,7 @@ async function processRun(run: RunRow) {
           const message = error instanceof Error ? error.message : String(error);
           const code = typeof (error as { code?: unknown } | null)?.code === "string" ? String((error as { code: string }).code) : "NODE_FAILED";
           const chargedCredits = Math.max(0, Number((error as { automationUsage?: { chargedCredits?: unknown } } | null)?.automationUsage?.chargedCredits || 0));
-          await db.prepare("UPDATE automation_node_runs SET status = 'failed', error = ?, error_code = ?, charged_credits = ?, completed_at = ?, updated_at = ? WHERE id = ?")
+          await db.prepare("UPDATE automation_node_runs SET status = 'failed', error = ?, error_code = ?, charged_credits = GREATEST(charged_credits, ?), completed_at = ?, updated_at = ? WHERE id = ?")
             .run(message, code, chargedCredits, now, now, nodeRun.id);
           await appendEvent(run.id, "node.failed", { nodeId: node.id, attempt: nodeRun.attempt, message }, nodeRun.id);
         },
