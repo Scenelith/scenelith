@@ -33,6 +33,7 @@ export async function POST(request: Request) {
         generationId: generation.id,
         status,
         outputUrl: task.generated?.[0] || null,
+        lastFrameUrl: task.lastFrameUrl,
         error: providerError,
       });
     } catch (error) {

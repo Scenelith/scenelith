@@ -7,7 +7,9 @@ export async function GET() {
   const auth = await requireApiUser();
   if (auth.response) return auth.response;
   const rows = await listAccessibleProjectRows(auth.user.id);
-  return Response.json({ projects: rows.map(rowToProjectListItem) });
+  const studioRows = await db.prepare("SELECT id FROM projects WHERE purpose = 'studio'").all() as {id:string}[];
+  const studioIds = new Set(studioRows.map(row=>row.id));
+  return Response.json({ projects: rows.filter(row => !studioIds.has(String(row.id))).map(rowToProjectListItem) });
 }
 
 export async function POST(request: Request) {

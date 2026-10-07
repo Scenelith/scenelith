@@ -15,7 +15,7 @@ const ACCEPTED_EDIT_REFERENCE_TYPES = new Set(["image/jpeg", "image/jpg", "image
 const ACCEPTED_VIDEO_TYPES = new Set(["video/mp4", "video/webm", "video/quicktime", "video/x-m4v"]);
 const MAX_CANVAS_MEDIA_PER_UPLOAD = 12;
 const MAX_LIBRARY_MEDIA_PER_UPLOAD = 20;
-const MAX_IMAGE_BYTES = 25 * 1024 * 1024;
+const MAX_IMAGE_BYTES = 30 * 1024 * 1024;
 const MAX_VIDEO_BYTES = 250 * 1024 * 1024;
 const MAX_TOTAL_BYTES = 280 * 1024 * 1024;
 const LIBRARY_PAGE_SIZE = 72;
@@ -161,6 +161,7 @@ export async function POST(request: Request) {
 
   const form = await request.formData();
   const projectId = String(form.get("projectId") || "");
+  const generationReference = String(form.get("purpose") || "") === "generation-reference";
   const editReferenceUpload = String(form.get("purpose") || "") === "edit-reference";
   const libraryUpload = String(form.get("purpose") || "") === "library";
   const media = [...form.getAll("files"), ...form.getAll("images")]
@@ -179,7 +180,7 @@ export async function POST(request: Request) {
     return Response.json({ error: `Add up to ${maxMediaPerUpload} files at once` }, { status: 400 });
   }
   const uploads = media.map((file) => ({ file, mimeType: normalizedUploadMimeType(file) }));
-  const acceptsFile = (mimeType: string) => editReferenceUpload
+  const acceptsFile = (mimeType: string) => generationReference ? ["image/jpeg", "image/png", "image/webp", "image/bmp", "image/x-ms-bmp", "video/mp4", "video/quicktime", "audio/mpeg", "audio/wav", "audio/x-wav"].includes(mimeType) : editReferenceUpload
     ? ACCEPTED_EDIT_REFERENCE_TYPES.has(mimeType)
     : libraryUpload
       ? ACCEPTED_LIBRARY_IMAGE_TYPES.has(mimeType) || ACCEPTED_VIDEO_TYPES.has(mimeType)
@@ -187,6 +188,7 @@ export async function POST(request: Request) {
   if (uploads.some((upload) => !acceptsFile(upload.mimeType))) {
     return Response.json({ error: editReferenceUpload ? "Upload JPG or PNG images" : "Add JPG, PNG, MP4, MOV or WebM files" }, { status: 400 });
   }
+  if (uploads.some(({file,mimeType}) => mimeType.startsWith("audio/") && file.size > 15 * 1024 * 1024)) return Response.json({error:"Audio must be at most 15 MB"},{status:400});
   if (uploads.some(({ file, mimeType }) => mimeType.startsWith("image/") && file.size > MAX_IMAGE_BYTES)) {
     return Response.json({ error: "Each image must be smaller than 25 MB" }, { status: 400 });
   }
@@ -198,19 +200,19 @@ export async function POST(request: Request) {
   }
 
   const now = new Date().toISOString();
-  const assets: Array<{ id: string; url: string; filename: string; originalName: string; mediaType: "image" | "video"; mimeType: string; durationSeconds?: number; width?: number; height?: number; aspectRatio?: number }> = [];
+  const assets: Array<{ id: string; url: string; filename: string; originalName: string; mediaType: "image" | "video" | "audio"; mimeType: string; durationSeconds?: number; width?: number; height?: number; aspectRatio?: number }> = [];
 
   for (const [index, upload] of uploads.entries()) {
     const { file, mimeType } = upload;
     const id = crypto.randomUUID();
-    const mediaType = mimeType.startsWith("video/") ? "video" : "image";
+    const mediaType = mimeType.startsWith("video/") ? "video" : mimeType.startsWith("audio/") ? "audio" : "image";
     const extension = safeExtension(file.name, mimeType);
     const filename = `${editReferenceUpload ? "edit-reference" : libraryUpload ? `library-${mediaType}` : `canvas-${mediaType}`}-${Date.now()}-${String(index + 1).padStart(2, "0")}${extension}`;
     const bytes = await file.arrayBuffer();
     if (!mediaContentMatchesMime(new Uint8Array(bytes, 0, Math.min(bytes.byteLength, 64)), mimeType)) {
       return Response.json({ error: `File ${file.name || index + 1} does not match its format` }, { status: 400 });
     }
-    const videoMetadata: { durationSeconds?: number; width?: number; height?: number; aspectRatio?: number } = mediaType === "video"
+    const videoMetadata: { durationSeconds?: number; width?: number; height?: number; aspectRatio?: number } = mediaType !== "image"
       ? await probeVideoMetadata(bytes, extension).catch(() => ({}))
       : {};
     const { durationSeconds, width, height, aspectRatio } = videoMetadata;

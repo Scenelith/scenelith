@@ -277,7 +277,7 @@ export async function ensureStarterProject(workspaceId: string) {
   const welcomeNoteText = `Welcome to Scenelith\n\nPaste a TikTok video or slideshow link into the import field in the top bar, then click Import.\n\nUse the + button on the left to add an Assistant, Image Generator, Video Generator, or another note.\n\nConnect nodes by dragging from an output port to a compatible input. Then run the generator.\n\nDelete this note whenever you are ready.`;
   return await db.transaction(async () => {
     await db.prepare("SELECT pg_advisory_xact_lock(hashtextextended(?, 0))").get(`starter-project:${workspaceId}`);
-    const existing = await db.prepare("SELECT * FROM projects WHERE workspace_id = ? ORDER BY updated_at DESC LIMIT 1").get(workspaceId) as Record<string, unknown> | undefined;
+    const existing = await db.prepare("SELECT * FROM projects WHERE workspace_id = ? AND purpose = 'canvas' ORDER BY updated_at DESC LIMIT 1").get(workspaceId) as Record<string, unknown> | undefined;
     if (existing) return await rowToProject(existing);
     const id = crypto.randomUUID();
     const now = new Date().toISOString();

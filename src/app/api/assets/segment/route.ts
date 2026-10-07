@@ -1,3 +1,5 @@
+import { probeVideoMetadata } from "@/lib/media-probe";
+import { assertWorkspaceStorageCapacity } from "@/lib/storage-lifecycle";
 import { spawn } from "node:child_process";
 import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -15,6 +17,7 @@ const requestSchema = z.object({
   assetId: z.string().uuid(),
   start: z.number().finite().min(0),
   end: z.number().finite().positive(),
+  modelId: z.enum(["wan-3","seedance-2-5"]).optional(),
   segmentId: z.string().min(1).max(180),
 });
 
@@ -47,7 +50,7 @@ function runFfmpeg(args: string[]) {
   });
 }
 
-async function existingSegment(projectId: string, sourceAssetId: string, start: number, end: number) {
+async function existingSegment(projectId: string, sourceAssetId: string, start: number, end: number, modelId?: string) {
   const rows = await db.prepare(`
     SELECT id, metadata_json
     FROM assets
@@ -55,9 +58,9 @@ async function existingSegment(projectId: string, sourceAssetId: string, start: 
     ORDER BY created_at DESC
   `).all(projectId) as Array<{ id: string; metadata_json: string }>;
   for (const row of rows) {
-    let metadata: { sourceAssetId?: string; start?: number; end?: number };
+    let metadata: { modelId?: string; sourceAssetId?: string; start?: number; end?: number };
     try { metadata = JSON.parse(row.metadata_json || "{}"); } catch { continue; }
-    if (metadata.sourceAssetId === sourceAssetId
+    if (metadata.modelId === modelId && metadata.sourceAssetId === sourceAssetId
       && Math.abs(Number(metadata.start) - start) < 0.000001
       && Math.abs(Number(metadata.end) - end) < 0.000001) {
       return { id: row.id, url: `/api/assets/${row.id}`, durationSeconds: end - start };
@@ -66,31 +69,37 @@ async function existingSegment(projectId: string, sourceAssetId: string, start: 
   return null;
 }
 
-async function createSegment(source: AssetRow, projectId: string, workspaceId: string, segmentId: string, start: number, end: number): Promise<SegmentAsset> {
-  const existing = await existingSegment(projectId, source.id, start, end);
+async function createSegment(source: AssetRow, projectId: string, workspaceId: string, segmentId: string, start: number, end: number, modelId?: string): Promise<SegmentAsset> {
+  const existing = await existingSegment(projectId, source.id, start, end, modelId);
   if (existing) return existing;
   const workDir = await mkdtemp(join(tmpdir(), "scenelith-segment-"));
   try {
     const inputPath = join(workDir, "source-video");
     const outputPath = join(workDir, "segment.mp4");
-    await writeFile(inputPath, await readStorageObject(source.storage_path));
+    const sourceBytes = await readStorageObject(source.storage_path);
+    const measured = await probeVideoMetadata(sourceBytes);
+    if (!measured.durationSeconds || end > measured.durationSeconds + .02) throw new Error("The selected range exceeds the source video");
+    await writeFile(inputPath, sourceBytes);
     await runFfmpeg([
       "-hide_banner", "-loglevel", "error", "-i", inputPath,
       "-ss", start.toFixed(6), "-t", (end - start).toFixed(6),
       "-map", "0:v:0", "-map", "0:a?",
+      ...(modelId === "seedance-2-5" ? ["-vf", "scale=trunc(sqrt(921600*iw/ih)/2)*2:trunc(sqrt(921600*ih/iw)/2)*2,setsar=1", "-r", "30"] : []),
       "-c:v", "libx264", "-preset", "veryfast", "-crf", "20", "-pix_fmt", "yuv420p",
       "-c:a", "aac", "-movflags", "+faststart", "-avoid_negative_ts", "make_zero",
       outputPath,
     ]);
     const id = crypto.randomUUID();
-    const filename = `segment-${start.toFixed(6)}-${end.toFixed(6)}.mp4`;
+    const filename = `segment-${source.id}-${modelId||"original"}-${start.toFixed(6)}-${end.toFixed(6)}.mp4`;
+    const outputBytes = await readFile(outputPath);
+    await assertWorkspaceStorageCapacity(workspaceId,outputBytes.length);
     const stored = await saveBytes(
-      await readFile(outputPath),
+      outputBytes,
       `workspaces/${workspaceId}/projects/${projectId}/video-segments`,
       filename,
       "video/mp4",
     );
-    const metadata = { sourceAssetId: source.id, segmentId, start, end, duration: end - start, mediaType: "video" };
+    const metadata = { modelId, sourceAssetId: source.id, segmentId, start, end, duration: end - start, mediaType: "video" };
     await db.prepare(`
       INSERT INTO assets (id, workspace_id, project_id, kind, role, filename, storage_path, storage_provider, storage_bucket, object_key, size_bytes, content_hash, mime_type, metadata_json, created_at)
       VALUES (?, ?, ?, 'video_segment', 'reference_video', ?, ?, ?, ?, ?, ?, ?, 'video/mp4', ?, ?)
@@ -123,10 +132,13 @@ export async function POST(request: Request) {
     return Response.json({ error: "Source video not found" }, { status: 404 });
   }
 
-  const key = `${projectId}:${assetId}:${start.toFixed(6)}:${end.toFixed(6)}`;
+  const key = `${projectId}:${assetId}:${parsed.data.modelId||"original"}:${start.toFixed(6)}:${end.toFixed(6)}`;
   const current = segmentJobs.get(key);
   if (current) return Response.json({ asset: await current });
-  const job = createSegment(source, projectId, project.workspace_id, segmentId, start, end).finally(() => segmentJobs.delete(key));
+  const job = db.transaction(async()=>{
+    await db.prepare("SELECT pg_advisory_xact_lock(hashtextextended(?,0))").get(`segment:${key}`);
+    return createSegment(source, projectId, project.workspace_id, segmentId, start, end, parsed.data.modelId);
+  })().finally(() => segmentJobs.delete(key));
   segmentJobs.set(key, job);
   try {
     return Response.json({ asset: await job });

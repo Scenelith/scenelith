@@ -30,7 +30,7 @@ beforeEach(async () => {
   await db.prepare("INSERT INTO projects (id,workspace_id,name,graph_json,created_at,updated_at) VALUES ('scene-canvas','scene-space','Scenes','{}',?,?)").run(now,now);
   directory = await mkdtemp(join(tmpdir(), "master-generation-test-"));
   const filename = join(directory, "source.mp4");
-  execFileSync("ffmpeg", ["-hide_banner","-loglevel","error","-f","lavfi","-i","color=red:s=64x64:r=10:d=5.3","-f","lavfi","-i","color=blue:s=64x64:r=10:d=4.7","-filter_complex","[0:v][1:v]concat=n=2:v=1:a=0[v]","-map","[v]","-c:v","libx264","-pix_fmt","yuv420p",filename]);
+  execFileSync("ffmpeg", ["-hide_banner","-loglevel","error","-f","lavfi","-i","color=red:s=720x720:r=30:d=5.3","-f","lavfi","-i","color=blue:s=720x720:r=30:d=4.7","-filter_complex","[0:v][1:v]concat=n=2:v=1:a=0[v]","-map","[v]","-c:v","libx264","-pix_fmt","yuv420p",filename]);
   const assetId = crypto.randomUUID();
   const stored = await saveBytes(await readFile(filename), "scene-test", "source.mp4", "video/mp4");
   await db.prepare("INSERT INTO assets (id,workspace_id,project_id,kind,role,filename,storage_path,mime_type,metadata_json,created_at) VALUES (?,'scene-space','scene-canvas','library_video','library','source.mp4',?,'video/mp4','{}',?)").run(assetId,stored.reference,now);
@@ -184,7 +184,7 @@ test("a stale derivative from an old scene with identical cuts is rebuilt with c
 
 async function addSceneImage(role: "start-frame" | "reference-image", keepVideo: boolean) {
   const sharp = (await import("sharp")).default;
-  const bytes = await sharp({create:{width:64,height:96,channels:3,background:"red"}}).png().toBuffer();
+  const bytes = await sharp({create:{width:640,height:960,channels:3,background:"red"}}).png().toBuffer();
   const stored = await saveBytes(bytes,"scene-test","portrait.png","image/png");
   await db.prepare("INSERT INTO assets (id,workspace_id,project_id,kind,role,filename,storage_path,mime_type,metadata_json,created_at) VALUES ('portrait','scene-space','scene-canvas','library_image','library','portrait.png',?,'image/png','{}',?)").run(stored.reference,new Date().toISOString());
   graph.nodes.push({id:"portrait-node",type:"frameNode",position:{x:0,y:900},data:{kind:"image",title:"Portrait",mediaType:"image",assetId:"portrait",imageUrl:"/api/assets/portrait"}});
@@ -214,7 +214,7 @@ test("MCP Seedance multimodal requests retain both image and scene video and the
   const payload=await dispatch(result.generationId);
   assert.equal(payload.aspectRatio,"9:16");
   assert.deepEqual(payload.references.map((r:{role:string})=>r.role),["reference-video","reference-image"]);
-  const provider=buildKieInput("seedance-2-5",payload,payload.references.map((r:{role:string,label:string},i:number)=>({assetUrl:`https://example.test/media-${i}`,role:r.role,label:r.label})));
+  const provider=buildKieInput("seedance-2-5",payload,payload.references.map((r:{role:string,label:string},i:number)=>({...r,assetUrl:`https://example.test/media-${i}`,role:r.role,label:r.label})));
   assert.equal(provider.first_frame_url,undefined);
   assert.deepEqual(provider.reference_image_urls,["https://example.test/media-1"]);
   assert.deepEqual(provider.reference_video_urls,["https://example.test/media-0"]);

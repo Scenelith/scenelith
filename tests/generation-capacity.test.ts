@@ -58,3 +58,43 @@ test("capacity and locked admission agree without reserving credits for a full w
   assert.equal(reserve.mock.calls.length, 0);
   assert.equal(await activeGenerationCount("space"), 2);
 });
+
+test('Studio concurrent retries reserve and enqueue exactly once, including after completion', async () => {
+  const authority = await usageAuthority();
+  const reserve = mock.method(authority, 'reserveGeneration', async () => true);
+  const input = {...request,requestKey:crypto.randomUUID()};
+  const replies = await Promise.all([admitGeneration(input),admitGeneration(input)]);
+  assert.ok(replies[0].ok && replies[1].ok);
+  assert.equal(replies[0].generationId,replies[1].generationId);
+  assert.equal(reserve.mock.callCount(),1);
+  assert.equal((await db.prepare('SELECT count(*) AS count FROM generation_dispatch_jobs').get() as {count:number}).count,1);
+  await db.prepare("UPDATE generations SET status='completed' WHERE id=?").run(replies[0].generationId);
+  const replay=await admitGeneration(input);
+  assert.ok(replay.ok);assert.equal(replay.generationId,replies[0].generationId);
+  assert.equal(reserve.mock.callCount(),1);
+  const conflicting=await admitGeneration({...input,prompt:'Different portrait'});
+  assert.equal(!conflicting.ok&&conflicting.code,'REQUEST_KEY_CONFLICT');
+});
+
+test('a changed quote cannot reserve credits or create a task', async () => {
+ const reserve=mock.method(await usageAuthority(),'reserveGeneration',async()=>true);
+ const reply=await admitGeneration({...request,expectedCredits:1});
+ assert.equal(!reply.ok&&reply.code,'QUOTE_CHANGED');assert.equal(reserve.mock.callCount(),0);
+ assert.equal((await db.prepare('SELECT count(*) AS count FROM generations').get() as {count:number}).count,0);
+});
+
+test('insufficient credits never dispatch a provider task',async()=>{
+ const reserve=mock.method(await usageAuthority(),'reserveGeneration',async()=>false);
+ const reply=await admitGeneration({...request,requestKey:crypto.randomUUID()});
+ assert.equal(!reply.ok&&reply.status,402);assert.equal(reserve.mock.callCount(),1);
+ assert.equal((await db.prepare('SELECT count(*) AS count FROM generation_dispatch_jobs').get() as {count:number}).count,0);
+});
+
+test('Studio service projects are isolated per workspace and creation is repeatable',async()=>{
+ const {studioWorkspace}=await import('../src/lib/studio-workspace');
+ const [a,b]=await Promise.all([studioWorkspace('owner','space'),studioWorkspace('owner','space')]);
+ assert.equal(a.projectId,b.projectId);
+ assert.equal((await db.prepare('SELECT purpose FROM projects WHERE id=?').get(a.projectId) as {purpose:string}).purpose,'studio');
+ await assert.rejects(studioWorkspace('owner','other'),/Workspace not found/);
+ assert.equal((await db.prepare("SELECT purpose FROM projects WHERE id='canvas'").get() as {purpose:string}).purpose,'canvas');
+});

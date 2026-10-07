@@ -8,6 +8,7 @@ export type VideoMetadata = {
   width?: number;
   height?: number;
   aspectRatio?: number;
+  fps?: number;
 };
 
 function topLevelMp4Atoms(bytes: Buffer) {
@@ -81,7 +82,7 @@ async function runVideoProbe(input: string): Promise<VideoMetadata> {
     const child = spawn("ffprobe", [
       "-v", "error",
       "-select_streams", "v:0",
-      "-show_entries", "format=duration:stream=width,height",
+      "-show_entries", "format=duration:stream=width,height,avg_frame_rate",
       "-of", "json",
       input,
     ], { stdio: ["ignore", "pipe", "pipe"] });
@@ -97,11 +98,13 @@ async function runVideoProbe(input: string): Promise<VideoMetadata> {
       else reject(new Error(stderr.trim() || `ffprobe failed (${code})`));
     });
   });
-  const parsed = JSON.parse(output) as { format?: { duration?: string }; streams?: Array<{ width?: number; height?: number }> };
+  const parsed = JSON.parse(output) as { format?: { duration?: string }; streams?: Array<{ width?: number; height?: number; avg_frame_rate?: string }> };
   const durationSeconds = Number(parsed.format?.duration);
   const width = Number(parsed.streams?.[0]?.width);
   const height = Number(parsed.streams?.[0]?.height);
+  const [fpsNumerator, fpsDenominator] = (parsed.streams?.[0]?.avg_frame_rate || "0/1").split("/").map(Number);
   return {
+    fps: fpsDenominator > 0 ? fpsNumerator / fpsDenominator : undefined,
     durationSeconds: Number.isFinite(durationSeconds) && durationSeconds > 0 ? durationSeconds : undefined,
     width: Number.isFinite(width) && width > 0 ? width : undefined,
     height: Number.isFinite(height) && height > 0 ? height : undefined,

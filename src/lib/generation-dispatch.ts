@@ -3,7 +3,9 @@ import { generationProvider } from "@/platform/providers/registry";
 import { db } from "./postgres-db";
 import { workerIdentity } from "./worker-identity";
 
-export type GenerationDispatchPayload = {
+export type GenerationDispatchPayload = import("./kie-new-models").GenerationModelOptions & {
+  personaId?: string;
+  originalAudioAssetId?: string;
   modelId: string;
   prompt: string;
   references: import("./generation-admission").GenerationAdmissionReference[];

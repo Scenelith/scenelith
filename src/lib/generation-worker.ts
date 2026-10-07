@@ -1,3 +1,4 @@
+import { processGenerationExtras } from "./generation-extras";
 import { db } from "./postgres-db";
 import { drainGenerationDispatchQueue } from "./generation-dispatch";
 import { reconcileGeneration } from "./generation-state";
@@ -15,6 +16,8 @@ export async function tickGenerationWorker() {
   shared.scenelithGenerationWorkerBusy = true;
   try {
     await drainGenerationDispatchQueue();
+    const extras = await db.prepare("SELECT e.generation_id FROM generation_output_extras e JOIN generations g ON g.id=e.generation_id WHERE g.output_asset_id IS NOT NULL AND e.processing_error IS NULL AND ((e.soundtrack_asset_id IS NOT NULL AND e.processed_asset_id IS NULL) OR (e.last_frame_url IS NOT NULL AND e.last_frame_asset_id IS NULL)) LIMIT 4").all() as {generation_id:string}[];
+    await Promise.allSettled(extras.map(e=>processGenerationExtras(e.generation_id)));
     const pollBefore = new Date(Date.now() - 12_000).toISOString();
     const rows = await db.prepare(`SELECT id FROM generations
       WHERE provider_task_id IS NOT NULL

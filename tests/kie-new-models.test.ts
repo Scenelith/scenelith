@@ -110,8 +110,8 @@ test("quotes match Kie credit tables including audio, fusion, input duration and
   }
 });
 
-test("catalogues expose eleven models, correct output types and disjoint frame/reference modes", () => {
-  assert.equal(newKieModels.length, 11);
+test("catalogues expose current models, correct output types and disjoint frame/reference modes", () => {
+  assert.equal(newKieModels.length, 13);
   const capabilities = canvasGenerationModels();
   for (const model of newKieModels) {
     const data = defaultCanvasNodeData(model.mediaType === "image" ? "image_generator" : "video_generator", { modelId: model.id });
@@ -155,7 +155,7 @@ test("all new routes submit the expected provider model; GPT switches text/edit 
   const dir = await mkdtemp(join(tmpdir(), "kie-dispatch-"));
   t.after(() => rm(dir, { recursive: true, force: true }));
   const path = join(dir, "reference.png");
-  await writeFile(path, "fixture");
+  await (await import("sharp")).default({create:{width:640,height:960,channels:3,background:"red"}}).png().toFile(path);
   for (const name of ["KIE_API_KEY", "KIE_API_KEY_FILE", "REDIS_URL"] as const) {
     const before = process.env[name];
     t.after(() => { if (before === undefined) delete process.env[name]; else process.env[name] = before; });

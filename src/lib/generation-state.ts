@@ -1,3 +1,5 @@
+import sharp from "sharp";
+import { processGenerationExtras } from "./generation-extras";
 import { generationAttemptTime } from "./generator-task-state";
 import { db, mutateProjectGraphSnapshot } from "./postgres-db";
 import { mutateCollaborativeGraph } from "./collaboration-store";
@@ -250,6 +252,9 @@ export async function persistGenerationOutput(id: string, outputUrl: string) {
     const payload = JSON.parse(dispatchJob?.payload_json || "{}") as Record<string, unknown>;
     const requestedDurationSeconds = Number(payload.duration || 0) || undefined;
     generationMetadata = {
+      personaId: payload.personaId,
+      background: payload.background,
+      hasAlpha: generation.media_type === "image" ? !(await sharp(bytes).stats()).isOpaque : undefined,
       modelId: payload.modelId,
       resolution: payload.resolution,
       requestedDurationSeconds,
@@ -286,6 +291,7 @@ export async function persistGenerationOutput(id: string, outputUrl: string) {
         JSON.stringify({ generationId: id, sourceUrl: outputUrl, ...generationMetadata }),
         now,
       );
+    if (typeof generationMetadata.personaId === "string") await db.prepare("UPDATE assets SET persona_id=? WHERE id=? AND EXISTS(SELECT 1 FROM personas WHERE id=? AND workspace_id=?)").run(generationMetadata.personaId,assetId,generationMetadata.personaId,project.workspace_id);
     await db.prepare("UPDATE generations SET output_asset_id = ?, output_url = ?, updated_at = ? WHERE id = ? AND output_asset_id IS NULL")
       .run(assetId, outputUrl, now, id);
     if (generationEventOwner?.requested_by_user_id) {
@@ -338,14 +344,23 @@ async function generatedAssetDurationSeconds(assetId: string | null) {
 }
 
 export async function generationClientState(generation: GenerationStateRow) {
+  const extras = await db.prepare("SELECT * FROM generation_output_extras WHERE generation_id = ?").get(generation.id) as {processed_asset_id?:string;last_frame_asset_id?:string;processing_error?:string;soundtrack_asset_id?:string} | undefined;
+  const imageAsset = generation.media_type === "image" && generation.output_asset_id ? await db.prepare("SELECT metadata_json FROM assets WHERE id=?").get(generation.output_asset_id) as {metadata_json:string}|undefined : undefined;
+  const imageMetadata = JSON.parse(imageAsset?.metadata_json || "{}");
   const charges = await taskCreditUsage([{ id: generation.id, kind: "generation" }]);
   return {
     creditUsage: charges[`generation:${generation.id}`],
     id: generation.id,
     status: generation.status,
     queuePosition: await queuedGenerationPosition(generation.id),
-    outputUrl: generation.output_asset_id ? `/api/assets/${generation.output_asset_id}` : generation.output_url,
-    assetId: generation.output_asset_id,
+    processingError: extras?.processing_error,
+    hasAlpha: imageMetadata.hasAlpha,
+    warning: imageMetadata.background === "transparent" && imageMetadata.hasAlpha !== true ? "The provider returned an opaque image. It has been saved, but is not a transparent cutout." : undefined,
+    processing: Boolean(extras?.soundtrack_asset_id && !extras.processed_asset_id && generation.output_asset_id),
+    lastFrameUrl: extras?.last_frame_asset_id ? `/api/assets/${extras.last_frame_asset_id}` : undefined,
+    originalOutputUrl: generation.output_asset_id ? `/api/assets/${generation.output_asset_id}` : undefined,
+    outputUrl: extras?.processed_asset_id ? `/api/assets/${extras.processed_asset_id}` : generation.output_asset_id ? `/api/assets/${generation.output_asset_id}` : generation.output_url,
+    assetId: extras?.processed_asset_id || generation.output_asset_id,
     mediaType: generation.media_type,
     modelId: generation.model_id,
     operation: generation.operation,
@@ -354,7 +369,7 @@ export async function generationClientState(generation: GenerationStateRow) {
     creditCost: Number(generation.credit_cost || 0),
     createdAt: generation.created_at,
     updatedAt: generation.updated_at,
-    durationSeconds: generatedAssetDurationSeconds(generation.output_asset_id),
+    durationSeconds: await generatedAssetDurationSeconds(generation.output_asset_id),
     error: generation.error ? publicGenerationErrorMessage(generation.error) : null,
   };
 }
@@ -366,6 +381,7 @@ export async function reconcileGeneration(id: string) {
   if (generation.output_asset_id && completedGenerationStatuses.has(generation.status.toLowerCase())) {
     // Durable completion does not depend on an expiring provider response.
     await persistGenerationOutput(id, `/api/assets/${generation.output_asset_id}`);
+    await processGenerationExtras(id);
     await (await usageAuthority()).settleGeneration(id);
     return (await readGenerationState(id))!;
   }
@@ -398,7 +414,7 @@ export async function reconcileGeneration(id: string) {
         ? emptyResultExpired ? "failed" : "finalizing"
         : providerStatus;
     const error = reportedError || (emptyResultExpired ? emptyCompletedMessage : null);
-    return (await finalizeGenerationFromWebhook({ generationId: id, status, outputUrl, error }))!;
+    return (await finalizeGenerationFromWebhook({ generationId: id, status, outputUrl, error, lastFrameUrl:task.lastFrameUrl }))!;
   } catch (error) {
     if (error instanceof KieRateLimitError) return (await readGenerationState(id))!;
     if (generationTimedOut(generation.created_at, generation.media_type)) {
@@ -416,7 +432,9 @@ export async function finalizeGenerationFromWebhook(input: {
   status: string;
   outputUrl?: string | null;
   error?: string | null;
+  lastFrameUrl?: string;
 }) {
+  if (input.lastFrameUrl) await db.prepare("INSERT INTO generation_output_extras(generation_id,last_frame_url) VALUES(?,?) ON CONFLICT(generation_id) DO UPDATE SET last_frame_url=excluded.last_frame_url").run(input.generationId,input.lastFrameUrl);
   const normalizedStatus = input.status.toLowerCase();
   const accepted = await db.transaction(async () => {
     const current = await db.prepare("SELECT * FROM generations WHERE id = ? FOR UPDATE").get(input.generationId) as GenerationStateRow | undefined;
@@ -448,6 +466,7 @@ export async function finalizeGenerationFromWebhook(input: {
   }
   if (input.outputUrl) {
     await persistGenerationOutput(input.generationId, input.outputUrl);
+    await processGenerationExtras(input.generationId);
     // The timeout refund is final; saving late media must not charge again.
     if (!accepted.late && completedGenerationStatuses.has(normalizedStatus)) await (await usageAuthority()).settleGeneration(input.generationId);
   }
