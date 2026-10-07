@@ -54,8 +54,9 @@ test("video credits account for resolution and duration", () => {
   assert.equal(generationCreditCost("seedance-2-5", "720P", "5"), 315);
   assert.equal(generationCreditCost("seedance-2-5", "480P", "5", 1, { hasVideoInput: true, inputVideoDurationSeconds: 7 }), 204);
   assert.equal(generationCreditCost("seedance-2-5", "720P", "5", 1, { hasVideoInput: true, inputVideoDurationSeconds: 7 }), 456);
-  assert.equal(generationCreditCost("seedance-2-5", "1080P", "5", 1, { hasVideoInput: true, inputVideoDurationSeconds: 7 }), 822);
-  assert.throws(() => generationCreditCost("seedance-2-5", "1080P", "5"), /requires a video input/);
+  assert.equal(generationCreditCost("seedance-2-5", "1080P", "5", 1, { hasVideoInput: true, inputVideoDurationSeconds: 7 }), 1140);
+  assert.equal(generationCreditCost("seedance-2-5", "1080P", "5"), 790);
+  assert.equal(generationCreditCost("seedance-2-5", "1080P", "5", 1, { hasVideoInput: true, inputVideoDurationSeconds: 2.25 }), 689);
   assert.equal(generationCreditCost("grok-video-1-5", "480P", "8"), 20);
   assert.equal(generationCreditCost("grok-video-1-5", "720P", "8"), 36);
   assert.equal(generationCreditCost("wan-2-7", "1080P", "10"), 240);

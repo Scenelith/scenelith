@@ -9,7 +9,8 @@ const frames: NonNullable<KieModel["inputPorts"]> = [
 ];
 const jobPath = "/api/v1/jobs/createTask";
 
-/** Contracts checked against docs.kie.ai on 2026-09-12. Optional provider ID,
+/** Contracts checked against docs.kie.ai on 2026-09-12; Nano Banana 2.1 on
+ * 2026-10-07 (docs/KIE_MODELS_2026_10.md). Optional provider ID,
  * document, web-link and effect-template workflows are not media input ports. */
 export const newKieModels: KieModel[] = [
   ...["flare", "sunburst"].map((variant): KieModel => ({
@@ -21,6 +22,15 @@ export const newKieModels: KieModel[] = [
     resolutions: ["1K", "2K", "4K"], defaultRatio: "auto", defaultResolution: "1K",
     inputPorts: [{ id: "reference-image", label: "Reference images", kind: "image", max: 16 }],
   })),
+  {
+    id: "nano-banana-2-1", label: "Nano Banana 2.1", mediaType: "image",
+    description: "Google image generation and editing · up to 14 references · 1K–4K",
+    providerModel: "nano-banana-2-1", providerPath: jobPath,
+    maxReferences: 14, minPromptLength: 1, maxPromptLength: 20_000,
+    ratios: ["auto", "1:1", "2:3", "3:2", "1:4", "4:1", "3:4", "4:3", "4:5", "5:4", "1:8", "8:1", "9:16", "16:9", "21:9"],
+    resolutions: ["1K", "2K", "4K"], defaultRatio: "auto", defaultResolution: "1K",
+    inputPorts: [{ id: "reference-image", label: "Reference images", kind: "image", max: 14 }],
+  },
   ...[false, true].map((prime): KieModel => ({
     id: `wan-3${prime ? "-prime" : ""}`, label: `WAN 3.0${prime ? " Prime" : ""}`,
     mediaType: "video", description: "2–30s · start/end frames or image, video and audio references · input + output video up to 30s",
@@ -91,7 +101,7 @@ export function newKieInputError(id: string, input: NewModelInput, options: { al
     const port = model.inputPorts?.find((port) => port.id === (ref.role || "reference-image"));
     if (!port) return fail(`unsupported input ${ref.role || "reference-image"}; disconnect it or select a compatible model`);
     if (ref.mimeType && !ref.mimeType.startsWith(`${port.kind}/`)) return fail(`${port.label} requires ${port.kind} media`);
-    const sizeLimit = id.startsWith("gpt-image-2-5") ? 30 : port.kind === "video" ? (id === "pixverse-v6-extend" ? Infinity : 100) : port.kind === "audio" ? 15 : 20;
+    const sizeLimit = id.startsWith("gpt-image-2-5") || id === "nano-banana-2-1" ? 30 : port.kind === "video" ? (id === "pixverse-v6-extend" ? Infinity : 100) : port.kind === "audio" ? 15 : 20;
     if (ref.sizeBytes && ref.sizeBytes > sizeLimit * 1024 * 1024) return fail(`${port.label} must be at most ${sizeLimit} MB per file`);
     if (id.startsWith("wan-3") && ref.mimeType) {
       const formats = port.kind === "video" ? ["video/mp4", "video/quicktime"] : port.kind === "audio" ? ["audio/mpeg", "audio/mp3", "audio/wav", "audio/x-wav", "audio/wave"] : ["image/jpeg", "image/png", "image/webp", "image/bmp", "image/x-ms-bmp"];
@@ -160,6 +170,7 @@ export function newKiePayload(id: string, input: Omit<NewModelInput, "references
   const ratio = input.aspectRatio || model.defaultRatio;
   const resolution = (input.resolution || model.defaultResolution!).toUpperCase();
   const duration = Number(input.duration || model.defaultDuration);
+  if (id === "nano-banana-2-1") return { prompt, image_input: urls("reference-image"), aspect_ratio: ratio, resolution, output_format: "png" };
   if (id.startsWith("gpt-image-2-5")) return { prompt, ...(refs.length ? { input_urls: refs.map((ref) => ref.assetUrl) } : {}), aspect_ratio: ratio, resolution };
   if (id.startsWith("wan-3")) return { prompt, ...(urls("start-frame").length ? { first_frame_url: urls("start-frame")[0] } : {}), ...(urls("end-frame").length ? { last_frame_url: urls("end-frame")[0] } : {}), ...(urls("reference-image").length ? { reference_image_urls: urls("reference-image") } : {}), ...(urls("reference-video").length ? { reference_video_urls: urls("reference-video") } : {}), ...(urls("reference-audio").length ? { reference_audio_urls: urls("reference-audio") } : {}), resolution, aspect_ratio: ratio, duration, audio: input.generateAudio ?? true };
   if (id.startsWith("pixverse-v6")) return { prompt, duration, quality: resolution.toLowerCase(), generate_audio_switch: input.generateAudio ?? false,

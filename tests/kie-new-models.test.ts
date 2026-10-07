@@ -20,6 +20,39 @@ const prompt = "Keep the same subject and move the camera slowly.";
 const ref = (role = "reference-image", durationSeconds?: number) => ({ assetUrl: `https://example.test/${role}`, label: "@Subject", role, durationSeconds });
 const error = (id: string, references: ReturnType<typeof ref>[], overrides = {}) => newKieInputError(id, { prompt, references, ...overrides });
 
+test("Nano Banana 2.1 supports generation/editing with its verified Kie contract", () => {
+  const id = "nano-banana-2-1";
+  assert.equal(getKieModel(id).providerModel, id);
+  assert.deepEqual(buildKieInput(id, { prompt }, []), { prompt, image_input: [], aspect_ratio: "auto", resolution: "1K", output_format: "png" });
+  const references = Array.from({ length: 14 }, (_, i) => ({ ...ref(), assetUrl: `https://example.test/ref-${i}.png` }));
+  assert.deepEqual(buildKieInput(id, { prompt, resolution: "4k", aspectRatio: "1:8" }, references), {
+    prompt, image_input: references.map((reference) => reference.assetUrl), aspect_ratio: "1:8", resolution: "4K", output_format: "png",
+  });
+  for (const resolution of ["1K", "2K", "4K"]) {
+    for (const aspectRatio of ["1:4", "4:1", "1:8", "8:1"]) {
+      assert.equal(error(id, [], { resolution, aspectRatio }), null);
+    }
+  }
+  assert.equal(error(id, references), null);
+  assert.match(error(id, [...references, ref()])!, /at most 14/);
+  assert.match(error(id, [ref("reference-video")])!, /unsupported input/);
+  assert.match(error(id, [], { prompt: "x".repeat(20_001) })!, /exceeds 20000/);
+  assert.equal(error(id, [], { prompt: "x".repeat(20_000) }), null);
+  assert.match(error(id, [], { prompt: " " })!, /at least 1/);
+  assert.match(error(id, [], { resolution: "512" })!, /unsupported resolution/);
+  assert.match(error(id, [], { aspectRatio: "27:16" })!, /unsupported aspect ratio/);
+  for (const mimeType of ["image/jpeg", "image/png", "image/webp"]) {
+    assert.equal(newKieInputError(id, { prompt, references: [{ ...ref(), mimeType, sizeBytes: 30 * 1024 * 1024 }] }), null);
+  }
+  assert.match(newKieInputError(id, { prompt, references: [{ ...ref(), mimeType: "image/gif" }] })!, /JPEG, PNG or WebP/);
+  assert.match(newKieInputError(id, { prompt, references: [{ ...ref(), sizeBytes: 30 * 1024 * 1024 + 1 }] })!, /at most 30 MB/);
+  assert.equal(generationCreditCost(id, "1K", "5", 14), 4);
+  assert.equal(generationCreditCost(id, "2K", "5", 14), 6);
+  assert.equal(generationCreditCost(id, "4K", "5", 14), 9);
+  assert.equal(getKieModel("nano-banana-2").providerModel, "nano-banana-2", "saved older model selections stay stable");
+  assert.equal(generationCreditCost("nano-banana-2", "4K", "5"), 18);
+});
+
 test("GPT Image 2.5 variants dispatch full edit arrays and resolution-specific ratios", () => {
   for (const variant of ["flare", "sunburst"]) {
     const id = `gpt-image-2-5-${variant}`;
@@ -110,8 +143,8 @@ test("quotes match Kie credit tables including audio, fusion, input duration and
   }
 });
 
-test("catalogues expose eleven models, correct output types and disjoint frame/reference modes", () => {
-  assert.equal(newKieModels.length, 11);
+test("catalogues expose twelve models, correct output types and disjoint frame/reference modes", () => {
+  assert.equal(newKieModels.length, 12);
   const capabilities = canvasGenerationModels();
   for (const model of newKieModels) {
     const data = defaultCanvasNodeData(model.mediaType === "image" ? "image_generator" : "video_generator", { modelId: model.id });
@@ -178,6 +211,15 @@ test("all new routes submit the expected provider model; GPT switches text/edit 
     await startGeneration({ modelId: `gpt-image-2-5-${variant}`, prompt, references: [{ path, mimeType: "image/png", label: "@Subject", role: "reference-image", sizeBytes: 7 }] });
     assert.equal(requests.at(-1)?.model, `gpt-image-2-5-${variant}-image-to-image`);
   }
+  const nanoReferences = Array.from({ length: 14 }, (_, i) => ({ path, mimeType: "image/png", label: `Subject ${i + 1}`, role: "reference-image", sizeBytes: 7 }));
+  await startGeneration({ modelId: "nano-banana-2-1", prompt, references: nanoReferences, aspectRatio: "8:1", resolution: "4K" });
+  assert.equal(requests.at(-1)?.model, "nano-banana-2-1");
+  assert.deepEqual(requests.at(-1)?.input.image_input, Array(14).fill("https://example.test/upload.png"));
+  assert.equal(requests.at(-1)?.input.output_format, "png");
+  assert.equal(requests.at(-1)?.input.aspect_ratio, "8:1");
+  const previousRequests = requests.length;
+  await assert.rejects(startGeneration({ modelId: "nano-banana-2-1", prompt, references: [...nanoReferences, nanoReferences[0]] }), /at most 14/);
+  assert.equal(requests.length, previousRequests, "excess references fail before paid dispatch");
   const references = [{ path, mimeType: "video/mp4", label: "@Clip", role: "reference-video", sizeBytes: 7, durationSeconds: 5.25 }];
   const payload = generationDispatchPayload({ userId: "unused", projectId: "unused", nodeId: "unused", model: getKieModel("gemini-omni-video"), prompt, references, aspectRatio: "16:9", resolution: "720P", duration: "8", generateAudio: true, operation: "generation", hasVideoInput: true, inputVideoDurationSeconds: 5.25 });
   await startGeneration(payload);
