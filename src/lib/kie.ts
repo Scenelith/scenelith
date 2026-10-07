@@ -223,11 +223,14 @@ export function normalizeKieTask(value: unknown): KieTask {
   const state = String(data.state || data.status || (successFlag === 1 ? "success" : successFlag === 2 || successFlag === 3 || responseCode >= 400 ? "fail" : "generating")).toLowerCase();
   const failure = state === "fail" || state === "failed" || successFlag === 2 || successFlag === 3 || responseCode >= 400;
   const errorMessage = data.failMsg || data.errorMessage || data.error || envelope.msg;
+  const lastFrameUrl = [resultRecord.lastFrameUrl, response.lastFrameUrl, data.lastFrameUrl]
+    .flatMap((value) => typeof value === "string" ? [value] : stringArray(value))
+    .find((value) => value.length > 0);
   return {
     task_id: String(data.taskId || data.task_id || envelope.taskId || "") || undefined,
     status: state,
     generated: urls,
-    ...(typeof resultRecord.lastFrameUrl === "string" ? {lastFrameUrl:resultRecord.lastFrameUrl} : {}),
+    ...(lastFrameUrl ? { lastFrameUrl } : {}),
     error: failure ? errorMessage || data.failCode || data.errorCode || "Kie.ai generation failed" : undefined,
   };
 }

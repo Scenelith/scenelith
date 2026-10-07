@@ -31,6 +31,15 @@ test("unified Kie task responses and Veo responses normalize identically", () =>
   });
 });
 
+test("Seedance last frame accepts live array receipts and documented string receipts", () => {
+  for (const lastFrameUrl of ["https://cdn.test/last.jpeg", ["https://cdn.test/last.jpeg"]]) {
+    for (const payload of [{ resultJson: JSON.stringify({ lastFrameUrl }) }, { response: { lastFrameUrl } }, { lastFrameUrl }]) {
+      assert.equal(normalizeKieTask({ data: { state: "success", ...payload } }).lastFrameUrl, "https://cdn.test/last.jpeg");
+    }
+  }
+  assert.equal(normalizeKieTask({ data: { resultJson: '{"lastFrameUrl":[null,""]}' } }).lastFrameUrl, undefined);
+});
+
 test("provider prompt transport preserves the exact automation request and ordered reference labels", () => {
   const request = '{"task":"Keep this exact request","preserve":["Exact framing"]}';
   assert.equal(kieProviderPrompt(request, []), request);
