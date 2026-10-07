@@ -1,3 +1,4 @@
+import { persistStudioUpload } from "@/lib/studio-upload";
 import { requireApiUser, sameOriginRequest } from "@/lib/auth";
 import { db, userCanAccessProject } from "@/lib/postgres-db";
 import { probeVideoMetadata } from "@/lib/media-probe";
@@ -156,17 +157,19 @@ export async function POST(request: Request) {
   const auth = await requireApiUser();
   if (auth.response) return auth.response;
   if (!sameOriginRequest(request)) return Response.json({ error: "Invalid request origin" }, { status: 403 });
-  const limited = await enforceDistributedRateLimit({ scope: "upload-proxy", identity: auth.user.id, limit: 20, windowSeconds: 600 });
-  if (limited) return limited;
-
   const form = await request.formData();
   const projectId = String(form.get("projectId") || "");
   const generationReference = String(form.get("purpose") || "") === "generation-reference";
+  const limited = await enforceDistributedRateLimit({ scope: generationReference ? "generation-reference-upload" : "upload-proxy", identity: auth.user.id, limit: generationReference ? 100 : 20, windowSeconds: 600 });
+  if (limited) return limited;
+  const uploadKey = String(form.get("uploadKey") || "");
+  if (uploadKey && (!generationReference || !/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(uploadKey))) return Response.json({error:"Invalid upload key"},{status:400});
   const editReferenceUpload = String(form.get("purpose") || "") === "edit-reference";
   const libraryUpload = String(form.get("purpose") || "") === "library";
   const media = [...form.getAll("files"), ...form.getAll("images")]
     .filter((value): value is File => value instanceof File && value.size > 0);
 
+  if (uploadKey && media.length !== 1) return Response.json({error:"Upload one file per upload key"},{status:400});
   if (!projectId || !media.length) {
     return Response.json({ error: "Choose at least one image or video" }, { status: 400 });
   }
@@ -216,6 +219,13 @@ export async function POST(request: Request) {
       ? await probeVideoMetadata(bytes, extension).catch(() => ({}))
       : {};
     const { durationSeconds, width, height, aspectRatio } = videoMetadata;
+    if (generationReference) {
+      try {
+        const assetId = await persistStudioUpload({id:uploadKey||id,workspaceId:project.workspace_id,projectId,bytes:Buffer.from(bytes),mimeType,name:file.name||filename,metadata:{durationSeconds,width,height,aspectRatio,mediaType}});
+        assets.push({id:assetId,url:`/api/assets/${assetId}`,filename,originalName:file.name||filename,mediaType,mimeType,durationSeconds,width,height,aspectRatio});
+        continue;
+      } catch(error) { return Response.json({error:error instanceof Error?error.message:"Could not save reference"},{status:409}); }
+    }
     const stored = await saveBytes(bytes, `workspaces/${project.workspace_id}/projects/${projectId}/${editReferenceUpload ? "edit-references" : libraryUpload ? "library" : "canvas-uploads"}`, filename, mimeType);
     try {
       await db.transaction(async () => {

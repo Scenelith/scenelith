@@ -98,3 +98,13 @@ test('Studio service projects are isolated per workspace and creation is repeata
  await assert.rejects(studioWorkspace('owner','other'),/Workspace not found/);
  assert.equal((await db.prepare("SELECT purpose FROM projects WHERE id='canvas'").get() as {purpose:string}).purpose,'canvas');
 });
+
+test('reference uploads are idempotent after a lost response and reject reuse for another file',async()=>{
+ const {persistStudioUpload}=await import('../src/lib/studio-upload');
+ const file={id:crypto.randomUUID(),workspaceId:'space',projectId:'canvas',bytes:Buffer.from('file'),mimeType:'audio/wav',name:'reference.wav',metadata:{}};
+ const [a,b]=await Promise.all([persistStudioUpload(file),persistStudioUpload(file)]);
+ assert.equal(a,b);
+ assert.equal((await db.prepare('SELECT count(*) AS count FROM assets WHERE id=?').get(a) as {count:number}).count,1);
+ await assert.rejects(persistStudioUpload({...file,bytes:Buffer.from('different')}),/another file/);
+ await assert.rejects(persistStudioUpload({...file,workspaceId:'other'}),/another file/);
+});

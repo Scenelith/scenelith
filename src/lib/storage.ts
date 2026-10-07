@@ -174,7 +174,10 @@ function localPathForKey(key: string) {
 
 export function safeExtension(filename: string, mimeType = "") {
   const ext = extname(filename).toLowerCase();
-  if ([".jpg", ".jpeg", ".png", ".webp", ".avif", ".mp4", ".webm", ".mov", ".mp3", ".wav", ".m4a"].includes(ext)) return ext;
+  if ([".jpg", ".jpeg", ".png", ".webp", ".avif", ".bmp", ".mp4", ".webm", ".mov", ".mp3", ".wav", ".m4a"].includes(ext)) return ext;
+  if (["image/bmp", "image/x-ms-bmp"].includes(mimeType)) return ".bmp";
+  if (["audio/wav", "audio/x-wav"].includes(mimeType)) return ".wav";
+  if (mimeType === "video/quicktime") return ".mov";
   if (mimeType === "image/png") return ".png";
   if (mimeType === "image/webp") return ".webp";
   if (mimeType === "image/avif") return ".avif";

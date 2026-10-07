@@ -250,7 +250,7 @@ function pruneKieReferenceUploads(now: number) {
 
 async function uploadKieReferenceFile(path: string, mimeType: string) {
   const bytes = await readStorageObject(path);
-  const extension = mimeType.split("/")[1]?.replace("jpeg", "jpg") || "bin";
+  const extension = ({"image/jpeg":"jpg","image/x-ms-bmp":"bmp","video/quicktime":"mov","audio/mpeg":"mp3","audio/x-wav":"wav"} as Record<string,string>)[mimeType] || mimeType.split("/")[1] || "bin";
   const filename = `${crypto.randomUUID()}.${extension}`;
   const form = new FormData();
   form.append("file", new Blob([bytes], { type: mimeType }), filename);
