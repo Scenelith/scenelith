@@ -5,6 +5,7 @@ import { spawn } from 'node:child_process';
 import sharp from 'sharp';
 import { db } from './postgres-db';
 import { readStorageObject, putStorageObject, deleteStorageObject } from './storage';
+import { probeVideoMetadata } from './media-probe';
 import { assertWorkspaceStorageCapacity } from './storage-lifecycle';
 
 export function soundtrackArguments(video: string, soundtrack: string, output: string) {
@@ -26,11 +27,12 @@ export async function processGenerationExtras(id:string) {
     const row=await db.prepare(`SELECT e.*,g.project_id,g.output_asset_id,p.workspace_id FROM generation_output_extras e JOIN generations g ON g.id=e.generation_id JOIN projects p ON p.id=g.project_id WHERE e.generation_id=?`).get(id) as {last_frame_url:string|null;last_frame_asset_id:string|null;soundtrack_asset_id:string|null;processed_asset_id:string|null;output_asset_id:string|null;project_id:string;workspace_id:string}|undefined;
     if(!row?.output_asset_id)return;
     const save=async(bytes:Buffer,mime:string,role:string)=>{
+      const measured=mime.startsWith('video/')?await probeVideoMetadata(bytes):await sharp(bytes).metadata().then(m=>({width:m.width,height:m.height}));
       const assetId=crypto.randomUUID(), filename=`${id}-${role}.${mime.startsWith('image/')?'jpg':mime==='video/quicktime'?'mov':'mp4'}`;
       await assertWorkspaceStorageCapacity(row.workspace_id,bytes.length);
       const stored=await putStorageObject(bytes,`workspaces/${row.workspace_id}/projects/${row.project_id}/generations/${filename}`,{contentType:mime});
       written.push(stored.reference);
-      await db.prepare(`INSERT INTO assets(id,workspace_id,project_id,kind,role,filename,storage_path,storage_provider,storage_bucket,object_key,size_bytes,content_hash,mime_type,metadata_json,created_at) VALUES(?,?,?,?,'generated',?,?,?,?,?,?,?,?,?,?)`).run(assetId,row.workspace_id,row.project_id,mime.startsWith('image/')?'generated_image':'generated_video',filename,stored.reference,stored.provider,stored.bucket,stored.key,stored.size,stored.contentHash,mime,JSON.stringify({generationId:id,outputRole:role}),new Date().toISOString());
+      await db.prepare(`INSERT INTO assets(id,workspace_id,project_id,kind,role,filename,storage_path,storage_provider,storage_bucket,object_key,size_bytes,content_hash,mime_type,metadata_json,created_at) VALUES(?,?,?,?,'generated',?,?,?,?,?,?,?,?,?,?)`).run(assetId,row.workspace_id,row.project_id,mime.startsWith('image/')?'generated_image':'generated_video',filename,stored.reference,stored.provider,stored.bucket,stored.key,stored.size,stored.contentHash,mime,JSON.stringify({generationId:id,outputRole:role,...measured}),new Date().toISOString());
       return assetId;
     };
     if(row.last_frame_url&&!row.last_frame_asset_id){
