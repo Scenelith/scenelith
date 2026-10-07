@@ -7,6 +7,8 @@
 const imageCredits: Record<string, Record<string, number>> = {
   "nano-banana-2-lite": { "1K": 4 },
   "nano-banana-2": { "1K": 8, "2K": 12, "4K": 18 },
+  // Kie model page verified 2026-10-07; see docs/KIE_MODELS_2026_10.md.
+  "nano-banana-2-1": { "1K": 4, "2K": 6, "4K": 9 },
   "nano-banana-pro": { "1K": 18, "2K": 18, "4K": 24 },
   "gpt-image-2-5-flare": { "1K": 6, "2K": 10, "4K": 16 },
   "gpt-image-2-5-sunburst": { "1K": 6, "2K": 10, "4K": 16 },

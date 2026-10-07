@@ -17,6 +17,14 @@ test("model switching changes real generator inputs, quality and duration contro
   await card.getByRole("button", { name: "RATIO", exact: true }).click();
   await expect(page.getByRole("button", { name: "27:16", exact: true })).toHaveCount(0);
   await page.getByRole("button", { name: "1:1", exact: true }).click();
+  await card.getByRole("button", { name: "IMAGE MODELS", exact: true }).click();
+  await page.getByRole("button", { name: /Nano Banana 2\.1/ }).click();
+  await card.hover();
+  await card.getByRole("button", { name: "QUALITY", exact: true }).click();
+  await page.getByRole("button", { name: "4K", exact: true }).click();
+  await card.getByRole("button", { name: "RATIO", exact: true }).click();
+  await page.getByRole("button", { name: "1:8", exact: true }).click();
+  await expect(card.locator(".generator-credit-tooltip")).toContainText("9");
   await page.getByRole("button", { name: "PixVerse", exact: true }).click();
   await card.hover();
   await expect(card.getByRole("button", { name: "DURATION", exact: true })).toBeVisible();
