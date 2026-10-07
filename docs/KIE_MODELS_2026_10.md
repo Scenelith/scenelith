@@ -1,4 +1,4 @@
-# Nano Banana 2.1 integration
+# Kie model refresh: Nano Banana 2.1 and Seedance 2.5
 
 Contract and provider prices verified on 2026-10-07 using the live official
 [Kie model page](https://kie.ai/nano-banana-2-1) and its embedded
@@ -43,3 +43,27 @@ These are provider-aligned quotes before edition pricing policy. They are not
 measurements of a paid task or guarantees of a generation result. This change
 was validated with mocked dispatch and local contract tests, without a paid
 generation.
+
+## Seedance 2.5 contract refresh
+
+Rechecked on 2026-10-07 against the live official
+[Seedance 2.5 API schema](https://docs.kie.ai/market/bytedance/seedance-2-5)
+and [model playground and pricing](https://kie.ai/seedance-2-5).
+The existing Scenelith ID `seedance-2-5` and provider ID
+`bytedance/seedance-2-5` remain unchanged.
+
+- The API schema explicitly allows `480p`, `720p` and `1080p` without a
+  video-only condition. The playground also publishes a 1080p price without
+  video input, so the old 1080p video-input restriction has been removed.
+- 1080p is now quoted at 158 Kie credits per output second without video;
+  with video it is 95 credits per second of input plus output. The old
+  68.5-credit input-video rate is obsolete. Lower-resolution rates are unchanged.
+- The API schema sets `prompt` to at most 20,480 characters. The playground
+  still shows 30,000; transport validation follows the narrower API limit.
+- Marketing mentions 4K, but the actual API enum and playground offer only
+  480p, 720p and 1080p. This refresh does not expose unsupported 4K output.
+
+The audio field description says enabling generated audio raises cost, while
+published prices do not provide separate audio rates. No unverified audio
+surcharge or discount is invented. Prices remain provider-aligned estimates,
+not measured task charges. No paid generation was made for this verification.

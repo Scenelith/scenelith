@@ -209,7 +209,7 @@ test("generation catalogue mirrors documented prompt limits", () => {
     "seedance-2-fast": 20_000,
     "seedance-2-mini": 20_000,
     "seedance-2": 20_000,
-    "seedance-2-5": 30_000,
+    "seedance-2-5": 20_480,
     "kling-3-turbo-text": 2_500,
     "kling-3-turbo-image": 2_500,
     "kling-3-motion": 2_500,
@@ -236,6 +236,16 @@ test("provider request validation uses each model's documented prompt limit", ()
   );
 });
 
+test("Seedance 2.5 accepts 1080p without a video and enforces the API prompt boundary", () => {
+  const prompt = "x".repeat(20_480);
+  assert.doesNotThrow(() => assertKiePromptLength("seedance-2-5", prompt));
+  assert.throws(() => assertKiePromptLength("seedance-2-5", `${prompt}x`), /20,480/);
+  const input = buildKieInput("seedance-2-5", { prompt: "Animate the character", resolution: "1080P", duration: "5", generateAudio: false }, []);
+  assert.equal(input.resolution, "1080p");
+  assert.deepEqual(input.reference_video_urls, []);
+  assert.equal(input.generate_audio, false);
+});
+
 test("video catalogue exposes only documented quality, ratio and input controls", () => {
   const seedance = getKieModel("seedance-2");
   assert.deepEqual(seedance.resolutions, ["480P", "720P", "1080P", "4K"]);
@@ -247,8 +257,8 @@ test("video catalogue exposes only documented quality, ratio and input controls"
   const seedance25 = getKieModel("seedance-2-5");
   assert.equal(seedance25.providerModel, "bytedance/seedance-2-5");
   assert.deepEqual(seedance25.resolutions, ["480P", "720P", "1080P"]);
-  assert.deepEqual(seedance25.videoInputOnlyResolutions, ["1080P"]);
-  assert.deepEqual(allowedKieResolutions(seedance25, false), ["480P", "720P"]);
+  assert.equal(seedance25.videoInputOnlyResolutions, undefined);
+  assert.deepEqual(allowedKieResolutions(seedance25, false), ["480P", "720P", "1080P"]);
   assert.deepEqual(allowedKieResolutions(seedance25, true), ["480P", "720P", "1080P"]);
   assert.equal(seedance25.defaultRatio, "adaptive");
   assert.equal(seedance25.maxReferences, 50);

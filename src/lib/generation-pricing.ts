@@ -25,7 +25,7 @@ const videoCreditsPerSecond: Record<string, Record<string, number>> = {
   "seedance-2-fast": { "480P": 15.5, "720P": 33 },
   "seedance-2-mini": { "480P": 9.5, "720P": 20.5 },
   "seedance-2": { "480P": 19, "720P": 41, "1080P": 102, "4K": 208 },
-  "seedance-2-5": { "480P": 28, "720P": 63 },
+  "seedance-2-5": { "480P": 28, "720P": 63, "1080P": 158 },
   "kling-3-turbo-text": { "720P": 18, "1080P": 22.5 },
   "kling-3-turbo-image": { "720P": 18, "1080P": 22.5 },
   "kling-3-motion": { "720P": 20, "1080P": 27 },
@@ -39,7 +39,7 @@ const seedanceWithVideoCreditsPerSecond: Record<string, Record<string, number>> 
   "seedance-2-fast": { "480P": 9, "720P": 20 },
   "seedance-2-mini": { "480P": 6, "720P": 12.5 },
   "seedance-2": { "480P": 11.5, "720P": 25, "1080P": 62, "4K": 128 },
-  "seedance-2-5": { "480P": 17, "720P": 38, "1080P": 68.5 },
+  "seedance-2-5": { "480P": 17, "720P": 38, "1080P": 95 },
 };
 
 const kling3CreditsPerSecond = {
@@ -115,9 +115,6 @@ export function generationCreditCost(modelId: string, resolution: string, durati
   if (canonicalId === "gemini-omni-video" || canonicalId === "gemini-omni-flash-1-1") {
     if (options.hasVideoInput) return normalizedResolution === "4K" ? 252 : 168;
     return Math.ceil(21 + 10.5 * outputSeconds + (normalizedResolution === "4K" ? 84 : 0));
-  }
-  if (canonicalId === "seedance-2-5" && normalizedResolution === "1080P" && !options.hasVideoInput) {
-    throw new Error("Seedance 2.5 1080P requires a video input");
   }
   if (canonicalId === "kling-3") {
     const rate = configuredValue(options.generateAudio !== false ? kling3CreditsPerSecond.audio : kling3CreditsPerSecond.silent, normalizedResolution);
