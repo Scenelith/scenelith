@@ -22,3 +22,15 @@ test('original audio keeps its timing and pitch, truncates or pads without loops
   if(seconds>1)assert.ok(rms(1.3,1.8)<10,'the tail is silence, not a loop');
  }
 });
+
+test('a boundary-length source fragment starts at zero without AAC preroll or cropping',async t=>{
+ const {videoSegmentArguments}=await import('../src/lib/video-segment');
+ const dir=await mkdtemp(join(tmpdir(),'studio-trim-test-'));t.after(()=>rm(dir,{recursive:true,force:true}));
+ const source=join(dir,'source.mp4'),out=join(dir,'clip.mp4');
+ execFileSync('ffmpeg',['-v','error','-f','lavfi','-i','color=red:s=640x720:r=30:d=16','-f','lavfi','-i','sine=frequency=440:duration=16','-c:v','libx264','-c:a','aac',source]);
+ execFileSync('ffmpeg',videoSegmentArguments(source,out,1,16,'seedance-2-5'));
+ const probe=JSON.parse(execFileSync('ffprobe',['-v','error','-show_entries','format=duration:stream=start_time,duration,width,height','-of','json',out],{encoding:'utf8'}));
+ assert.equal(Number(probe.format.duration),15);
+ assert.ok(probe.streams.every((s:{start_time:string})=>Number(s.start_time)===0));
+ assert.ok(Math.abs(probe.streams[0].width/probe.streams[0].height-640/720)<.002,'same composition and aspect ratio');
+});

@@ -1,3 +1,4 @@
+import { videoSegmentArguments } from "@/lib/video-segment";
 import { probeVideoMetadata } from "@/lib/media-probe";
 import { assertWorkspaceStorageCapacity } from "@/lib/storage-lifecycle";
 import { spawn } from "node:child_process";
@@ -80,15 +81,7 @@ async function createSegment(source: AssetRow, projectId: string, workspaceId: s
     const measured = await probeVideoMetadata(sourceBytes);
     if (!measured.durationSeconds || end > measured.durationSeconds + .02) throw new Error("The selected range exceeds the source video");
     await writeFile(inputPath, sourceBytes);
-    await runFfmpeg([
-      "-hide_banner", "-loglevel", "error", "-i", inputPath,
-      "-ss", start.toFixed(6), "-t", (end - start).toFixed(6),
-      "-map", "0:v:0", "-map", "0:a?",
-      ...(modelId === "seedance-2-5" ? ["-vf", "scale=trunc(sqrt(921600*iw/ih)/2)*2:trunc(sqrt(921600*ih/iw)/2)*2,setsar=1", "-r", "30"] : []),
-      "-c:v", "libx264", "-preset", "veryfast", "-crf", "20", "-pix_fmt", "yuv420p",
-      "-c:a", "aac", "-movflags", "+faststart", "-avoid_negative_ts", "make_zero",
-      outputPath,
-    ]);
+    await runFfmpeg(videoSegmentArguments(inputPath,outputPath,start,end,modelId));
     const id = crypto.randomUUID();
     const filename = `segment-${source.id}-${modelId||"original"}-${start.toFixed(6)}-${end.toFixed(6)}.mp4`;
     const outputBytes = await readFile(outputPath);
