@@ -4,7 +4,7 @@ import { useEffect, useState, type ComponentType } from "react";
 import { ArrowRight } from "lucide-react";
 import AuthCanvasPreview from "@/components/ui/auth-canvas-preview";
 import AuthCredentialsPanel, { type AuthRegistrationCopy } from "@/components/ui/auth-credentials-panel";
-import BrandMark from "@/components/BrandMark";
+import BrandLogo from "@/components/BrandLogo";
 import type { AuthPageProps } from "@/editions/contracts/client";
 
 const workflowMoments = [
@@ -45,7 +45,7 @@ export default function AuthSectionTwo({ previewMedia, registrationCopy, AuthRec
     <main className="auth-v2-page">
       <section className="auth-v2-showcase">
         <div className="auth-v2-showcase-inner">
-          <div className="auth-v2-wordmark"><BrandMark />SCENELITH</div>
+          <div className="auth-v2-wordmark"><BrandLogo /></div>
           <AuthCanvasPreview activeStep={activeIndex} mediaUrl={previewMedia} />
           <div className="auth-v2-prompt">
             <div className="auth-v2-flow-copy">

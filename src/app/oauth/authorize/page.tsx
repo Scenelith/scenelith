@@ -3,7 +3,7 @@ import { redirect } from "next/navigation";
 import { CircleAlert, LockKeyhole } from "lucide-react";
 import { getCurrentUser } from "@/lib/auth";
 import { createMcpOAuthConsentRequest } from "@/lib/mcp/oauth";
-import BrandMark from "@/components/BrandMark";
+import BrandLogo from "@/components/BrandLogo";
 import { OAuthConsentForm } from "./OAuthConsentForm";
 import { ConsentAccount } from "./ConsentAccount";
 import { ResourceAccessPicker } from "./ResourceAccessPicker";
@@ -47,7 +47,7 @@ export default async function OAuthAuthorizePage({ searchParams }: { searchParam
     }, pageRequest);
   } catch (error) {
     return <main className={styles.shell}><section className={`${styles.card} ${styles.errorCard}`}>
-      <span className={styles.brand}><BrandMark />Scenelith</span>
+      <span className={styles.brand}><BrandLogo /></span>
       <CircleAlert className={styles.errorIcon} aria-hidden="true" />
       <h1>Connection request could not be verified</h1>
       <p>{error instanceof Error ? error.message : "Return to your agent and try connecting again."}</p>
@@ -58,7 +58,7 @@ export default async function OAuthAuthorizePage({ searchParams }: { searchParam
   return <main className={styles.shell}>
     <section className={styles.card}>
       <header className={styles.header}>
-        <span className={styles.brand}><BrandMark />Scenelith</span>
+        <span className={styles.brand}><BrandLogo /></span>
         <span className={styles.security}><LockKeyhole size={13} />Secure connection</span>
       </header>
 

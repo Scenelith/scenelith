@@ -226,7 +226,7 @@ button { color: inherit; }
 .profile-identity strong { overflow: hidden; color: var(--color-text); font-size: 12px; text-overflow: ellipsis; white-space: nowrap; }
 .profile-identity small { overflow: hidden; color: var(--color-text-muted); font-size: 10px; text-overflow: ellipsis; white-space: nowrap; }
 .profile-identity em { padding: 4px 6px; border-radius: 999px; background: var(--color-mint-soft); color: var(--color-mint); font: normal 7px/1 ui-monospace,monospace; text-transform: uppercase; }
-.profile-plan { min-height: 58px; margin: 4px 0 6px; padding: 9px 10px; display: flex; align-items: center; justify-content: space-between; border-top: 1px solid var(--color-border); border-bottom: 1px solid var(--color-border); background: transparent; }
+.profile-plan { min-height: 58px; margin: 4px 0 6px; padding: 9px 10px; display: flex; align-items: center; justify-content: space-between; border-top: 1px solid var(--color-border);  background: transparent; }
 .profile-plan > span { display: flex; flex-direction: column; gap: 3px; }
 .profile-plan small { color: var(--color-text-muted); font: 7px/1 ui-monospace,monospace; letter-spacing: .09em; }
 .profile-plan strong { color: var(--color-text); font-size: 12px; }
@@ -1928,3 +1928,11 @@ select.panel-input { color-scheme: dark; }
 
 .canvas-connection-message { position:absolute; top:45%; left:50%; transform:translate(-50%,-50%); width:min(420px,85%); padding:24px; text-align:center; border:1px solid var(--color-border-strong); border-radius:16px; background:var(--surface-canvas); }
 .canvas-connection-message p { color:var(--color-text-muted); font-size:13px; margin:12px 0; }
+
+.scenelith-brand-logo { display:block; width:145px; height:auto; flex:none; object-fit:contain; }
+.task-entry { position:relative; }
+.task-entry .task-row { width:100%; }
+.task-entry.has-download .task-row { padding-bottom:40px; }
+.task-download { position:absolute; bottom:10px; left:13px; display:inline-flex; align-items:center; gap:6px; color:var(--color-mint); font-size:11px; font-weight:650; text-decoration:none; }
+.task-download:hover { text-decoration:underline; }
+.task-download:focus-visible { outline:2px solid var(--color-mint); outline-offset:3px; }

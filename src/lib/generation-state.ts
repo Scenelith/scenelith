@@ -351,7 +351,7 @@ export async function generationClientState(generation: GenerationStateRow) {
   return {
     creditUsage: charges[`generation:${generation.id}`],
     id: generation.id,
-    status: generation.status,
+    status: completedGenerationStatuses.has(generation.status.toLowerCase()) && !generation.output_asset_id ? "finalizing" : generation.status,
     queuePosition: await queuedGenerationPosition(generation.id),
     processingError: extras?.processing_error,
     hasAlpha: imageMetadata.hasAlpha,
@@ -359,7 +359,7 @@ export async function generationClientState(generation: GenerationStateRow) {
     processing: Boolean(extras?.soundtrack_asset_id && !extras.processed_asset_id && generation.output_asset_id),
     lastFrameUrl: extras?.last_frame_asset_id ? `/api/assets/${extras.last_frame_asset_id}` : undefined,
     originalOutputUrl: generation.output_asset_id ? `/api/assets/${generation.output_asset_id}` : undefined,
-    outputUrl: extras?.processed_asset_id ? `/api/assets/${extras.processed_asset_id}` : generation.output_asset_id ? `/api/assets/${generation.output_asset_id}` : generation.output_url,
+    outputUrl: extras?.processed_asset_id ? `/api/assets/${extras.processed_asset_id}` : generation.output_asset_id ? `/api/assets/${generation.output_asset_id}` : null,
     assetId: extras?.processed_asset_id || generation.output_asset_id,
     mediaType: generation.media_type,
     modelId: generation.model_id,

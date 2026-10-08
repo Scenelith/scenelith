@@ -29,7 +29,7 @@ test("MCP setup uses the Scenelith marketing shell across Cloud and self-host", 
   assert.match(setup, /import MarketingFooter from "@\/components\/marketing\/MarketingFooter"/);
   assert.match(setup, /<MarketingHeader active="MCP" authenticated=\{authenticated\}/);
   assert.match(setup, /<MarketingFooter authenticated=\{authenticated\}/);
-  assert.match(header, /import BrandMark from "@\/components\/BrandMark"/);
+  assert.match(header, /import BrandLogo from "@\/components\/BrandLogo"/);
   assert.match(header, /editionMarketingChrome\.navigation\.map/);
   assert.match(footer, /editionMarketingChrome\.footerGroups\.map/);
   for (const label of ["Product", "Models", "MCP", "Docs", "Connected agents"]) assert.match(selfhostChrome, new RegExp(`"${label}"`));
