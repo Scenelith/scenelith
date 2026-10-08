@@ -9,6 +9,8 @@ type MarketingFooterProps = {
 };
 
 export default function MarketingFooter({ authenticated = false }: MarketingFooterProps) {
+  const EditionFooter = editionMarketingChrome.Footer;
+  if (EditionFooter) return <EditionFooter authenticated={authenticated} />;
   const primaryHref = authenticated ? "/canvas" : editionMarketingChrome.unauthenticatedPrimaryHref;
 
   return (
