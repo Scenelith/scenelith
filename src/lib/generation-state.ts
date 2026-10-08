@@ -377,7 +377,7 @@ export async function generationClientState(generation: GenerationStateRow) {
 export async function reconcileGeneration(id: string) {
   let generation = await readGenerationState(id);
   if (!generation) throw new Error("Generation was not found");
-  if (["cancelled", "canceled"].includes(String(generation.status).toLowerCase())) return generation;
+  if (failedGenerationStatuses.has(String(generation.status).toLowerCase())) return generation;
   if (generation.output_asset_id && completedGenerationStatuses.has(generation.status.toLowerCase())) {
     // Durable completion does not depend on an expiring provider response.
     await persistGenerationOutput(id, `/api/assets/${generation.output_asset_id}`);
@@ -390,6 +390,11 @@ export async function reconcileGeneration(id: string) {
   }
 
   try {
+    // Retry the known result directly. Provider task records can expire before
+    // media persistence has recovered, and must not block saving that result.
+    if (generation.output_url && completedGenerationStatuses.has(generation.status.toLowerCase())) {
+      return (await finalizeGenerationFromWebhook({ generationId: id, status: generation.status, outputUrl: generation.output_url }))!;
+    }
     const task = await getGeneration(generation.model_id, generation.provider_task_id);
     const providerStatus = String(task?.status || generation.status).toLowerCase();
     const outputUrl = task?.generated?.[0] || generation.output_url;
@@ -418,7 +423,7 @@ export async function reconcileGeneration(id: string) {
   } catch (error) {
     if (error instanceof KieRateLimitError) return (await readGenerationState(id))!;
     if (generationTimedOut(generation.created_at, generation.media_type)) {
-      const timedOut = await timeoutGeneration(id, generation.media_type);
+      const timedOut = await timeoutGeneration(id, generation.media_type, Date.now(), true);
       const timedOutGeneration = (await readGenerationState(id))!;
       if (timedOut) await updateGenerationNode(timedOutGeneration, { error: timedOutGeneration.error });
       return timedOutGeneration;

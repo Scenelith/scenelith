@@ -4746,11 +4746,11 @@ function CanvasWorkspace({ initialProject, projects: initialProjects, initialWor
         }}
       >
         {canvasMediaDragActive && <div className="canvas-media-drop-overlay" aria-hidden="true"><span><ImagePlus size={17} /><Video size={17} /></span><strong>Drop media on canvas</strong><small>Images and videos become saved scene nodes</small></div>}
-        {!collaborationReady && <div className="canvas-project-loading" role="status">
+        {!collaborationReady && <div className="canvas-project-loading" role="status" aria-label={collaborationError ? "Canvas couldn’t connect" : "Opening your canvas"}>
           <CanvasLoadingDotField />
-          <div className="canvas-connection-message"><strong>{collaborationError ? "Canvas couldn’t connect" : "Opening your canvas…"}</strong>
-            {collaborationError && <><p>{collaborationError}</p><button type="button" className="primary-button" onClick={retryCollaboration}>Try again</button><p>Use the top bar to open another project or section.</p></>}
-          </div>
+          {collaborationError && <div className="canvas-connection-message"><strong>Canvas couldn’t connect</strong>
+            <p>{collaborationError}</p><button type="button" className="primary-button" onClick={retryCollaboration}>Try again</button><p>Use the top bar to open another project or section.</p>
+          </div>}
         </div>}
         <nav className="canvas-floating-tools" aria-label="Canvas tools" onPointerDown={(event) => event.stopPropagation()}>
           <button type="button" className={canvasAddMenuOpen ? "is-active" : ""} onClick={() => setCanvasAddMenuOpen((open) => !open)} title="Add a node"><Plus size={17} /></button>

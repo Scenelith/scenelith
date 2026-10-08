@@ -40,15 +40,19 @@ export function publicGenerationErrorMessage(value: string) {
     .replace(/\bprovider\b/gi, "generation service");
 }
 
-export async function timeoutGeneration(generationId: string, mediaType: string, now = Date.now()) {
+export async function timeoutGeneration(generationId: string, mediaType: string, now = Date.now(), failedFinalization = false) {
   return await db.transaction(async () => {
     const generation = await db.prepare("SELECT status, output_url, output_asset_id FROM generations WHERE id = ? FOR UPDATE").get(generationId) as
       | { status: string; output_url: string | null; output_asset_id: string | null }
       | undefined;
-    if (!generation || generation.output_url || generation.output_asset_id || terminalStatuses.has(generation.status.toLowerCase())) return false;
+    if (!generation || generation.output_asset_id) return false;
+    const status = generation.status.toLowerCase();
+    const unsavedSuccess = failedFinalization && Boolean(generation.output_url)
+      && ["completed", "complete", "succeeded", "success"].includes(status);
+    if (!unsavedSuccess && (generation.output_url || terminalStatuses.has(status))) return false;
     const message = generationTimeoutMessage(mediaType);
     const changed = await db.prepare(`UPDATE generations SET status = 'failed', error = ?, updated_at = ?
-      WHERE id = ? AND output_url IS NULL AND output_asset_id IS NULL`).run(message, new Date(now).toISOString(), generationId);
+      WHERE id = ? AND output_asset_id IS NULL`).run(message, new Date(now).toISOString(), generationId);
     if (changed.changes !== 1) return false;
     await db.prepare(`UPDATE generation_dispatch_jobs SET status = 'failed', last_error = ?, updated_at = ?
       WHERE generation_id = ? AND status IN ('queued', 'dispatching', 'dispatched')`).run(message, new Date(now).toISOString(), generationId);
