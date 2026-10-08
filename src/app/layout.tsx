@@ -7,7 +7,7 @@ export const metadata: Metadata = {
   title: "Scenelith — Creative Canvas",
   description: "A private node canvas for turning source content into original visual concepts.",
   icons: {
-    icon: [{ url: "/favicon.ico", sizes: "any" }, { url: "/icon.svg", type: "image/svg+xml" }],
+    icon: [{ url: "/icon.svg", type: "image/svg+xml" }],
   },
 };
 
