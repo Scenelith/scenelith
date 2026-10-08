@@ -57,7 +57,8 @@ export default async function OAuthAuthorizePage({ searchParams }: { searchParam
     </section></main>;
   }
 
-  return <main className={styles.shell}>
+  return <main className={`${styles.shell} ${editionMcpConfig.consent?.className || ""}`}>
+    {editionMcpConfig.consent?.images && <aside aria-hidden="true" className="edition-consent-art">{editionMcpConfig.consent.images.map(image=><img key={image.src} src={image.src} alt=""/>)}</aside>}
     <section className={styles.card}>
       <header className={styles.header}>
         <span className={styles.brand}><BrandLogo /></span>
