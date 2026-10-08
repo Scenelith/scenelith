@@ -109,6 +109,7 @@ async function cycle() {
   try {
     await Promise.all([
       runsGeneration ? tickGenerationWorker() : Promise.resolve(),
+      runsGeneration ? editionWorker.drainGeneration?.() : Promise.resolve(),
       runsAutomation ? Promise.all([
         (async () => {
           await drainAutomationWorkflowTriggers();

@@ -562,7 +562,7 @@ test("Video Master assistant reuses the selected timeline thumbnail in a compact
 test("uploaded master clips use measured media duration and repair legacy provisional durations", () => {
   assert.match(assetUploadRoute, /probeVideoMetadata\(bytes, extension\)/);
   assert.match(assetUploadRoute, /durationSeconds/);
-  assert.match(mediaProbe, /stream=width,height/);
+  assert.match(mediaProbe, /stream=codec_type,width,height/);
   assert.match(canvasApp, /const duration = Math\.max\(\.1, Number\(asset\.durationSeconds/);
   assert.match(canvasApp, /sourceAspectRatio/);
   assert.match(canvasPlayer, /callbacksRef\.current\.onMediaDuration\?\.\(duration\)/);

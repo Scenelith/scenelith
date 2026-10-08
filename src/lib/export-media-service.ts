@@ -57,7 +57,7 @@ export async function exportVideoMedia(userId: string, input: unknown) {
       headers: {
         "content-type": "video/mp4",
         "content-length": String(bytes.byteLength),
-        "content-disposition": `attachment; filename="${filename}"; filename*=UTF-8''${encodeURIComponent(filename)}`,
+        "content-disposition": `attachment; filename="video-export.mp4"; filename*=UTF-8''${encodeURIComponent(filename)}`,
         "cache-control": "private, no-store",
       },
     });
