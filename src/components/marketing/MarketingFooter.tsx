@@ -1,4 +1,5 @@
 import Link from "next/link";
+import type { EditionMarketingChrome } from "@/editions/contracts/marketing";
 import { Circle } from "lucide-react";
 import BrandLogo from "@/components/BrandLogo";
 import { editionMarketingChrome } from "@/editions/current/marketing";
@@ -9,7 +10,7 @@ type MarketingFooterProps = {
 };
 
 export default function MarketingFooter({ authenticated = false }: MarketingFooterProps) {
-  const EditionFooter = editionMarketingChrome.Footer;
+  const EditionFooter = (editionMarketingChrome as EditionMarketingChrome).Footer;
   if (EditionFooter) return <EditionFooter authenticated={authenticated} />;
   const primaryHref = authenticated ? "/canvas" : editionMarketingChrome.unauthenticatedPrimaryHref;
 
