@@ -1,3 +1,4 @@
+import { assetContentDisposition } from './asset-download';
 import { createHash } from "node:crypto";
 import { createReadStream } from "node:fs";
 import { mkdir, readFile, stat, unlink, writeFile } from "node:fs/promises";
@@ -292,7 +293,7 @@ export async function signedStorageReadUrl(reference: string, options: SignedRea
   const signingDate = new Date(Math.floor(Date.now() / signingWindowMs) * signingWindowMs);
   const downloadName = options.downloadName ? safeDownloadName(options.downloadName) : null;
   const contentDisposition = downloadName
-    ? `attachment; filename="${downloadName}"; filename*=UTF-8''${encodeURIComponent(downloadName)}`
+    ? assetContentDisposition(downloadName)
     : undefined;
   return getSignedUrl(
     getObjectStorageClient(),

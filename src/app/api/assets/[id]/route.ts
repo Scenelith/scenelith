@@ -1,3 +1,4 @@
+import { assetContentDisposition } from '@/lib/asset-download';
 import { parseVideoByteRange } from "@/lib/video-byte-range";
 import { requireApiUser } from "@/lib/auth";
 import { db, userCanAccessAsset } from "@/lib/postgres-db";
@@ -48,11 +49,9 @@ function etagForHash(hash: string | null) {
 }
 
 function responseHeaders(asset: ServedAsset, download = false) {
-  const filename = asset.filename.replace(/[\r\n"\\]/g, "").trim() || "download";
-  const encodedFilename = encodeURIComponent(filename).replace(/[!'()*]/g, (character) => `%${character.charCodeAt(0).toString(16).toUpperCase()}`);
   const headers = new Headers({
     "content-type": asset.mimeType,
-    "content-disposition": `${download ? "attachment" : "inline"}; filename="${filename}"; filename*=UTF-8''${encodedFilename}`,
+    "content-disposition": assetContentDisposition(asset.filename, download),
     "cache-control": asset.cacheControl,
   });
   const etag = etagForHash(asset.contentHash);
