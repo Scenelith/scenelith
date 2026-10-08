@@ -242,7 +242,7 @@ export async function persistGenerationOutput(id: string, outputUrl: string) {
     ? await probeVideoMetadata(bytes, extension).catch(() => ({}))
     : {};
   const assetId = crypto.randomUUID();
-  const filename = `${id}${extension}`;
+  const filename = `scenelith-${generation.media_type}-${id.slice(0, 8)}${extension}`;
   const project = await db.prepare("SELECT workspace_id FROM projects WHERE id = ?").get(generation.project_id) as { workspace_id: string } | undefined;
   if (!project?.workspace_id) throw new Error("Generation project has no workspace");
   const stored = await putStorageObject(bytes, `workspaces/${project.workspace_id}/projects/${generation.project_id}/generations/${filename}`, { contentType });
