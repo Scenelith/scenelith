@@ -119,7 +119,7 @@ function normalizedOAuthScopes(value: unknown): OAuthScope[] {
 
 function normalizedProjectIds(value: unknown) {
   const ids = [...new Set(jsonStrings(value).map((id) => id.trim()).filter(Boolean))];
-  return ids.length ? ids : null;
+  return ids.length ? ids : Array.isArray(value) || typeof value === "string" && value.trim() === "[]" ? [] : null;
 }
 
 function oauthError(error: string, description: string, status = 400) {
@@ -325,7 +325,7 @@ export async function decideMcpOAuthConsent(input: {
     if (input.workspaceId && !await userCanAccessWorkspace(input.userId, input.workspaceId)) throw new Error("Workspace not found");
     if (!input.workspaceId && editionMcpConfig.permissions.some(permission=>permission.requiresWorkspace && input.scopes.includes(permission.id))) throw new Error("Choose a workspace for these permissions");
     const projectIds = input.restrictToProjects ? [...new Set((input.projectIds || []).map((id) => id.trim()).filter(Boolean))] : [];
-    if (input.restrictToProjects && !projectIds.length) throw new Error("Choose at least one canvas or allow all canvases");
+    if (input.restrictToProjects && !projectIds.length && !editionMcpConfig.permissions.some(p=>input.scopes.includes(p.id)&&requested.includes(p.id))) throw new Error("Choose at least one canvas or allow all canvases");
     if (projectIds.length > 200) throw new Error("Choose no more than 200 canvases");
     for (const projectId of projectIds) {
       if (!await userCanAccessProject(input.userId, projectId)) throw new Error("One of the selected canvases is unavailable");
@@ -334,14 +334,16 @@ export async function decideMcpOAuthConsent(input: {
     const projectWorkspaces = new Set(await Promise.all(projectIds.map(workspaceIdForProject)));
     const workspaces = (await mcpConsentWorkspaces(input.userId)).filter((workspace) =>
       (!input.workspaceId || input.workspaceId === workspace.id) && (!input.restrictToProjects || projectWorkspaces.has(workspace.id)));
-    const allowedScopes = availableMcpConsentScopes(input.scopes, workspaces)
+    const editionIds=new Set(editionMcpConfig.permissions.map(p=>p.id));
+    const editionWorkspaces=(await mcpConsentWorkspaces(input.userId)).filter(w=>w.id===input.workspaceId);
+    const allowedScopes = [...availableMcpConsentScopes(input.scopes.filter(s=>!editionIds.has(s)), workspaces),...availableMcpConsentScopes(input.scopes.filter(s=>editionIds.has(s)),editionWorkspaces)]
       .filter((scope) => input.libraryAccess || !["library:write", "identity:write"].includes(scope));
     const granted = oauthScopes.filter((scope) => scope === "offline_access"
       ? requested.includes(scope)
       : allowedScopes.includes(scope as McpScope) && requested.includes(scope));
     const code = `scn_code_${randomToken(32)}`;
     await db.prepare(`UPDATE mcp_oauth_authorizations SET granted_scopes_json = ?, workspace_id = ?, project_ids_json = ?, library_access = ?, code_hash = ?, decided_at = ?, code_expires_at = ?
-      WHERE id = ?`).run(JSON.stringify(granted), input.workspaceId || null, projectIds.length ? JSON.stringify(projectIds) : null, input.libraryAccess,
+      WHERE id = ?`).run(JSON.stringify(granted), input.workspaceId || null, input.restrictToProjects ? JSON.stringify(projectIds) : null, input.libraryAccess,
         hashOpaqueToken(code), now.toISOString(), new Date(now.getTime() + 5 * 60 * 1000).toISOString(), row.id);
     return authorizationRedirect(row, { code });
   })();

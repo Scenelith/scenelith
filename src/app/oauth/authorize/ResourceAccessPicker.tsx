@@ -22,7 +22,8 @@ export function ResourceAccessPicker({ workspaces, canvases, requestedScopes }: 
   const selectedWorkspaceIds = new Set(visibleCanvases.filter((canvas) => selected.has(canvas.id)).map((canvas) => canvas.workspaceId));
   const scopeWorkspaces = workspaces.filter((workspace) => (!workspaceId || workspace.id === workspaceId) && (!specific || selectedWorkspaceIds.has(workspace.id)));
   const requiresWorkspace = (scope:string)=>editionMcpConfig.permissions.some(p=>p.id===scope&&p.requiresWorkspace);
-  const scopes = availableMcpConsentScopes(requestedScopes, scopeWorkspaces).filter((scope) => libraryAccess || !["library:write", "identity:write"].includes(scope));
+  const editionIds=new Set(editionMcpConfig.permissions.map(p=>p.id));
+  const scopes = [...availableMcpConsentScopes(requestedScopes.filter(s=>!editionIds.has(s)), scopeWorkspaces),...availableMcpConsentScopes(requestedScopes.filter(s=>editionIds.has(s)),workspaces.filter(w=>w.id===workspaceId))].filter((scope) => libraryAccess || !["library:write", "identity:write"].includes(scope));
   const restricted = scopeWorkspaces.length > 0 && scopeWorkspaces.every((workspace) => workspace.role === "member");
   const toggleScope = (scope: McpScope) => setExcludedScopes((current) => { const next = new Set(current); if (next.has(scope)) next.delete(scope); else next.add(scope); return next; });
 
@@ -60,7 +61,7 @@ export function ResourceAccessPicker({ workspaces, canvases, requestedScopes }: 
         <input type="checkbox" name="project_id" value={canvas.id} checked={selected.has(canvas.id)} onChange={() => toggleCanvas(canvas.id)} />
         <span><strong>{canvas.name}</strong>{!workspaceId && <small>{workspaceNames.get(canvas.workspaceId) || "Workspace"}</small>}</span>
       </label>) : <p>No canvases are available in this workspace.</p>}
-      {visibleCanvases.length > 0 && selected.size === 0 && <small className={styles.selectionNote}>Choose at least one canvas.</small>}
+      {visibleCanvases.length > 0 && selected.size === 0 && <small className={styles.selectionNote}>Choose a canvas, or leave empty for edition-only access.</small>}
     </div>}
 
     <label className={styles.libraryAccess}>
