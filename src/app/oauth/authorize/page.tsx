@@ -1,7 +1,7 @@
 import {editionMcpConfig} from "@/editions/current/mcp-config";
 import { headers } from "next/headers";
 import { redirect } from "next/navigation";
-import { CircleAlert, LockKeyhole } from "lucide-react";
+import { CircleAlert } from "lucide-react";
 import { getCurrentUser } from "@/lib/auth";
 import { createMcpOAuthConsentRequest } from "@/lib/mcp/oauth";
 import BrandLogo from "@/components/BrandLogo";
@@ -62,11 +62,10 @@ export default async function OAuthAuthorizePage({ searchParams }: { searchParam
     <section className={styles.card}>
       <header className={styles.header}>
         <span className={styles.brand}><BrandLogo /></span>
-        <span className={styles.security}><LockKeyhole size={13} />Secure connection</span>
       </header>
 
       <div className={styles.intro}>
-        <div><p>Connect an AI agent</p><h1>{consent.client.name} wants to access Scenelith</h1></div>
+        <h1>Connect {consent.client.name}</h1>
       </div>
 
       <ConsentAccount requestId={consent.id} name={user.name || ""} email={user.email} teammate={consent.workspaces.length > 0 && consent.workspaces.every((workspace) => workspace.role === "member")} />
@@ -78,13 +77,13 @@ export default async function OAuthAuthorizePage({ searchParams }: { searchParam
         <ResourceAccessPicker workspaces={consent.workspaces} canvases={consent.canvases} requestedScopes={consent.requestedScopes} />
 
         <div className={styles.callback}>
-          <span>After approval, you will return to</span>
+          <span>Returns to</span>
           <strong>{consent.client.redirectHost}</strong>
         </div>
 
       </OAuthConsentForm>
 
-      <footer>You can revoke this connection at any time. Changes to your workspace access also apply to your agent.</footer>
+      <footer>You can revoke access anytime.</footer>
     </section>
   </main>;
 }

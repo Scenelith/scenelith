@@ -17,7 +17,7 @@ function GroupToggle({checked,mixed,label,onChange}:{checked:boolean;mixed:boole
 }
 
 export function ResourceAccessPicker({ workspaces, canvases, requestedScopes }: { workspaces: McpConsentWorkspace[]; canvases: Canvas[]; requestedScopes: McpScope[] }) {
-  const [workspaceId, setWorkspaceId] = useState("");
+  const [workspaceId, setWorkspaceId] = useState(workspaces.length === 1 ? workspaces[0].id : "");
   const [specific, setSpecific] = useState(false);
   const [selected, setSelected] = useState<Set<string>>(() => new Set());
   const visibleCanvases = useMemo(() => canvases.filter((canvas) => !workspaceId || canvas.workspaceId === workspaceId), [canvases, workspaceId]);
@@ -39,7 +39,7 @@ export function ResourceAccessPicker({ workspaces, canvases, requestedScopes }: 
     const permission=mcpConsentPermissionCopy(scope,scopeWorkspaces),Icon=icons[scope as keyof typeof icons]||Sparkles;
     return <label className={styles.permission} key={scope}>
       <span className={styles.permissionIcon}><Icon size={17}/></span>
-      <span><strong>{permission.title}</strong><small>{permission.detail}</small></span>
+      <span><strong>{scope==="mcp:read"?"View resources":permission.title}</strong>{scope!=="mcp:read"&&<small>{permission.detail}</small>}</span>
       {scope==="mcp:read"?<span className={styles.required}>Required</span>:<input type="checkbox" name="scope" value={scope} disabled={!workspaceId&&requiresWorkspace(scope)} checked={!excludedScopes.has(scope)&&(!requiresWorkspace(scope)||!!workspaceId)} onChange={()=>toggleScope(scope)}/>}
     </label>;
   };
@@ -52,7 +52,7 @@ export function ResourceAccessPicker({ workspaces, canvases, requestedScopes }: 
 
   return <div className={styles.resourcePicker}>
     <label className={styles.workspaceField}>
-      <span>Workspace access</span>
+      <span>Workspace</span>
       <select name="workspace_id" value={workspaceId} onChange={(event) => {
         setWorkspaceId(event.target.value);
         setSelected(new Set());
@@ -62,6 +62,8 @@ export function ResourceAccessPicker({ workspaces, canvases, requestedScopes }: 
       </select>
     </label>
 
+    <details className={styles.customize}>
+      <summary><span>Customize access</span><small>{specific ? `${selected.size} canvases` : 'All canvases'} · Library {libraryAccess ? 'on' : 'off'}</small></summary>
     <input type="hidden" name="canvas_access" value={specific ? "specific" : "all"} />
     <div className={styles.canvasAccessHead}>
       <span><FolderOpen size={14} />Canvas access</span>
@@ -71,7 +73,7 @@ export function ResourceAccessPicker({ workspaces, canvases, requestedScopes }: 
       </div>
     </div>
 
-    <p className={styles.accessSummary}>{specific ? `${selected.size} canvas${selected.size === 1 ? "" : "es"} selected` : `${visibleCanvases.length} accessible canvas${visibleCanvases.length === 1 ? "" : "es"}`}. Your agent can only access resources available to your account.</p>
+    <p className={styles.accessSummary}>{specific ? `${selected.size} canvas${selected.size === 1 ? "" : "es"} selected` : `${visibleCanvases.length} accessible canvas${visibleCanvases.length === 1 ? "" : "es"}`}</p>
 
     {specific && <div className={styles.canvasChoices}>
       {visibleCanvases.length ? visibleCanvases.map((canvas) => <label key={canvas.id}>
@@ -83,23 +85,24 @@ export function ResourceAccessPicker({ workspaces, canvases, requestedScopes }: 
 
     <label className={styles.libraryAccess}>
       <span className={styles.libraryIcon}><Images size={15} /></span>
-      <span><strong>Allow Library access</strong><small>Only media belonging to the projects and canvases allowed above will be visible.</small></span>
+      <span><strong>Library access</strong></span>
       <input type="checkbox" name="library_access" value="true" checked={libraryAccess} onChange={(event) => setLibraryAccess(event.target.checked)} />
     </label>
 
-    <div className={styles.permissionHeading}><span className={styles.sectionLabel}>What your agent can do</span><small>Based on your access</small></div>
-    <div className={`${styles.permissions} ${groups.length?styles.groupedPermissions:""}`}>
-      {scopes.filter(scope=>!grouped.has(scope)).map(renderPermission)}
+    </details>
+    <div className={styles.permissionHeading}><span className={styles.sectionLabel}>Permissions</span></div>
+    <div className={`${styles.permissions} ${styles.groupedPermissions}`}>
+      {scopes.filter(scope=>!grouped.has(scope)).map(scope=>scope==='mcp:read'?<section key={scope} className={styles.basicPermission}>{renderPermission(scope)}<details><summary>Details</summary><p className={styles.groupSummary}>{mcpConsentPermissionCopy(scope,scopeWorkspaces).detail}</p></details></section>:renderPermission(scope))}
       {groups.map(group=>{
         const enabled=group.scopes.filter(scope=>!excludedScopes.has(scope));
         return <section key={group.id} className={styles.permissionGroup}>
           <label className={styles.groupHeading}><strong>{group.title}</strong><GroupToggle label={group.title} checked={enabled.length===group.scopes.length} mixed={enabled.length>0&&enabled.length<group.scopes.length} onChange={()=>setExcludedScopes(current=>{const next=new Set(current);for(const scope of group.scopes){if(enabled.length===group.scopes.length)next.add(scope);else next.delete(scope);}return next;})}/></label>
-          <p className={styles.groupSummary}>{group.detail&&group.scopes.length===editionMcpConfig.permissionGroups?.find(item=>item.id===group.id)?.scopes.length?group.detail:group.scopes.map(scope=>mcpConsentPermissionCopy(scope,scopeWorkspaces).detail).join(' ')}</p>
-          <details><summary>Choose individual actions <span>{enabled.length}/{group.scopes.length}</span></summary><div>{group.scopes.map(renderPermission)}</div></details>
+          <details><summary>Details <span>{enabled.length}/{group.scopes.length}</span></summary><p className={styles.groupSummary}>{group.detail&&group.scopes.length===editionMcpConfig.permissionGroups?.find(item=>item.id===group.id)?.scopes.length?group.detail:group.scopes.map(scope=>mcpConsentPermissionCopy(scope,scopeWorkspaces).detail).join(' ')}</p>
+          <div>{group.scopes.map(renderPermission)}</div></details>
         </section>;
       })}
     </div>
-    {!workspaceId&&requestedScopes.some(requiresWorkspace)&&<p className={styles.accessSummary}>Choose one workspace to review additional creative tools.</p>}
+    {!workspaceId&&requestedScopes.some(requiresWorkspace)&&<p className={styles.accessSummary}>Choose a workspace to enable more actions.</p>}
     {restricted && <div className={styles.roleBoundary}><LockKeyhole size={16} /><div><strong>Owner permissions stay with the owner</strong><p>Creating canvases, publishing workflows, and managing triggers or credentials are not granted by this connection.</p></div></div>}
     {!scopeWorkspaces.length && <p className={styles.accessSummary}>{specific ? "Choose a canvas to see its available actions." : "No workspace access is available yet. Your agent will only be able to check which resources become accessible."}</p>}
   </div>;

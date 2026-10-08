@@ -46,7 +46,7 @@ export function OAuthConsentForm({ children }: { children: ReactNode }) {
         {pendingDecision === "deny" ? "Cancelling…" : "Cancel"}
       </button>
       <button type="submit" name="decision" value="allow" className={styles.allow} disabled={pendingDecision !== null}>
-        {pendingDecision === "allow" ? "Connecting…" : "Allow access"}
+        {pendingDecision === "allow" ? "Connecting…" : "Connect"}
       </button>
     </div>
   </form>;

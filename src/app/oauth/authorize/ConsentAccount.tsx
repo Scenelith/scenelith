@@ -23,10 +23,9 @@ export function ConsentAccount({ requestId, name, email, teammate }: { requestId
   return <div className={styles.accountSection}>
     <div className={styles.accountRow}>
       <span className={styles.accountAvatar}><UserRound size={19} /></span>
-      <div className={styles.accountIdentity}><span>Connecting as {teammate && <b>Team member</b>}</span><strong>{name || email}</strong>{name && <small>{email}</small>}</div>
-      <button className={styles.switchAccount} type="button" disabled={pending} onClick={() => void switchAccount()}><ArrowRightLeft size={13} />{pending ? "Switching…" : "Use another account"}</button>
+      <div className={styles.accountIdentity}>{teammate && <span>Team member</span>}<strong>{name || email}</strong>{name && <small>{email}</small>}</div>
+      <button className={styles.switchAccount} type="button" disabled={pending} onClick={() => void switchAccount()}><ArrowRightLeft size={13} />{pending ? "Switching…" : "Switch"}</button>
     </div>
-    <p className={styles.accountNote}>{teammate ? "Connect independently — no admin approval needed. Your agent follows the access your team has already given you." : "Your agent follows your existing workspace access. Choose what this connection can do below."}</p>
     {error && <p className={styles.formError} role="alert">{error}</p>}
   </div>;
 }
