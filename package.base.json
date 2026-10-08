@@ -43,7 +43,7 @@
     "zod": "^4.4.3"
   },
   "devDependencies": {
-    "@modelcontextprotocol/client": "^2.0.0",
+    "@modelcontextprotocol/client": "^2.2.0",
     "@playwright/test": "1.62.0",
     "@tailwindcss/postcss": "^4",
     "@types/node": "^20",
