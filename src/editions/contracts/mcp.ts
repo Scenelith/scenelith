@@ -5,7 +5,7 @@ export type EditionMcpPermission = { id:string; title:string; detail:string; req
 export type EditionMcpConfig = {
  permissions:readonly EditionMcpPermission[];
  /** Presentation only. Groups never add scopes to an OAuth request. */
- permissionGroups?:readonly {id:string;title:string;scopes:readonly string[]}[];
+ permissionGroups?:readonly {id:string;title:string;detail?:string;scopes:readonly string[]}[];
  consent?:{className?:string;images?:readonly {src:string;alt:string}[]};
 };
 export type EditionMcpServer = {

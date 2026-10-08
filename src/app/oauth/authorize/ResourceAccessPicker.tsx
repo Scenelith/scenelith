@@ -88,13 +88,13 @@ export function ResourceAccessPicker({ workspaces, canvases, requestedScopes }: 
     </label>
 
     <div className={styles.permissionHeading}><span className={styles.sectionLabel}>What your agent can do</span><small>Based on your access</small></div>
-    <div className={styles.permissions}>
+    <div className={`${styles.permissions} ${groups.length?styles.groupedPermissions:""}`}>
       {scopes.filter(scope=>!grouped.has(scope)).map(renderPermission)}
       {groups.map(group=>{
         const enabled=group.scopes.filter(scope=>!excludedScopes.has(scope));
         return <section key={group.id} className={styles.permissionGroup}>
           <label className={styles.groupHeading}><strong>{group.title}</strong><GroupToggle label={group.title} checked={enabled.length===group.scopes.length} mixed={enabled.length>0&&enabled.length<group.scopes.length} onChange={()=>setExcludedScopes(current=>{const next=new Set(current);for(const scope of group.scopes){if(enabled.length===group.scopes.length)next.add(scope);else next.delete(scope);}return next;})}/></label>
-          <p className={styles.groupSummary}>{group.scopes.map(scope=>mcpConsentPermissionCopy(scope,scopeWorkspaces).detail).join(' ')}</p>
+          <p className={styles.groupSummary}>{group.detail&&group.scopes.length===editionMcpConfig.permissionGroups?.find(item=>item.id===group.id)?.scopes.length?group.detail:group.scopes.map(scope=>mcpConsentPermissionCopy(scope,scopeWorkspaces).detail).join(' ')}</p>
           <details><summary>Choose individual actions <span>{enabled.length}/{group.scopes.length}</span></summary><div>{group.scopes.map(renderPermission)}</div></details>
         </section>;
       })}
