@@ -339,7 +339,7 @@ button { color: inherit; }
 .tool-rail button.is-active { color: #e9d6f2; border-color: #584161; background: #231b27; }
 .rail-rule { height: 1px; background: #302f2d; margin: 8px 8px; }
 
-.canvas-stage { position: absolute; inset: 0; background: var(--surface-canvas); }
+.canvas-stage { position: absolute; inset: 0; isolation:isolate; background: var(--surface-canvas); }
 .canvas-stage .react-flow__viewport { will-change: transform; }
 .canvas-project-loading { position:absolute; inset:0; z-index:20; overflow:hidden; background:transparent; pointer-events:auto; }
 .canvas-loading-dot-field { position:absolute; inset:0; pointer-events:none; overflow:hidden; }
@@ -1925,3 +1925,6 @@ select.panel-input { color-scheme: dark; }
 
 .generator-node-toolbar button.text-overlay-trigger { width:auto; min-width:58px; padding:0 8px; font-size:10px; white-space:nowrap; }
 .media-viewer-topbar button:disabled { opacity:.35; cursor:default; }
+
+.canvas-connection-message { position:absolute; top:45%; left:50%; transform:translate(-50%,-50%); width:min(420px,85%); padding:24px; text-align:center; border:1px solid var(--color-border-strong); border-radius:16px; background:var(--surface-canvas); }
+.canvas-connection-message p { color:var(--color-text-muted); font-size:13px; margin:12px 0; }

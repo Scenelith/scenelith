@@ -19,9 +19,10 @@ function collaborationWebsocketUrl() {
 
 type CollaborationSession = { projectId: string; token: string; documentEpoch: number };
 
-async function fetchToken(projectId: string): Promise<CollaborationSession> {
+async function fetchToken(projectId: string, signal?: AbortSignal): Promise<CollaborationSession> {
   const response = await fetch("/api/collaboration/token", {
     method: "POST",
+    signal,
     headers: { "content-type": "application/json" },
     body: JSON.stringify({ projectId, clientVersion: CANVAS_CLIENT_VERSION }),
   });
@@ -50,6 +51,15 @@ export function useCanvasCollaboration(input: {
   const [collaborators, setCollaborators] = useState<CanvasCollaborator[]>([]);
   const [collaboratorsProjectId, setCollaboratorsProjectId] = useState<string | null>(null);
   const [peerConnection, setPeerConnection] = useState({ projectId: input.projectId, count: 0 });
+  const [attempt, setAttempt] = useState(0);
+  const [problem, setProblem] = useState<{ projectId: string; message: string } | null>(null);
+  const retry = useCallback(() => {
+    if (syncedProjectIdRef.current === input.projectId) return;
+    setSession(null);
+    setProblem(null);
+    setConnection({ projectId: input.projectId, status: "connecting" });
+    setAttempt(value => value + 1);
+  }, [input.projectId]);
   const [session, setSession] = useState<CollaborationSession | null>(null);
   const providerRef = useRef<HocuspocusProvider | null>(null);
   const documentRef = useRef<Y.Doc | null>(null);
@@ -62,13 +72,24 @@ export function useCanvasCollaboration(input: {
 
   useEffect(() => {
     let cancelled = false;
-    void fetchToken(input.projectId).then((next) => {
+    const controller = new AbortController();
+    const deadline = window.setTimeout(() => controller.abort(), 15000);
+    void fetchToken(input.projectId, controller.signal).then((next) => {
       if (!cancelled) setSession(next);
     }).catch(() => {
-      if (!cancelled) setConnection({ projectId: input.projectId, status: "error" });
-    });
-    return () => { cancelled = true; };
-  }, [input.projectId]);
+      if (!cancelled) {
+        setConnection({ projectId: input.projectId, status: "error" });
+        setProblem({ projectId: input.projectId, message: "Could not connect to this canvas. Your saved project is safe. Try again." });
+      }
+    }).finally(() => window.clearTimeout(deadline));
+    return () => { cancelled = true; controller.abort(); window.clearTimeout(deadline); };
+  }, [input.projectId, attempt]);
+
+  useEffect(() => {
+    if (syncedProjectId === input.projectId) return;
+    const timeout = window.setTimeout(() => setProblem({ projectId: input.projectId, message: "This canvas is taking longer to connect. Try again or open another section." }), 15000);
+    return () => window.clearTimeout(timeout);
+  }, [input.projectId, syncedProjectId, attempt]);
 
   useEffect(() => {
     if (!session || session.projectId !== input.projectId) return;
@@ -76,8 +97,9 @@ export function useCanvasCollaboration(input: {
     documentRef.current = document;
     let destroyed = false;
     let remoteScheduled = false;
+    let initialSyncComplete = false;
     const applyRemote = () => {
-      if (destroyed || remoteScheduled) return;
+      if (destroyed || remoteScheduled || !initialSyncComplete) return;
       remoteScheduled = true;
       queueMicrotask(() => {
         remoteScheduled = false;
@@ -105,6 +127,8 @@ export function useCanvasCollaboration(input: {
       flushDelay: 60,
       onSynced: () => {
         if (destroyed) return;
+        initialSyncComplete = true;
+        setProblem(null);
         syncedProjectIdRef.current = input.projectId;
         setSyncedProjectId(input.projectId);
         setConnection({ projectId: input.projectId, status: "synced" });
@@ -115,7 +139,7 @@ export function useCanvasCollaboration(input: {
         setConnection({ projectId: input.projectId, status: nextStatus === "disconnected" ? "offline" : "connecting" });
       },
       onAuthenticationFailed: () => {
-        if (!destroyed) setConnection({ projectId: input.projectId, status: "error" });
+        if (!destroyed) { setConnection({ projectId: input.projectId, status: "error" }); setProblem({ projectId: input.projectId, message: "Canvas access could not be verified. Try again." }); }
       },
       onAwarenessChange: ({ states }) => {
         if (destroyed) return;
@@ -181,6 +205,8 @@ export function useCanvasCollaboration(input: {
   return {
     status,
     ready,
+    error: !ready && problem?.projectId === input.projectId ? problem.message : null,
+    retry,
     collaborators: ready && collaboratorsProjectId === input.projectId ? collaborators : [],
     peerCount: ready && peerConnection.projectId === input.projectId ? peerConnection.count : 0,
     mutate,
