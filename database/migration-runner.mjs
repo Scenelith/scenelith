@@ -112,6 +112,9 @@ async function applyStreams(client) {
       if (previous) continue;
       await client.query("BEGIN");
       try {
+        // A restored baseline may clear search_path. Each incremental migration
+        // executes in the application schema regardless of the restore session.
+        await client.query("SET LOCAL search_path TO public");
         await client.query(sql);
         await client.query(
           `INSERT INTO public.${streamLedger} (stream, version, checksum) VALUES ($1, $2, $3)`,
