@@ -445,6 +445,7 @@ function applyModelCatalogue(graphNodes: FrameNode[], graphEdges: FrameEdge[], m
 }
 
 function CanvasWorkspace({ initialProject, projects: initialProjects, initialWorkspace, workspaces: initialWorkspaces, user, creditUsage, initialModels }: { initialProject: ProjectRecord; projects: ProjectRecord[]; initialWorkspace: WorkspaceRecord; workspaces: WorkspaceRecord[]; user: UserRecord; creditUsage: UsageSummary; initialModels: ModelOption[] }) {
+  const CanvasNavigation = editionClient.CanvasNavigation;
   const ProductNotificationCenter = editionClient.NotificationCenter;
   const ProductPanelRouter = editionClient.PanelRouter;
   const EditionWorkspaceNotice = editionClient.WorkspaceNotice;
@@ -656,7 +657,9 @@ function CanvasWorkspace({ initialProject, projects: initialProjects, initialWor
       setProjectSwitchingId(null);
     }
   }, [fitView, models, project, setViewport]);
-  const { status: collaborationStatus, ready: collaborationReady, peerCount, mutate: mutateCollaborativeGraph, flush: flushCollaborativeGraph } = useCanvasCollaboration({ projectId: project.id, user, onRemoteGraph: applyCollaborativeGraph });
+  const { status: collaborationStatus, ready: collaborationReady, error: collaborationError, retry: retryCollaboration, peerCount, mutate: mutateCollaborativeGraph, flush: flushCollaborativeGraph } = useCanvasCollaboration({ projectId: project.id, user, onRemoteGraph: applyCollaborativeGraph });
+  const collaborationReadyRef = useRef(collaborationReady);
+  collaborationReadyRef.current = collaborationReady;
   const mutateCollaborativeGraphRef = useRef(mutateCollaborativeGraph);
   mutateCollaborativeGraphRef.current = mutateCollaborativeGraph;
   const markGraphCommitted = useCallback(() => {
@@ -675,6 +678,7 @@ function CanvasWorkspace({ initialProject, projects: initialProjects, initialWor
     setNodesState(next);
   }, []);
   const commitGraph = useCallback((nextNodes: FrameNode[], nextEdges: FrameEdge[]) => {
+    if (projectHydratingIdRef.current || !collaborationReadyRef.current) return;
     const previousNodes = localNodesStateRef.current;
     const previousEdges = localEdgesStateRef.current;
     const reconciled = reconcileGeneratorReferenceChanges(
@@ -1406,6 +1410,7 @@ function CanvasWorkspace({ initialProject, projects: initialProjects, initialWor
   }, [materializeVideoSegment, models, pushHistory]);
 
   const importCanvasMedia = useCallback(async (files: File[], screenPosition?: { x: number; y: number }, source: "clipboard" | "drop" = "drop") => {
+    if (projectHydratingIdRef.current || !collaborationReadyRef.current) return;
     const mediaFiles = files.filter(isAcceptedCanvasMedia).slice(0, 12);
     if (!mediaFiles.length) {
       setNotice("Drop JPG, PNG, MP4, MOV or WebM files");
@@ -1949,6 +1954,7 @@ function CanvasWorkspace({ initialProject, projects: initialProjects, initialWor
   }
 
   async function generateMasterClip(nodeId: string, clipId: string) {
+    if (projectHydratingIdRef.current || !collaborationReadyRef.current) { return; }
     const master = nodesRef.current.find((node) => node.id === nodeId && node.data.kind === "videoMaster");
     const clip = master?.data.videoMasterClips?.find((item) => item.id === clipId);
     if (!master || !clip || !clip.prompt.trim()) return;
@@ -2060,6 +2066,7 @@ function CanvasWorkspace({ initialProject, projects: initialProjects, initialWor
   }
 
   async function importSource(event: React.FormEvent) {
+    if (projectHydratingIdRef.current || !collaborationReadyRef.current) { event.preventDefault(); return; }
     event.preventDefault();
     if (!sourceUrl.trim()) return;
     setImporting(true);
@@ -3579,6 +3586,7 @@ function CanvasWorkspace({ initialProject, projects: initialProjects, initialWor
   }
 
   async function runAssistant(nodeId: string) {
+    if (projectHydratingIdRef.current || !collaborationReadyRef.current) { return; }
     const assistant = nodesRef.current.find((node) => node.id === nodeId && node.data.kind === "assistant");
     const instruction = String(assistant?.data.assistantInput || "").trim();
     if (!assistant || !instruction || runningAssistantNodeId) return false;
@@ -3655,6 +3663,7 @@ function CanvasWorkspace({ initialProject, projects: initialProjects, initialWor
     mode: "production" | "test" = "production",
     replay?: { runId: string; nodeId: string },
   ) {
+    if (projectHydratingIdRef.current || !collaborationReadyRef.current) return;
     if (!automationWorkflowId) {
       setNotice("Choose a workflow");
       return;
@@ -3789,6 +3798,7 @@ function CanvasWorkspace({ initialProject, projects: initialProjects, initialWor
   }
 
   async function generate(requestedNode?: FrameNode) {
+    if (projectHydratingIdRef.current || !collaborationReadyRef.current) { return; }
     const requestedId = requestedNode?.id || selectedNode?.id;
     const generatorNode = nodesRef.current.find((node) => node.id === requestedId);
     const effectivePrompt = requestedId ? effectiveGeneratorPrompt(requestedId, generatorNode) : "";
@@ -4078,6 +4088,7 @@ function CanvasWorkspace({ initialProject, projects: initialProjects, initialWor
     additionalReferences: ImageEditReference[],
     onPhase?: (phase: "preparing" | "queued" | "generating") => void,
   ) {
+    if (projectHydratingIdRef.current || !collaborationReadyRef.current) throw new Error("Wait for the canvas to connect");
     if (foregroundGenerationsRef.current.has(sourceNode.id) || activeGenerationNodeIds.includes(sourceNode.id)) throw new Error("This node already has a generation in progress");
     const currentNode = nodesRef.current.find((node) => node.id === sourceNode.id) || sourceNode;
     const sourceUrl = String(currentNode.data.outputUrl || currentNode.data.imageUrl || "");
@@ -4508,18 +4519,28 @@ function CanvasWorkspace({ initialProject, projects: initialProjects, initialWor
     activePreviewNodeId: previewNode?.id || null,
   }), [project.id, activeGenerationNodeIds, liveCreditUsage.generationConcurrency, liveCreditUsage.profileName, models, personas, preparingMasterClipIds, previewNode?.id, runningAssistantNodeId]);
 
+  useEffect(() => {
+    if (!collaborationReady) return;
+    const target = new URLSearchParams(window.location.search).get("node");
+    if (!target) return;
+    const node = nodesRef.current.find(item => item.id === target);
+    if (!node) return;
+    setSelectedId(node.id);
+    void fitView({ nodes: [node], padding: 0.32, minZoom: 0.2, maxZoom: 1.08, duration: 360 });
+  }, [collaborationReady, project.id, fitView]);
+
   return (
     <main className="app-shell">
       <header className="topbar">
-        <div className="brand"><BrandMark /><span>SCENELITH</span><small>studio</small></div>
+        <div className="brand">{CanvasNavigation ? <CanvasNavigation beforeNavigate={async () => !collaborationReady || await flushCollaborativeGraph(true)} /> : <><BrandMark /><span>SCENELITH</span><small>studio</small></>}</div>
         <button className={`workspace-switcher ${workspaceLibraryOpen ? "is-open" : ""}`} onClick={() => { setWorkspaceLibraryOpen((value) => !value); setProjectLibraryOpen(false); }}><Boxes size={14} /><span>{workspace.name}</span><ChevronDown size={13} /></button>
         <div className={`project-switcher ${projectLibraryOpen ? "is-open" : ""}`}>
           <button data-testid="project-switcher" className="project-switcher-main" onClick={() => { setProjectLibraryOpen((value) => !value); setWorkspaceLibraryOpen(false); setIdentityLibraryOpen(false); }}><LayoutGrid size={14} /><span>{project.name}</span><ChevronDown size={14} /></button>
           {workspace.memberRole === "owner" && <button className="icon-button" onClick={() => setNewProjectFormOpen(true)} title="New canvas"><Plus size={16} /></button>}
         </div>
-        <form className="source-bar" onSubmit={importSource}>
+        <form className="source-bar" onSubmit={importSource} inert={!collaborationReady}>
           <Clapperboard size={16} />
-          <input data-testid="source-url" value={sourceUrl} onChange={(event) => setSourceUrl(event.target.value)} placeholder="Paste a direct TikTok video or slideshow link…" />
+          <input disabled={!collaborationReady} data-testid="source-url" value={sourceUrl} onChange={(event) => setSourceUrl(event.target.value)} placeholder="Paste a direct TikTok video or slideshow link…" />
           <button type="submit" disabled={importing || !sourceUrl.trim()}>
             {importing ? <LoaderCircle className="spin" size={15} /> : <Upload size={15} />}
             {importing ? "Extracting" : "Import"}
@@ -4530,6 +4551,11 @@ function CanvasWorkspace({ initialProject, projects: initialProjects, initialWor
             <span className="canvas-collaboration-dot" />
           </div>
           <TaskCenter onNavigate={(task) => {
+            const editionTarget = editionClient.taskHref?.(task);
+            if (editionTarget) {
+              void (async () => { if (!collaborationReady || await flushCollaborativeGraph(true)) window.location.assign(editionTarget); else setNotice("Changes are still syncing. Wait for the canvas to reconnect before leaving."); })();
+              return;
+            }
             const targetProject = projects.find((item) => item.id === task.projectId);
             if (targetProject && targetProject.id !== project.id) {
               void switchProject(targetProject);
@@ -4720,7 +4746,12 @@ function CanvasWorkspace({ initialProject, projects: initialProjects, initialWor
         }}
       >
         {canvasMediaDragActive && <div className="canvas-media-drop-overlay" aria-hidden="true"><span><ImagePlus size={17} /><Video size={17} /></span><strong>Drop media on canvas</strong><small>Images and videos become saved scene nodes</small></div>}
-        {projectHydratingId === project.id && <div className="canvas-project-loading" aria-hidden="true"><CanvasLoadingDotField /></div>}
+        {!collaborationReady && <div className="canvas-project-loading" role="status">
+          <CanvasLoadingDotField />
+          <div className="canvas-connection-message"><strong>{collaborationError ? "Canvas couldn’t connect" : "Opening your canvas…"}</strong>
+            {collaborationError && <><p>{collaborationError}</p><button type="button" className="primary-button" onClick={retryCollaboration}>Try again</button><p>Use the top bar to open another project or section.</p></>}
+          </div>
+        </div>}
         <nav className="canvas-floating-tools" aria-label="Canvas tools" onPointerDown={(event) => event.stopPropagation()}>
           <button type="button" className={canvasAddMenuOpen ? "is-active" : ""} onClick={() => setCanvasAddMenuOpen((open) => !open)} title="Add a node"><Plus size={17} /></button>
           <span className="canvas-tool-separator" />

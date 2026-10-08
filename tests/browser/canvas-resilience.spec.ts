@@ -192,3 +192,30 @@ test("automation uses the selected TikTok across opening, workflow switches, and
     await expect(page.locator('.react-flow__node[data-id="source-a"]')).toHaveClass(/selected/);
   } finally { await context.close(); }
 });
+
+
+test("failed initial sync leaves account menus usable and retry restores the canvas", async ({ browser }) => {
+  const state = seedState();
+  const context = await authenticatedContext(browser, state);
+  try {
+    let fail = true;
+    await context.route("**/api/collaboration/token", route => fail
+      ? route.fulfill({ status: 500, contentType: "application/json", body: JSON.stringify({ error: "Unavailable" }) })
+      : route.continue());
+    const page = await context.newPage();
+    await page.goto(`/canvas?project=${state.projectId}`);
+    await expect(page.getByRole("button", { name: "Try again", exact: true })).toBeVisible();
+    await page.locator(".profile-trigger").click();
+    await expect(page.getByRole("menu", { name: "Profile settings" })).toBeVisible();
+    await page.keyboard.press("Escape");
+    await page.locator(".task-trigger").click();
+    await expect(page.locator(".task-popover")).toBeVisible();
+    await page.keyboard.press("Escape");
+    await expect(page.getByTestId("source-url")).not.toBeEditable();
+    fail = false;
+    await page.getByRole("button", { name: "Try again", exact: true }).click();
+    await expect(page.getByTestId("collaboration-status")).toHaveAttribute("data-status", "synced");
+    await expect(page.locator(".canvas-project-loading")).toHaveCount(0);
+    await expectPersistedSource(context, state);
+  } finally { await context.close(); }
+});
