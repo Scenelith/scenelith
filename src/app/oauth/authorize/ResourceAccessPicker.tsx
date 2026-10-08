@@ -1,7 +1,8 @@
 "use client";
 
 import { useEffect, useMemo, useRef, useState } from "react";
-import { Bot, Boxes, FolderOpen, Image, Images, LockKeyhole, Network, Play, Sparkles, Workflow } from "lucide-react";
+import { ChevronDown, Bot, Boxes, FolderOpen, Image, Images, LockKeyhole, Network, Play, Sparkles, Workflow } from "lucide-react";
+import WorkspaceSelect from "./WorkspaceSelect";
 import styles from "./oauth-authorize.module.css";
 
 import { availableMcpConsentScopes, mcpConsentGroups, mcpConsentPermissionCopy, type McpConsentWorkspace } from "@/lib/mcp/consent-policy";
@@ -24,7 +25,7 @@ export function ResourceAccessPicker({ workspaces, canvases, requestedScopes }: 
   const workspaceNames = useMemo(() => new Map(workspaces.map((workspace) => [workspace.id, workspace.name])), [workspaces]);
 
   const [libraryAccess, setLibraryAccess] = useState(true);
-  const [excludedScopes, setExcludedScopes] = useState<Set<McpScope>>(() => new Set(editionMcpConfig.permissions.map(p=>p.id)));
+  const [excludedScopes, setExcludedScopes] = useState<Set<McpScope>>(() => new Set());
   const selectedWorkspaceIds = new Set(visibleCanvases.filter((canvas) => selected.has(canvas.id)).map((canvas) => canvas.workspaceId));
   const scopeWorkspaces = workspaces.filter((workspace) => (!workspaceId || workspace.id === workspaceId) && (!specific || selectedWorkspaceIds.has(workspace.id)));
   const requiresWorkspace = (scope:string)=>editionMcpConfig.permissions.some(p=>p.id===scope&&p.requiresWorkspace);
@@ -51,16 +52,11 @@ export function ResourceAccessPicker({ workspaces, canvases, requestedScopes }: 
   });
 
   return <div className={styles.resourcePicker}>
-    <label className={styles.workspaceField}>
+    <div className={styles.workspaceField}>
       <span>Workspace</span>
-      <select name="workspace_id" value={workspaceId} onChange={(event) => {
-        setWorkspaceId(event.target.value);
-        setSelected(new Set());
-      }}>
-        <option value="">All workspaces I can access</option>
-        {workspaces.map((workspace) => <option key={workspace.id} value={workspace.id}>{workspace.name}</option>)}
-      </select>
-    </label>
+      <input type="hidden" name="workspace_id" value={workspaceId}/>
+      <WorkspaceSelect value={workspaceId} workspaces={workspaces} onChange={value=>{setWorkspaceId(value);setSelected(new Set());}}/>
+    </div>
 
     <details className={styles.customize}>
       <summary><span>Customize access</span><small>{specific ? `${selected.size} canvas${selected.size===1?'':'es'}` : 'All canvases'} · Library {libraryAccess ? 'on' : 'off'}</small></summary>
@@ -92,12 +88,12 @@ export function ResourceAccessPicker({ workspaces, canvases, requestedScopes }: 
     </details>
     <div className={styles.permissionHeading}><span className={styles.sectionLabel}>Permissions</span></div>
     <div className={styles.permissions}>
-      {scopes.filter(scope=>!grouped.has(scope)).map(scope=>scope==='mcp:read'?<section key={scope} className={styles.basicPermission}>{renderPermission(scope)}<details><summary>Details</summary><p className={styles.groupSummary}>{mcpConsentPermissionCopy(scope,scopeWorkspaces).detail}</p></details></section>:renderPermission(scope))}
+      {scopes.filter(scope=>!grouped.has(scope)).map(scope=>scope==='mcp:read'?<section key={scope} className={styles.basicPermission}>{renderPermission(scope)}<details><summary>Details<ChevronDown size={13} aria-hidden="true"/></summary><p className={styles.groupSummary}>{mcpConsentPermissionCopy(scope,scopeWorkspaces).detail}</p></details></section>:renderPermission(scope))}
       {groups.map(group=>{
         const enabled=group.scopes.filter(scope=>!excludedScopes.has(scope));
         return <section key={group.id} className={styles.permissionGroup}>
           <label className={styles.groupHeading}><strong>{group.title}</strong><GroupToggle label={group.title} checked={enabled.length===group.scopes.length} mixed={enabled.length>0&&enabled.length<group.scopes.length} onChange={()=>setExcludedScopes(current=>{const next=new Set(current);for(const scope of group.scopes){if(enabled.length===group.scopes.length)next.add(scope);else next.delete(scope);}return next;})}/></label>
-          <details><summary>Details <span>{enabled.length}/{group.scopes.length}</span></summary><p className={styles.groupSummary}>{group.detail&&group.scopes.length===editionMcpConfig.permissionGroups?.find(item=>item.id===group.id)?.scopes.length?group.detail:group.scopes.map(scope=>mcpConsentPermissionCopy(scope,scopeWorkspaces).detail).join(' ')}</p>
+          <details><summary>Details <span>{enabled.length}/{group.scopes.length}</span><ChevronDown size={13} aria-hidden="true"/></summary><p className={styles.groupSummary}>{group.detail&&group.scopes.length===editionMcpConfig.permissionGroups?.find(item=>item.id===group.id)?.scopes.length?group.detail:group.scopes.map(scope=>mcpConsentPermissionCopy(scope,scopeWorkspaces).detail).join(' ')}</p>
           <div>{group.scopes.map(renderPermission)}</div></details>
         </section>;
       })}
