@@ -4,6 +4,8 @@ export type EditionMcpPermission = { id:string; title:string; detail:string; req
 /** Serializable configuration, safe in consent clients. No server implementation here. */
 export type EditionMcpConfig = {
  permissions:readonly EditionMcpPermission[];
+ /** Presentation only. Groups never add scopes to an OAuth request. */
+ permissionGroups?:readonly {id:string;title:string;scopes:readonly string[]}[];
  consent?:{className?:string;images?:readonly {src:string;alt:string}[]};
 };
 export type EditionMcpServer = {

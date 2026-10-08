@@ -1,14 +1,20 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { Bot, Boxes, FolderOpen, Image, Images, LockKeyhole, Network, Play, Sparkles, Workflow } from "lucide-react";
 import styles from "./oauth-authorize.module.css";
 
-import { availableMcpConsentScopes, mcpConsentPermissionCopy, type McpConsentWorkspace } from "@/lib/mcp/consent-policy";
+import { availableMcpConsentScopes, mcpConsentGroups, mcpConsentPermissionCopy, type McpConsentWorkspace } from "@/lib/mcp/consent-policy";
 import {editionMcpConfig} from "@/editions/current/mcp-config";
 import type { McpScope } from "@/lib/mcp/oauth";
 const icons = { "mcp:read": Boxes, "canvas:write": Network, "assistant:run": Bot, "generation:run": Sparkles, "library:write": Image, "import:write": Image, "identity:write": Image, "automation:write": Workflow, "automation:credentials": LockKeyhole, "automation:run": Play };
 type Canvas = { id: string; name: string; workspaceId: string };
+
+function GroupToggle({checked,mixed,label,onChange}:{checked:boolean;mixed:boolean;label:string;onChange:()=>void}) {
+  const ref=useRef<HTMLInputElement>(null);
+  useEffect(()=>{if(ref.current)ref.current.indeterminate=mixed;},[mixed]);
+  return <input ref={ref} type="checkbox" aria-label={label} checked={checked} onChange={onChange}/>;
+}
 
 export function ResourceAccessPicker({ workspaces, canvases, requestedScopes }: { workspaces: McpConsentWorkspace[]; canvases: Canvas[]; requestedScopes: McpScope[] }) {
   const [workspaceId, setWorkspaceId] = useState("");
@@ -26,6 +32,17 @@ export function ResourceAccessPicker({ workspaces, canvases, requestedScopes }: 
   const scopes = [...availableMcpConsentScopes(requestedScopes.filter(s=>!editionIds.has(s)), scopeWorkspaces),...availableMcpConsentScopes(requestedScopes.filter(s=>editionIds.has(s)),workspaces.filter(w=>w.id===workspaceId))].filter((scope) => libraryAccess || !["library:write", "identity:write"].includes(scope));
   const restricted = scopeWorkspaces.length > 0 && scopeWorkspaces.every((workspace) => workspace.role === "member");
   const toggleScope = (scope: McpScope) => setExcludedScopes((current) => { const next = new Set(current); if (next.has(scope)) next.delete(scope); else next.add(scope); return next; });
+
+  const groups=mcpConsentGroups(scopes,editionMcpConfig.permissionGroups||[]);
+  const grouped=new Set(groups.flatMap(group=>group.scopes));
+  const renderPermission=(scope:McpScope)=>{
+    const permission=mcpConsentPermissionCopy(scope,scopeWorkspaces),Icon=icons[scope as keyof typeof icons]||Sparkles;
+    return <label className={styles.permission} key={scope}>
+      <span className={styles.permissionIcon}><Icon size={17}/></span>
+      <span><strong>{permission.title}</strong><small>{permission.detail}</small></span>
+      {scope==="mcp:read"?<span className={styles.required}>Required</span>:<input type="checkbox" name="scope" value={scope} disabled={!workspaceId&&requiresWorkspace(scope)} checked={!excludedScopes.has(scope)&&(!requiresWorkspace(scope)||!!workspaceId)} onChange={()=>toggleScope(scope)}/>}
+    </label>;
+  };
 
   const toggleCanvas = (canvasId: string) => setSelected((current) => {
     const next = new Set(current);
@@ -72,16 +89,17 @@ export function ResourceAccessPicker({ workspaces, canvases, requestedScopes }: 
 
     <div className={styles.permissionHeading}><span className={styles.sectionLabel}>What your agent can do</span><small>Based on your access</small></div>
     <div className={styles.permissions}>
-      {scopes.map((scope) => {
-        const permission = mcpConsentPermissionCopy(scope, scopeWorkspaces);
-        const Icon = icons[scope as keyof typeof icons] || Sparkles;
-        return <label className={styles.permission} key={scope}>
-          <span className={styles.permissionIcon}><Icon size={17} /></span>
-          <span><strong>{permission.title}</strong><small>{permission.detail}{!workspaceId&&requiresWorkspace(scope)?" Choose a workspace to enable.":""}</small></span>
-          {scope === "mcp:read" ? <span className={styles.required}>Required</span> : <input type="checkbox" name="scope" value={scope} disabled={!workspaceId&&requiresWorkspace(scope)} checked={!excludedScopes.has(scope)&&(!requiresWorkspace(scope)||!!workspaceId)} onChange={() => toggleScope(scope)} />}
-        </label>;
+      {scopes.filter(scope=>!grouped.has(scope)).map(renderPermission)}
+      {groups.map(group=>{
+        const enabled=group.scopes.filter(scope=>!excludedScopes.has(scope));
+        return <section key={group.id} className={styles.permissionGroup}>
+          <label className={styles.groupHeading}><strong>{group.title}</strong><GroupToggle label={group.title} checked={enabled.length===group.scopes.length} mixed={enabled.length>0&&enabled.length<group.scopes.length} onChange={()=>setExcludedScopes(current=>{const next=new Set(current);for(const scope of group.scopes){if(enabled.length===group.scopes.length)next.add(scope);else next.delete(scope);}return next;})}/></label>
+          <p className={styles.groupSummary}>{group.scopes.map(scope=>mcpConsentPermissionCopy(scope,scopeWorkspaces).detail).join(' ')}</p>
+          <details><summary>Choose individual actions <span>{enabled.length}/{group.scopes.length}</span></summary><div>{group.scopes.map(renderPermission)}</div></details>
+        </section>;
       })}
     </div>
+    {!workspaceId&&requestedScopes.some(requiresWorkspace)&&<p className={styles.accessSummary}>Choose one workspace to review additional creative tools.</p>}
     {restricted && <div className={styles.roleBoundary}><LockKeyhole size={16} /><div><strong>Owner permissions stay with the owner</strong><p>Creating canvases, publishing workflows, and managing triggers or credentials are not granted by this connection.</p></div></div>}
     {!scopeWorkspaces.length && <p className={styles.accessSummary}>{specific ? "Choose a canvas to see its available actions." : "No workspace access is available yet. Your agent will only be able to check which resources become accessible."}</p>}
   </div>;

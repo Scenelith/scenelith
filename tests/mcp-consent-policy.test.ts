@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { availableMcpConsentScopes, mcpConsentPermissionCopy, type McpConsentWorkspace } from "../src/lib/mcp/consent-policy";
+import { availableMcpConsentScopes, mcpConsentGroups, mcpConsentPermissionCopy, type McpConsentWorkspace } from "../src/lib/mcp/consent-policy";
 import { mcpScopes } from "../src/lib/mcp/oauth";
 
 const member: McpConsentWorkspace = { id: "team", name: "Team", role: "member", automation: { run: true, edit: true, publish: false, manageTriggers: false, manageCredentials: false } };
@@ -24,4 +24,10 @@ test("workspace selection changes consent capabilities without widening the clie
   assert.deepEqual(availableMcpConsentScopes(["mcp:read"], [owner]), ["mcp:read"]);
   assert.match(mcpConsentPermissionCopy("automation:write", [owner, member]).detail, /only in workspaces/);
   assert.deepEqual(availableMcpConsentScopes(mcpScopes, [{ ...member, automation: { run: false, edit: false, publish: false, manageTriggers: false, manageCredentials: false } }]).filter(scope => scope.startsWith("automation:")), []);
+});
+
+test("permission groups cannot introduce unrequested, required or duplicate scopes",()=>{
+ const groups=[{id:"edit",title:"Edit",scopes:["mcp:read","canvas:write","automation:credentials"]},{id:"again",title:"Again",scopes:["canvas:write"]}];
+ assert.deepEqual(mcpConsentGroups(["mcp:read","canvas:write"],groups),[{id:"edit",title:"Edit",scopes:["canvas:write"]}]);
+ assert.deepEqual(mcpConsentGroups([],groups),[]);
 });

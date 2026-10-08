@@ -159,3 +159,5 @@
   .accountRow { display: grid; grid-template-columns: 40px minmax(0, 1fr); }
   .switchAccount { grid-column: 2; justify-self: start; margin-left: 0; }
 }
+
+.permissionGroup{grid-column:1/-1;border-top:1px solid var(--color-border-faint);padding:16px}.groupHeading{display:flex;align-items:center;justify-content:space-between;gap:16px;cursor:pointer}.groupHeading strong{font-size:14px;font-weight:600;color:var(--color-text)}.groupHeading input{width:17px;height:17px;accent-color:var(--color-mint)}.groupSummary{margin:7px 32px 10px 0;color:var(--color-text-muted);font-size:12px;line-height:1.55}.permissionGroup summary{cursor:pointer;font-size:11px;color:var(--color-text-dim)}.permissionGroup summary span{margin-left:5px}.permissionGroup details>div{margin-top:10px}.permissionGroup .permission{border-right:0;min-height:64px}.groupHeading input:focus-visible,.permissionGroup summary:focus-visible{outline:2px solid var(--color-mint);outline-offset:4px}
