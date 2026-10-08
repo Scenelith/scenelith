@@ -245,7 +245,7 @@ export async function persistGenerationOutput(id: string, outputUrl: string) {
   const filename = `scenelith-${generation.media_type}-${id.slice(0, 8)}${extension}`;
   const project = await db.prepare("SELECT workspace_id FROM projects WHERE id = ?").get(generation.project_id) as { workspace_id: string } | undefined;
   if (!project?.workspace_id) throw new Error("Generation project has no workspace");
-  const stored = await putStorageObject(bytes, `workspaces/${project.workspace_id}/projects/${generation.project_id}/generations/${filename}`, { contentType });
+  const stored = await putStorageObject(bytes, `workspaces/${project.workspace_id}/projects/${generation.project_id}/generations/${id}${extension}`, { contentType });
   const dispatchJob = await db.prepare("SELECT payload_json FROM generation_dispatch_jobs WHERE generation_id = ?").get(id) as { payload_json: string } | undefined;
   let generationMetadata: Record<string, unknown> = {};
   try {
