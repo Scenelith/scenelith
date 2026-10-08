@@ -283,7 +283,7 @@ test("replaying saved success repairs stale error without selecting a different 
   assert.equal((await database.readProjectGraphSnapshot(seeded.projectId)).graph.nodes[0].data.status, "ready");
 });
 
-test("an old expired unsaved result cannot manufacture a node failure when timeout was refused", async () => {
+test("an expired unsaved result terminates without replacing a newer saved node", async () => {
   const seeded = await seedGeneration();
   await db.prepare("UPDATE generations SET created_at = ?, updated_at = ?, provider_task_id = 'expired-test', status = 'success', output_url = ? WHERE id = ?")
     .run("2020-01-01T00:00:00Z", "2020-01-01T00:00:00Z", "https://expired.test/image.png", seeded.generationId);
@@ -302,7 +302,10 @@ test("an old expired unsaved result cannot manufacture a node failure when timeo
     globalThis.fetch = originalFetch;
     if (oldKey === undefined) delete process.env.KIE_API_KEY; else process.env.KIE_API_KEY = oldKey;
   }
-  assert.ok(calls.includes("https://expired.test/image.png"));
+  assert.deepEqual(calls, ["https://expired.test/image.png"]);
+  assert.equal((await state.readGenerationState(seeded.generationId))?.status, "failed");
+  await state.reconcileGeneration(seeded.generationId);
+  assert.equal((await state.readGenerationState(seeded.generationId))?.status, "failed");
   assert.deepEqual((await database.readProjectGraphSnapshot(seeded.projectId)).graph.nodes[0], before);
 });
 
@@ -380,4 +383,25 @@ test("provider completion stays finalizing until its file is durable", async () 
  assert.equal(ready.status,"completed"); assert.equal(ready.assetId,assetId);
  assert.equal(ready.outputUrl,`/api/assets/${assetId}`);
  assert.equal(await state.persistGenerationOutput(seeded.generationId,tinyPng),assetId);
+});
+
+test("recent completed output keeps retrying a temporary download failure", async () => {
+  const seeded = await seedGeneration();
+  await db.prepare("UPDATE generations SET provider_task_id='recent-test', output_url=? WHERE id=?")
+    .run("https://temporary.test/image.png", seeded.generationId);
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = async () => new Response("temporary", { status: 503 });
+  try { await assert.rejects(state.reconcileGeneration(seeded.generationId), /Could not save/); }
+  finally { globalThis.fetch = originalFetch; }
+  assert.equal((await state.readGenerationState(seeded.generationId))?.status, "completed");
+  assert.equal((await state.readGenerationState(seeded.generationId))?.output_asset_id, null);
+});
+
+test("old completed output is saved directly while its URL still works", async () => {
+  const seeded = await seedGeneration();
+  await db.prepare("UPDATE generations SET created_at=?, provider_task_id='old-test', output_url=? WHERE id=?")
+    .run("2020-01-01T00:00:00Z", tinyPng, seeded.generationId);
+  const result = await state.reconcileGeneration(seeded.generationId);
+  assert.equal(result.status, "completed");
+  assert.ok(result.output_asset_id);
 });
