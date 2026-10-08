@@ -66,6 +66,7 @@ export type ProductAccountMenuExtensionProps = {
 };
 
 export type EditionClient = Readonly<{
+  taskPresentation?: (task: BackgroundTaskRecord) => { title: string; projectName: string };
   taskHref?: (task: BackgroundTaskRecord) => string | null;
   CanvasNavigation?: ComponentType<{ beforeNavigate: () => Promise<boolean> }>;
   accountMenuPresentation(usage: UsageSummary): AccountMenuPresentation;

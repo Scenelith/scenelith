@@ -1,6 +1,8 @@
 "use client";
 
 import { useCallback, useEffect, useRef, useState } from "react";
+import { Download } from "lucide-react";
+import { assetDownloadHref } from "@/lib/asset-download";
 import { taskCreditLabel } from "@/lib/task-credit-label";
 import type { BackgroundTaskRecord } from "@/lib/types";
 
@@ -15,7 +17,7 @@ function relativeTime(value: string) {
   return days < 30 ? `${days}d` : new Date(value).toLocaleDateString(undefined, { month: "short", day: "numeric" });
 }
 
-export function TaskCenter({ onNavigate }: { onNavigate: (task: BackgroundTaskRecord) => void }) {
+export function TaskCenter({ onNavigate, presentation }: { onNavigate: (task: BackgroundTaskRecord) => void; presentation?: (task: BackgroundTaskRecord) => { title: string; projectName: string } }) {
   const [open, setOpen] = useState(false);
   const [items, setItems] = useState<BackgroundTaskRecord[]>([]);
   const [activeCount, setActiveCount] = useState(0);
@@ -66,16 +68,18 @@ export function TaskCenter({ onNavigate }: { onNavigate: (task: BackgroundTaskRe
     const progress = Math.max(0, Math.min(100, item.progress));
     const detail = item.status === "failed" ? item.error || "This task stopped before it finished." : item.stageLabel;
     const stateLabel = item.status === "queued" ? "Queued" : item.status === "running" ? `${Math.round(progress)}%` : item.status === "completed" ? "Done" : "Failed";
-    return <button type="button" key={`${item.kind}-${item.id}`} className={`task-row is-${item.status}`} onClick={() => { onNavigate(item); setOpen(false); }}>
+    const copy = presentation?.(item) || item;
+    const download = item.status === "completed" ? assetDownloadHref(item.assetId ? `/api/assets/${item.assetId}` : item.outputUrl) : null;
+    return <div key={`${item.kind}-${item.id}`} className={`task-entry ${download ? "has-download" : ""}`}><button type="button" className={`task-row is-${item.status}`} onClick={() => { onNavigate(item); setOpen(false); }}>
       <span className="task-copy">
-        <strong>{item.title}</strong>
-        <span className="task-meta"><small>{item.projectName}</small><i aria-hidden="true" /><small>{relativeTime(item.updatedAt)}</small></span>
+        <strong>{copy.title}</strong>
+        <span className="task-meta"><small>{copy.projectName}</small><i aria-hidden="true" /><small>{relativeTime(item.updatedAt)}</small></span>
         <p className={item.status === "failed" ? "task-error" : undefined}>{detail}</p>
         {credits && <span className="task-credits" title={`${item.creditUsage!.unitLabel} · Launch quote: ${item.creditUsage!.quotedCredits.toLocaleString("en-US")}`}><span>{credits}</span><small>{item.creditUsage!.unitLabel}</small></span>}
         {active && <span className="task-progress" role="progressbar" aria-label={`${Math.round(progress)}% complete`} aria-valuemin={0} aria-valuemax={100} aria-valuenow={Math.round(progress)}><i style={{ transform: `scaleX(${progress / 100})` }} /></span>}
       </span>
       <span className={`task-state is-${item.status}`}><b>{stateLabel}</b></span>
-    </button>;
+    </button>{download && <a className="task-download" href={download} download aria-label={`Download ${copy.title}`}><Download size={13} />Download {item.mediaType === "video" ? "video" : "image"}</a>}</div>;
   };
 
   return <div className={`task-center ${open ? "is-open" : ""}`} ref={rootRef}>

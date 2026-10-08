@@ -80,7 +80,7 @@ import type { ImageEditPersona, ImageEditReference } from "./ImageEditReferenceP
 import { ProfileMenu } from "./ProfileMenu";
 import { editionClient, type ProductPanelKind } from "@/editions/current/client";
 import { TaskCenter } from "./TaskCenter";
-import BrandMark from "./BrandMark";
+import BrandLogo from "./BrandLogo";
 import type { BackgroundTaskRecord, FrameEdge, FrameNode, GeneratorInputRole, HookRecord, LibraryMediaAsset, PersonaRecord, ProjectRecord, UserRecord, VideoMasterClip, VideoSceneSegment, WorkspaceRecord } from "@/lib/types";
 import { editReferenceMentionToken, referenceMentionToken } from "@/lib/reference-mentions";
 import { MAX_GENERATION_BATCH, GenerationCapacityQueue, canRestoreForegroundTask } from "@/lib/generation-queue";
@@ -4532,7 +4532,7 @@ function CanvasWorkspace({ initialProject, projects: initialProjects, initialWor
   return (
     <main className="app-shell">
       <header className="topbar">
-        <div className="brand">{CanvasNavigation ? <CanvasNavigation beforeNavigate={async () => !collaborationReady || await flushCollaborativeGraph(true)} /> : <><BrandMark /><span>SCENELITH</span><small>studio</small></>}</div>
+        <div className="brand">{CanvasNavigation ? <CanvasNavigation beforeNavigate={async () => !collaborationReady || await flushCollaborativeGraph(true)} /> : <><BrandLogo /><small>Canvas</small></>}</div>
         <button className={`workspace-switcher ${workspaceLibraryOpen ? "is-open" : ""}`} onClick={() => { setWorkspaceLibraryOpen((value) => !value); setProjectLibraryOpen(false); }}><Boxes size={14} /><span>{workspace.name}</span><ChevronDown size={13} /></button>
         <div className={`project-switcher ${projectLibraryOpen ? "is-open" : ""}`}>
           <button data-testid="project-switcher" className="project-switcher-main" onClick={() => { setProjectLibraryOpen((value) => !value); setWorkspaceLibraryOpen(false); setIdentityLibraryOpen(false); }}><LayoutGrid size={14} /><span>{project.name}</span><ChevronDown size={14} /></button>
@@ -4550,7 +4550,7 @@ function CanvasWorkspace({ initialProject, projects: initialProjects, initialWor
           <div data-testid="collaboration-status" data-status={collaborationStatus} data-peer-count={peerCount} className={`canvas-collaboration-presence is-${collaborationStatus}`} title={collaborationStatus === "synced" ? "Canvas is live and saved continuously" : collaborationStatus === "offline" ? "Reconnecting — local changes are kept" : "Connecting to the live canvas"}>
             <span className="canvas-collaboration-dot" />
           </div>
-          <TaskCenter onNavigate={(task) => {
+          <TaskCenter presentation={editionClient.taskPresentation} onNavigate={(task) => {
             const editionTarget = editionClient.taskHref?.(task);
             if (editionTarget) {
               void (async () => { if (!collaborationReady || await flushCollaborativeGraph(true)) window.location.assign(editionTarget); else setNotice("Changes are still syncing. Wait for the canvas to reconnect before leaving."); })();

@@ -1,5 +1,5 @@
 import Link from "next/link";
-import BrandMark from "@/components/BrandMark";
+import BrandLogo from "@/components/BrandLogo";
 import { editionMarketingChrome } from "@/editions/current/marketing";
 import styles from "./MarketingChrome.module.css";
 
@@ -23,8 +23,7 @@ export default function MarketingHeader({ active, authenticated = false }: Marke
     <header className={styles.header}>
       <div className={styles.headerInner}>
         <Link className={styles.wordmark} href={editionMarketingChrome.homeHref} aria-label="Scenelith home">
-          <BrandMark title="Scenelith" />
-          <span>SCENELITH</span>
+          <BrandLogo />
         </Link>
 
         <nav className={styles.navigation} aria-label="Primary navigation">

@@ -1,6 +1,7 @@
 import Link from "next/link";
+import type { EditionMarketingChrome } from "@/editions/contracts/marketing";
 import { Circle } from "lucide-react";
-import BrandMark from "@/components/BrandMark";
+import BrandLogo from "@/components/BrandLogo";
 import { editionMarketingChrome } from "@/editions/current/marketing";
 import styles from "./MarketingChrome.module.css";
 
@@ -9,6 +10,8 @@ type MarketingFooterProps = {
 };
 
 export default function MarketingFooter({ authenticated = false }: MarketingFooterProps) {
+  const EditionFooter = (editionMarketingChrome as EditionMarketingChrome).Footer;
+  if (EditionFooter) return <EditionFooter authenticated={authenticated} />;
   const primaryHref = authenticated ? "/canvas" : editionMarketingChrome.unauthenticatedPrimaryHref;
 
   return (
@@ -17,7 +20,7 @@ export default function MarketingFooter({ authenticated = false }: MarketingFoot
         <div className={styles.footerMain}>
           <section className={styles.footerBrand}>
             <Link className={styles.wordmark} href={editionMarketingChrome.homeHref}>
-              <BrandMark /><span>SCENELITH</span>
+              <BrandLogo />
             </Link>
             <p>A connected canvas for visual production. Keep references, prompts, images and motion in one workflow.</p>
             <Link className={styles.footerCta} href={primaryHref}>{authenticated ? "Return to canvas" : "Build your first workflow"}</Link>

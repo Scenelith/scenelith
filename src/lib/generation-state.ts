@@ -242,10 +242,10 @@ export async function persistGenerationOutput(id: string, outputUrl: string) {
     ? await probeVideoMetadata(bytes, extension).catch(() => ({}))
     : {};
   const assetId = crypto.randomUUID();
-  const filename = `${id}${extension}`;
+  const filename = `scenelith-${generation.media_type}-${id.slice(0, 8)}${extension}`;
   const project = await db.prepare("SELECT workspace_id FROM projects WHERE id = ?").get(generation.project_id) as { workspace_id: string } | undefined;
   if (!project?.workspace_id) throw new Error("Generation project has no workspace");
-  const stored = await putStorageObject(bytes, `workspaces/${project.workspace_id}/projects/${generation.project_id}/generations/${filename}`, { contentType });
+  const stored = await putStorageObject(bytes, `workspaces/${project.workspace_id}/projects/${generation.project_id}/generations/${id}${extension}`, { contentType });
   const dispatchJob = await db.prepare("SELECT payload_json FROM generation_dispatch_jobs WHERE generation_id = ?").get(id) as { payload_json: string } | undefined;
   let generationMetadata: Record<string, unknown> = {};
   try {
@@ -351,7 +351,7 @@ export async function generationClientState(generation: GenerationStateRow) {
   return {
     creditUsage: charges[`generation:${generation.id}`],
     id: generation.id,
-    status: generation.status,
+    status: completedGenerationStatuses.has(generation.status.toLowerCase()) && !generation.output_asset_id ? "finalizing" : generation.status,
     queuePosition: await queuedGenerationPosition(generation.id),
     processingError: extras?.processing_error,
     hasAlpha: imageMetadata.hasAlpha,
@@ -359,7 +359,7 @@ export async function generationClientState(generation: GenerationStateRow) {
     processing: Boolean(extras?.soundtrack_asset_id && !extras.processed_asset_id && generation.output_asset_id),
     lastFrameUrl: extras?.last_frame_asset_id ? `/api/assets/${extras.last_frame_asset_id}` : undefined,
     originalOutputUrl: generation.output_asset_id ? `/api/assets/${generation.output_asset_id}` : undefined,
-    outputUrl: extras?.processed_asset_id ? `/api/assets/${extras.processed_asset_id}` : generation.output_asset_id ? `/api/assets/${generation.output_asset_id}` : generation.output_url,
+    outputUrl: extras?.processed_asset_id ? `/api/assets/${extras.processed_asset_id}` : generation.output_asset_id ? `/api/assets/${generation.output_asset_id}` : null,
     assetId: extras?.processed_asset_id || generation.output_asset_id,
     mediaType: generation.media_type,
     modelId: generation.model_id,
