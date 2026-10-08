@@ -17,3 +17,5 @@
 .card footer{padding:0 28px 18px;font-size:11px;text-align:center;color:var(--color-text-dim)}.card :is(button,summary,input,select):focus-visible{outline:1px solid var(--color-text-muted);outline-offset:3px}.card :is(button,summary,select):focus:not(:focus-visible){outline:0}
 .errorCard{padding:28px;text-align:center}.errorCard .brand{justify-content:center}.errorIcon{width:35px;height:35px;margin:24px auto 10px;color:var(--color-rose)}.errorCard h1{font-size:24px}.errorCard p{font-size:13px;line-height:1.5;color:var(--color-text-muted)}.errorCard a{display:inline-block;padding:12px 18px;border-radius:7px;background:var(--color-text);color:var(--color-ink-1);text-decoration:none}
 @media(max-width:600px){.shell{padding:16px 12px}.header{padding:18px 18px 0}.intro{padding:20px 18px 18px}.accountSection{margin:0 18px 20px}.card form{padding:0 18px 20px}.card footer{padding-inline:18px}.canvasAccessHead{align-items:stretch;flex-direction:column}.accessMode button{flex:1}.customize>summary{flex-wrap:wrap;gap:3px}.accountAvatar{display:none}.callback{flex-wrap:wrap}}
+
+.resourcePicker{min-width:0}

@@ -63,7 +63,7 @@ export function ResourceAccessPicker({ workspaces, canvases, requestedScopes }: 
     </label>
 
     <details className={styles.customize}>
-      <summary><span>Customize access</span><small>{specific ? `${selected.size} canvases` : 'All canvases'} · Library {libraryAccess ? 'on' : 'off'}</small></summary>
+      <summary><span>Customize access</span><small>{specific ? `${selected.size} canvas${selected.size===1?'':'es'}` : 'All canvases'} · Library {libraryAccess ? 'on' : 'off'}</small></summary>
     <input type="hidden" name="canvas_access" value={specific ? "specific" : "all"} />
     <div className={styles.canvasAccessHead}>
       <span><FolderOpen size={14} />Canvas access</span>
@@ -91,7 +91,7 @@ export function ResourceAccessPicker({ workspaces, canvases, requestedScopes }: 
 
     </details>
     <div className={styles.permissionHeading}><span className={styles.sectionLabel}>Permissions</span></div>
-    <div className={`${styles.permissions} ${styles.groupedPermissions}`}>
+    <div className={styles.permissions}>
       {scopes.filter(scope=>!grouped.has(scope)).map(scope=>scope==='mcp:read'?<section key={scope} className={styles.basicPermission}>{renderPermission(scope)}<details><summary>Details</summary><p className={styles.groupSummary}>{mcpConsentPermissionCopy(scope,scopeWorkspaces).detail}</p></details></section>:renderPermission(scope))}
       {groups.map(group=>{
         const enabled=group.scopes.filter(scope=>!excludedScopes.has(scope));
