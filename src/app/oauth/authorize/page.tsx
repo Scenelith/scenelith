@@ -1,3 +1,4 @@
+import {editionMcpConfig} from "@/editions/current/mcp-config";
 import { headers } from "next/headers";
 import { redirect } from "next/navigation";
 import { CircleAlert, LockKeyhole } from "lucide-react";
@@ -46,7 +47,8 @@ export default async function OAuthAuthorizePage({ searchParams }: { searchParam
       resource: stringParam(params.resource),
     }, pageRequest);
   } catch (error) {
-    return <main className={styles.shell}><section className={`${styles.card} ${styles.errorCard}`}>
+    return <main className={`${styles.shell} ${editionMcpConfig.consent?.className || ""}`}>
+    {editionMcpConfig.consent?.images && <aside aria-hidden="true" className="edition-consent-art">{editionMcpConfig.consent.images.map(image=><img key={image.src} src={image.src} alt=""/>)}</aside>}<section className={`${styles.card} ${styles.errorCard}`}>
       <span className={styles.brand}><BrandLogo /></span>
       <CircleAlert className={styles.errorIcon} aria-hidden="true" />
       <h1>Connection request could not be verified</h1>

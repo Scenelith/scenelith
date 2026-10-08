@@ -46,7 +46,11 @@ export async function handleGenerationRequest(request: Request, quoteOnly = fals
   const auth = await requireApiUser();
   if (auth.response) return auth.response;
   if (!sameOriginRequest(request)) return Response.json({error:"Invalid origin"},{status:403});
-  const parsed = schema.safeParse(await request.json().catch(() => null));
+  return executeGenerationRequest(auth.user.id, await request.json().catch(() => null), quoteOnly);
+}
+
+export async function executeGenerationRequest(userId: string, input: unknown, quoteOnly = false) {
+  const parsed = schema.safeParse(input);
   if (!parsed.success) {
     const field = String(parsed.error.issues[0]?.path[0] || "request");
     const message = field === "duration"
@@ -63,7 +67,7 @@ export async function handleGenerationRequest(request: Request, quoteOnly = fals
     console.warn("[generation:invalid-request]", JSON.stringify({ field, issue: parsed.error.issues[0]?.code }));
     return Response.json({ error: message }, { status: 400 });
   }
-  if (!await userCanAccessProject(auth.user.id, parsed.data.projectId)) {
+  if (!await userCanAccessProject(userId, parsed.data.projectId)) {
     return Response.json({ error: "Canvas not found" }, { status: 404 });
   }
   if (parsed.data.targetClipId) {
@@ -75,7 +79,7 @@ export async function handleGenerationRequest(request: Request, quoteOnly = fals
       const candidate = candidateId
         ? await db.prepare("SELECT metadata_json FROM assets WHERE id = ?").get(candidateId) as { metadata_json: string | null } | undefined
         : undefined;
-      if (!candidateId || !candidate || !await userCanAccessAsset(auth.user.id, candidateId)) return Response.json({ error: "The generation source does not match the selected Video Master scene" }, { status: 409 });
+      if (!candidateId || !candidate || !await userCanAccessAsset(userId, candidateId)) return Response.json({ error: "The generation source does not match the selected Video Master scene" }, { status: 409 });
       const sourceError = validateVideoMasterGenerationReferences({
         graph,
         nodeId: parsed.data.nodeId,
@@ -104,7 +108,7 @@ export async function handleGenerationRequest(request: Request, quoteOnly = fals
   if (parsed.data.originalAudioAssetId && !parsed.data.referenceAssetIds.some((id, i) => id === parsed.data.originalAudioAssetId && parsed.data.referenceRoles[i] === "reference-video")) return Response.json({error:"Original audio must come from a submitted reference video"}, {status:400});
   if (newKieModel(model.id) && ((!model.resolutions.includes(parsed.data.resolution)) || (model.durations && !model.durations.includes(parsed.data.duration)))) return Response.json({error:"Unsupported resolution or duration"}, {status:400});
   const selectedDuration = model.durations?.includes(parsed.data.duration) ? parsed.data.duration : model.defaultDuration || model.durations?.[0] || parsed.data.duration;
-  const loaded = await loadGenerationReferenceAssets(auth.user.id, parsed.data.referenceAssetIds);
+  const loaded = await loadGenerationReferenceAssets(userId, parsed.data.referenceAssetIds);
   if (!loaded.ok) {
     return Response.json({
       error: "A reference was deleted or is no longer available. Refresh the canvas and check its references before trying again.",
@@ -235,7 +239,7 @@ export async function handleGenerationRequest(request: Request, quoteOnly = fals
   const result = await admitGeneration({
     personaId:parsed.data.personaId, requestKey:parsed.data.requestKey, expectedCredits:parsed.data.expectedCredits,
     background:parsed.data.background, seed:parsed.data.seed, outputFormat:parsed.data.outputFormat, returnLastFrame:parsed.data.returnLastFrame, webSearch:parsed.data.webSearch, originalAudioAssetId:parsed.data.originalAudioAssetId,
-    userId: auth.user.id,
+    userId,
     projectId: parsed.data.projectId,
     nodeId: parsed.data.nodeId,
     prompt: parsed.data.prompt,

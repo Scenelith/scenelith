@@ -39,7 +39,7 @@ test("TikTok automation accepts a legacy persisted canvas id", () => {
 
 test("canvas API schemas never require project ids to be UUIDs", () => {
   const files = [
-    "../src/app/api/assets/segment/route.ts",
+    "../src/lib/segment-media-service.ts",
     "../src/app/api/assistant/route.ts",
     "../src/app/api/hooks/extract/route.ts",
     "../src/app/api/hooks/route.ts",
@@ -55,9 +55,9 @@ test("canvas API schemas never require project ids to be UUIDs", () => {
 });
 
 test("cross-canvas media uses asset access and writes derivatives into the target canvas", () => {
-  const segmentRoute = readFileSync(new URL("../src/app/api/assets/segment/route.ts", import.meta.url), "utf8");
+  const segmentRoute = readFileSync(new URL("../src/lib/segment-media-service.ts", import.meta.url), "utf8");
   const automationRunner = readFileSync(new URL("../src/lib/tiktok-automation-runner.ts", import.meta.url), "utf8");
-  assert.match(segmentRoute, /userCanAccessAsset\(auth\.user\.id, source\.id\)/);
+  assert.match(segmentRoute, /userCanAccessAsset\(userId, source\.id\)/);
   assert.match(segmentRoute, /`workspaces\/\$\{workspaceId\}\/projects\/\$\{projectId\}\/video-segments`/);
   assert.doesNotMatch(segmentRoute, /WHERE id = \? AND project_id = \?/);
   assert.doesNotMatch(automationRunner, /asset\.project_id !== input\.projectId/);

@@ -13,7 +13,7 @@ const canvasApp = readFileSync(new URL("../src/components/CanvasApp.tsx", import
 const assetRoute = readFileSync(new URL("../src/app/api/assets/[id]/route.ts", import.meta.url), "utf8");
 const assetUploadRoute = readFileSync(new URL("../src/app/api/assets/route.ts", import.meta.url), "utf8");
 const mediaProbe = readFileSync(new URL("../src/lib/media-probe.ts", import.meta.url), "utf8");
-const assetExportRoute = readFileSync(new URL("../src/app/api/assets/export/route.ts", import.meta.url), "utf8");
+const assetExportRoute = readFileSync(new URL("../src/lib/export-media-service.ts", import.meta.url), "utf8");
 const generateRoute = readFileSync(new URL("../src/lib/generation-http.ts", import.meta.url), "utf8");
 const editorMedia = readFileSync(new URL("../src/lib/editor-media.ts", import.meta.url), "utf8");
 const imageGeneration = readFileSync(new URL("../src/components/ui/ai-chat-image-generation-1.tsx", import.meta.url), "utf8");
@@ -509,7 +509,7 @@ test("Video Master export uses complete click activation", () => {
 });
 
 test("Video Master export authorizes referenced assets instead of requiring current-canvas ownership", () => {
-  assert.match(assetExportRoute, /userCanAccessAsset\(auth\.user\.id, row\.id\)/);
+  assert.match(assetExportRoute, /userCanAccessAsset\(userId, row\.id\)/);
   assert.doesNotMatch(assetExportRoute, /WHERE id = \? AND project_id = \?/);
 });
 
@@ -681,7 +681,7 @@ test("dense timeline sprites stay readable at overview zoom and reveal detail pr
 });
 
 test("source editor captures a durable still instead of exposing redundant scene actions", () => {
-  const frameRoute = readFileSync(new URL("../src/app/api/assets/frame/route.ts", import.meta.url), "utf8");
+  const frameRoute = readFileSync(new URL("../src/lib/frame-media-service.ts", import.meta.url), "utf8");
   assert.match(sceneTimeline, /aria-busy=\{capturingFrame\}[\s\S]*?<Camera size=\{12\} \/>Screenshot<\/button>/);
   assert.doesNotMatch(sceneTimeline, /Saving…/);
   assert.match(sceneTimeline, /await onCaptureFrame\(time\)/);
@@ -702,7 +702,7 @@ test("source editor captures a durable still instead of exposing redundant scene
   assert.match(frameRoute, /"-frames:v", "1"/);
   assert.match(frameRoute, /await saveBytes\(/);
   assert.match(frameRoute, /'video_frame', 'reference'/);
-  assert.match(frameRoute, /userCanAccessAsset\(auth\.user\.id, source\.id\)/);
+  assert.match(frameRoute, /userCanAccessAsset\(userId, source\.id\)/);
   assert.match(frameRoute, /`workspaces\/\$\{workspaceId\}\/projects\/\$\{projectId\}\/video-frames`/);
   assert.doesNotMatch(frameRoute, /WHERE id = \? AND project_id = \?/);
 });

@@ -1,3 +1,4 @@
+import {editionMcpConfig} from "@/editions/current/mcp-config";
 import type { AutomationCapabilities } from "@/editions/contracts/access";
 import type { McpScope } from "@/lib/mcp/oauth";
 
@@ -37,5 +38,5 @@ export function mcpConsentPermissionCopy(scope: McpScope, workspaces: McpConsent
     "automation:credentials": { title: "Connect automation credentials", detail: "Use saved workspace credentials. Secret values stay private." },
     "automation:run": { title: "Run automations", detail: "Start or stop permitted workflow runs. May use credits." },
   };
-  return copy[scope];
+  return copy[scope] || editionMcpConfig.permissions.find(permission=>permission.id===scope) || {title:scope,detail:"Edition permission"};
 }

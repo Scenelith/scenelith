@@ -5,6 +5,7 @@ import { Bot, Boxes, FolderOpen, Image, Images, LockKeyhole, Network, Play, Spar
 import styles from "./oauth-authorize.module.css";
 
 import { availableMcpConsentScopes, mcpConsentPermissionCopy, type McpConsentWorkspace } from "@/lib/mcp/consent-policy";
+import {editionMcpConfig} from "@/editions/current/mcp-config";
 import type { McpScope } from "@/lib/mcp/oauth";
 const icons = { "mcp:read": Boxes, "canvas:write": Network, "assistant:run": Bot, "generation:run": Sparkles, "library:write": Image, "import:write": Image, "identity:write": Image, "automation:write": Workflow, "automation:credentials": LockKeyhole, "automation:run": Play };
 type Canvas = { id: string; name: string; workspaceId: string };
@@ -17,9 +18,10 @@ export function ResourceAccessPicker({ workspaces, canvases, requestedScopes }: 
   const workspaceNames = useMemo(() => new Map(workspaces.map((workspace) => [workspace.id, workspace.name])), [workspaces]);
 
   const [libraryAccess, setLibraryAccess] = useState(true);
-  const [excludedScopes, setExcludedScopes] = useState<Set<McpScope>>(() => new Set());
+  const [excludedScopes, setExcludedScopes] = useState<Set<McpScope>>(() => new Set(editionMcpConfig.permissions.map(p=>p.id)));
   const selectedWorkspaceIds = new Set(visibleCanvases.filter((canvas) => selected.has(canvas.id)).map((canvas) => canvas.workspaceId));
   const scopeWorkspaces = workspaces.filter((workspace) => (!workspaceId || workspace.id === workspaceId) && (!specific || selectedWorkspaceIds.has(workspace.id)));
+  const requiresWorkspace = (scope:string)=>editionMcpConfig.permissions.some(p=>p.id===scope&&p.requiresWorkspace);
   const scopes = availableMcpConsentScopes(requestedScopes, scopeWorkspaces).filter((scope) => libraryAccess || !["library:write", "identity:write"].includes(scope));
   const restricted = scopeWorkspaces.length > 0 && scopeWorkspaces.every((workspace) => workspace.role === "member");
   const toggleScope = (scope: McpScope) => setExcludedScopes((current) => { const next = new Set(current); if (next.has(scope)) next.delete(scope); else next.add(scope); return next; });
@@ -71,11 +73,11 @@ export function ResourceAccessPicker({ workspaces, canvases, requestedScopes }: 
     <div className={styles.permissions}>
       {scopes.map((scope) => {
         const permission = mcpConsentPermissionCopy(scope, scopeWorkspaces);
-        const Icon = icons[scope];
+        const Icon = icons[scope as keyof typeof icons] || Sparkles;
         return <label className={styles.permission} key={scope}>
           <span className={styles.permissionIcon}><Icon size={17} /></span>
-          <span><strong>{permission.title}</strong><small>{permission.detail}</small></span>
-          {scope === "mcp:read" ? <span className={styles.required}>Required</span> : <input type="checkbox" name="scope" value={scope} checked={!excludedScopes.has(scope)} onChange={() => toggleScope(scope)} />}
+          <span><strong>{permission.title}</strong><small>{permission.detail}{!workspaceId&&requiresWorkspace(scope)?" Choose a workspace to enable.":""}</small></span>
+          {scope === "mcp:read" ? <span className={styles.required}>Required</span> : <input type="checkbox" name="scope" value={scope} disabled={!workspaceId&&requiresWorkspace(scope)} checked={!excludedScopes.has(scope)&&(!requiresWorkspace(scope)||!!workspaceId)} onChange={() => toggleScope(scope)} />}
         </label>;
       })}
     </div>

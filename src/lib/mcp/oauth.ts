@@ -1,3 +1,4 @@
+import {editionMcpConfig} from "@/editions/current/mcp-config";
 import { createHash } from "node:crypto";
 import { baseUrl, hashOpaqueToken, randomToken } from "@/lib/auth";
 import {
@@ -25,6 +26,7 @@ export const mcpScopes = [
   "automation:write",
   "automation:credentials",
   "automation:run",
+  ...editionMcpConfig.permissions.map(permission=>permission.id),
 ] as const;
 
 export type McpScope = (typeof mcpScopes)[number];
@@ -321,6 +323,7 @@ export async function decideMcpOAuthConsent(input: {
     const requested = normalizedOAuthScopes(row.requested_scopes_json);
     if (!input.scopes.includes("mcp:read")) throw new Error("Read access is required for an MCP connection");
     if (input.workspaceId && !await userCanAccessWorkspace(input.userId, input.workspaceId)) throw new Error("Workspace not found");
+    if (!input.workspaceId && editionMcpConfig.permissions.some(permission=>permission.requiresWorkspace && input.scopes.includes(permission.id))) throw new Error("Choose a workspace for these permissions");
     const projectIds = input.restrictToProjects ? [...new Set((input.projectIds || []).map((id) => id.trim()).filter(Boolean))] : [];
     if (input.restrictToProjects && !projectIds.length) throw new Error("Choose at least one canvas or allow all canvases");
     if (projectIds.length > 200) throw new Error("Choose no more than 200 canvases");
