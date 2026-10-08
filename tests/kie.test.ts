@@ -31,6 +31,15 @@ test("unified Kie task responses and Veo responses normalize identically", () =>
   });
 });
 
+test("Seedance last frame accepts live array receipts and documented string receipts", () => {
+  for (const lastFrameUrl of ["https://cdn.test/last.jpeg", ["https://cdn.test/last.jpeg"]]) {
+    for (const payload of [{ resultJson: JSON.stringify({ lastFrameUrl }) }, { response: { lastFrameUrl } }, { lastFrameUrl }]) {
+      assert.equal(normalizeKieTask({ data: { state: "success", ...payload } }).lastFrameUrl, "https://cdn.test/last.jpeg");
+    }
+  }
+  assert.equal(normalizeKieTask({ data: { resultJson: '{"lastFrameUrl":[null,""]}' } }).lastFrameUrl, undefined);
+});
+
 test("provider prompt transport preserves the exact automation request and ordered reference labels", () => {
   const request = '{"task":"Keep this exact request","preserve":["Exact framing"]}';
   assert.equal(kieProviderPrompt(request, []), request);
@@ -109,7 +118,7 @@ test("model adapters use the documented reference fields", () => {
   const seedance = buildKieInput("seedance-2-fast", { prompt: "Camera move", aspectRatio: "9:16", resolution: "720P", duration: "8", generateAudio: true }, [
     { assetUrl: "https://cdn.test/start.png", label: "start", role: "start-frame" },
     { assetUrl: "https://cdn.test/end.png", label: "end", role: "end-frame" },
-    { assetUrl: "https://cdn.test/reference.mp4", label: "motion", role: "reference-video" },
+    { assetUrl: "https://cdn.test/reference.mp4", label: "motion", role: "reference-video", fps:30, durationSeconds:5 },
   ]);
   assert.equal(seedance.first_frame_url, "https://cdn.test/start.png");
   assert.equal(seedance.last_frame_url, "https://cdn.test/end.png");
@@ -118,8 +127,8 @@ test("model adapters use the documented reference fields", () => {
 
   const seedance25 = buildKieInput("seedance-2-5", { prompt: "Use all supplied media", aspectRatio: "adaptive", resolution: "480P", duration: "30", generateAudio: false }, [
     { assetUrl: "https://cdn.test/look.png", label: "look", role: "reference-image" },
-    { assetUrl: "https://cdn.test/motion.mp4", label: "motion", role: "reference-video" },
-    { assetUrl: "https://cdn.test/timing.mp3", label: "timing", role: "reference-audio" },
+    { assetUrl: "https://cdn.test/motion.mp4", label: "motion", role: "reference-video", fps:30, durationSeconds:5 },
+    { assetUrl: "https://cdn.test/timing.mp3", label: "timing", role: "reference-audio", durationSeconds:5 },
   ]);
   assert.deepEqual(seedance25.reference_image_urls, ["https://cdn.test/look.png"]);
   assert.deepEqual(seedance25.reference_video_urls, ["https://cdn.test/motion.mp4"]);
@@ -131,7 +140,7 @@ test("model adapters use the documented reference fields", () => {
 
   assert.deepEqual(buildKieInput("kling-3-motion", { prompt: "Match this motion", resolution: "1080P" }, [
     { assetUrl: "https://cdn.test/subject.png", label: "subject", role: "start-frame" },
-    { assetUrl: "https://cdn.test/motion.mp4", label: "motion", role: "reference-video" },
+    { assetUrl: "https://cdn.test/motion.mp4", label: "motion", role: "reference-video", fps:30, durationSeconds:5 },
   ]), {
     prompt: "Match this motion",
     input_urls: ["https://cdn.test/subject.png"],
@@ -209,7 +218,7 @@ test("generation catalogue mirrors documented prompt limits", () => {
     "seedance-2-fast": 20_000,
     "seedance-2-mini": 20_000,
     "seedance-2": 20_000,
-    "seedance-2-5": 30_000,
+    "seedance-2-5": 20_480,
     "kling-3-turbo-text": 2_500,
     "kling-3-turbo-image": 2_500,
     "kling-3-motion": 2_500,
@@ -247,8 +256,8 @@ test("video catalogue exposes only documented quality, ratio and input controls"
   const seedance25 = getKieModel("seedance-2-5");
   assert.equal(seedance25.providerModel, "bytedance/seedance-2-5");
   assert.deepEqual(seedance25.resolutions, ["480P", "720P", "1080P"]);
-  assert.deepEqual(seedance25.videoInputOnlyResolutions, ["1080P"]);
-  assert.deepEqual(allowedKieResolutions(seedance25, false), ["480P", "720P"]);
+  assert.deepEqual(seedance25.videoInputOnlyResolutions, undefined);
+  assert.deepEqual(allowedKieResolutions(seedance25, false), ["480P", "720P", "1080P"]);
   assert.deepEqual(allowedKieResolutions(seedance25, true), ["480P", "720P", "1080P"]);
   assert.equal(seedance25.defaultRatio, "adaptive");
   assert.equal(seedance25.maxReferences, 50);

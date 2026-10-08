@@ -1,6 +1,6 @@
 import type { ComponentType } from "react";
 import type { UsageSummary } from "@/modules/usage/contracts";
-import type { UserRecord, WorkspaceRecord, WorkspaceRole } from "@/lib/types";
+import type { UserRecord, WorkspaceRecord, WorkspaceRole, BackgroundTaskRecord } from "@/lib/types";
 
 export type AccountMenuPresentation = {
   subtitle: string;
@@ -66,6 +66,9 @@ export type ProductAccountMenuExtensionProps = {
 };
 
 export type EditionClient = Readonly<{
+  taskPresentation?: (task: BackgroundTaskRecord) => { title: string; projectName: string };
+  taskHref?: (task: BackgroundTaskRecord) => string | null;
+  CanvasNavigation?: ComponentType<{ beforeNavigate: () => Promise<boolean> }>;
   accountMenuPresentation(usage: UsageSummary): AccountMenuPresentation;
   AccountMenuExtension?: ComponentType<AccountMenuExtensionProps>;
   AccountOverlayExtension?: ComponentType<AccountOverlayExtensionProps>;

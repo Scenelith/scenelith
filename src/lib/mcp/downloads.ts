@@ -1,3 +1,4 @@
+import {editionMcpServer} from "@/editions/current/mcp-server";
 import { createHmac, timingSafeEqual } from "node:crypto";
 import { db, userCanAccessAsset, userCanAccessProject, workspaceIdForProject } from "@/lib/postgres-db";
 import { mcpDownloadConnection, type McpPrincipal } from "@/lib/mcp/oauth";
@@ -13,6 +14,13 @@ function notFound(): never {
 }
 
 async function authorizedAsset(principal: McpPrincipal, canvasId: string, assetId: string) {
+  const project=await db.prepare("SELECT purpose FROM projects WHERE id=?").get(canvasId) as {purpose:string}|undefined;
+  if(project?.purpose==='studio'){
+    if(!await editionMcpServer.canReadAsset?.(principal,canvasId,assetId))notFound();
+    const asset=await db.prepare("SELECT id,workspace_id,project_id,filename,storage_path,mime_type,size_bytes FROM assets WHERE id=?").get(assetId) as DownloadAsset|undefined;
+    if(!asset||asset.project_id!==canvasId||!await userCanAccessAsset(principal.userId,assetId))notFound();
+    return asset;
+  }
   const workspaceId = await workspaceIdForProject(canvasId);
   if (!workspaceId || !principal.scopes.includes("mcp:read")
     || (principal.workspaceId && principal.workspaceId !== workspaceId)

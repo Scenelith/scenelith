@@ -66,7 +66,7 @@ test("canvas shell switches immediately and cold graphs hydrate through realtime
   assert.match(switchBody, /setNodesState\(\[\]\)/);
   assert.match(switchBody, /setProjectHydratingId\(next\.id\)/);
   assert.match(canvasApp, /className="canvas-loading-dot-field"/);
-  assert.match(canvasApp, /className="canvas-project-loading" aria-hidden="true"/);
+  assert.match(canvasApp, /className="canvas-project-loading" role="status"/);
   assert.doesNotMatch(canvasApp, /Opening \{project\.name\}/);
   assert.doesNotMatch(canvasApp, /projectRestoreDetail/);
   assert.doesNotMatch(canvasApp, /canvas-loading-wave/);

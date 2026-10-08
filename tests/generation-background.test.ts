@@ -368,3 +368,16 @@ test("late pending callbacks, provider failures and cancellations never resurrec
     assert.equal(result?.output_asset_id, null);
   }
 });
+
+
+test("provider completion stays finalizing until its file is durable", async () => {
+ const seeded = await seedGeneration();
+ await db.prepare("UPDATE generations SET output_url=? WHERE id=?").run(tinyPng,seeded.generationId);
+ const waiting=await state.generationClientState((await state.readGenerationState(seeded.generationId))!);
+ assert.equal(waiting.status,"finalizing"); assert.equal(waiting.outputUrl,null);
+ const assetId=await state.persistGenerationOutput(seeded.generationId,tinyPng);
+ const ready=await state.generationClientState((await state.readGenerationState(seeded.generationId))!);
+ assert.equal(ready.status,"completed"); assert.equal(ready.assetId,assetId);
+ assert.equal(ready.outputUrl,`/api/assets/${assetId}`);
+ assert.equal(await state.persistGenerationOutput(seeded.generationId,tinyPng),assetId);
+});

@@ -1,6 +1,6 @@
 import { prepareNewKieReferences } from "./kie-reference-validation";
 import { newKieInputError, newKieModel, newKiePrompt } from "./kie-new-models";
-import { randomUUID } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import { usageAuthority, taskCreditUsage } from "@/modules/usage";
 import { queuedGenerationPosition, type GenerationDispatchPayload } from "./generation-dispatch";
 import { expireStaleGenerations } from "./generation-lifecycle";
@@ -18,9 +18,14 @@ export type GenerationAdmissionReference = {
   width?: number;
   height?: number;
   hasAlpha?: boolean;
+  fps?: number;
 };
 
-export type GenerationAdmissionInput = {
+export type GenerationAdmissionInput = import("./kie-new-models").GenerationModelOptions & {
+  requestKey?: string;
+  expectedCredits?: number;
+  personaId?: string;
+  originalAudioAssetId?: string;
   userId: string;
   projectId: string;
   nodeId: string;
@@ -49,6 +54,13 @@ export type GenerationAdmissionResult =
 
 export function generationDispatchPayload(input: GenerationAdmissionInput): GenerationDispatchPayload {
   return {
+    ...(input.background !== undefined ? {background:input.background}:{}),
+    ...(input.seed !== undefined ? {seed:input.seed}:{}),
+    ...(input.outputFormat !== undefined ? {outputFormat:input.outputFormat}:{}),
+    ...(input.returnLastFrame !== undefined ? {returnLastFrame:input.returnLastFrame}:{}),
+    ...(input.webSearch !== undefined ? {webSearch:input.webSearch}:{}),
+    ...(input.originalAudioAssetId ? {originalAudioAssetId:input.originalAudioAssetId}:{}),
+    ...(input.personaId ? {personaId:input.personaId}:{}),
     modelId: input.model.id,
     prompt: input.prompt,
     references: input.references,
@@ -81,6 +93,24 @@ export async function admitGeneration(input: GenerationAdmissionInput): Promise<
   const catalogModel = newKieModel(input.model.id);
   if (catalogModel && newKiePrompt(input.model.id, input.prompt, input.references).length > catalogModel.maxPromptLength!) return { ok: false, status: 400, code: "PROMPT_TOO_LONG", error: `${catalogModel.label}: shorten the prompt to leave room for reference bindings` };
   if (inputError) return { ok: false, status: 400, code: "INCOMPATIBLE_MODEL_INPUTS", error: inputError };
+  // Reservation and the durable dispatch row commit together. A retry observes
+  // either the entire admission or nothing, including after a process crash.
+  return db.transaction(async (): Promise<GenerationAdmissionResult> => {
+    if (input.requestKey) {
+      await db.prepare("SELECT pg_advisory_xact_lock(hashtextextended(?, 0))").get(`generation-request:${input.userId}:${input.projectId}:${input.requestKey}`);
+      const fingerprint = createHash("sha256").update(JSON.stringify(generationDispatchPayload(input))).digest("hex");
+      const existing = await db.prepare("SELECT id, credit_cost, request_fingerprint FROM generations WHERE requested_by_user_id = ? AND project_id = ? AND request_key = ?").get(input.userId, input.projectId, input.requestKey) as {id:string;credit_cost:number;request_fingerprint:string} | undefined;
+      if (existing) {
+        if (existing.request_fingerprint !== fingerprint) return { ok:false, status:409, code:"REQUEST_KEY_CONFLICT", error:"This request key belongs to different settings" };
+        return {ok:true, generationId:existing.id, status:"queued", queuePosition:await queuedGenerationPosition(existing.id), creditCost:Number(existing.credit_cost)};
+      }
+    }
+    return admitGenerationOnce(input);
+  })();
+}
+
+async function admitGenerationOnce(input: GenerationAdmissionInput): Promise<GenerationAdmissionResult> {
+  const requestFingerprint = createHash("sha256").update(JSON.stringify(generationDispatchPayload(input))).digest("hex");
   const workspaceId = await usageWorkspaceForUserProject(input.userId, input.projectId);
   if (!workspaceId) return { ok: false, status: 404, error: "Canvas not found", code: "PROJECT_NOT_FOUND" };
   await expireStaleGenerations(workspaceId);
@@ -97,6 +127,7 @@ export async function admitGeneration(input: GenerationAdmissionInput): Promise<
       inputVideoDurationSeconds: input.inputVideoDurationSeconds,
     },
   );
+  if (input.expectedCredits !== undefined && input.expectedCredits !== creditCost) return {ok:false, status:409, code:"QUOTE_CHANGED", error:"The price changed. Review the updated price before generating.", requiredCredits:creditCost};
   const now = new Date().toISOString();
   const usage = await usageAuthority();
   const concurrency = (await usage.summary(workspaceId)).generationConcurrency;
@@ -133,6 +164,7 @@ export async function admitGeneration(input: GenerationAdmissionInput): Promise<
       now,
       now,
     );
+    await db.prepare("UPDATE generations SET request_key = ?, request_fingerprint = ? WHERE id = ?").run(input.requestKey || null, requestFingerprint, generationId);
     return true;
   })();
 
@@ -187,6 +219,7 @@ export async function admitGeneration(input: GenerationAdmissionInput): Promise<
        (generation_id, payload_json, status, attempts, available_at, created_at, updated_at)
        VALUES (?, ?, 'queued', 0, ?, ?, ?)`,
     ).run(generationId, JSON.stringify(payload), now, now, now);
+    if (input.originalAudioAssetId || input.returnLastFrame) await db.prepare("INSERT INTO generation_output_extras(generation_id,soundtrack_asset_id) VALUES(?,?) ON CONFLICT(generation_id) DO NOTHING").run(generationId,input.originalAudioAssetId || null);
     const charges = await taskCreditUsage([{ id: generationId, kind: "generation" }]);
     return { ok: true, generationId, status: "queued", queuePosition: await queuedGenerationPosition(generationId), creditCost, creditUsage: charges[`generation:${generationId}`] };
   } catch (error) {

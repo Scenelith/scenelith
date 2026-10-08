@@ -31,6 +31,9 @@ function hasWebpHeader(bytes: Uint8Array) {
 
 export function mediaContentMatchesMime(bytes: Uint8Array, declaredMimeType: string) {
   const mimeType = declaredMimeType.toLowerCase().split(";", 1)[0].trim();
+  if (["audio/wav", "audio/x-wav", "audio/wave"].includes(mimeType)) return ascii(bytes,0,4) === "RIFF" && ascii(bytes,8,4) === "WAVE";
+  if (["audio/mpeg", "audio/mp3"].includes(mimeType)) return ascii(bytes,0,3) === "ID3" || (bytes[0] === 0xff && (bytes[1] & 0xe0) === 0xe0);
+  if (["image/bmp", "image/x-ms-bmp"].includes(mimeType)) return ascii(bytes,0,2) === "BM";
   if (mimeType === "image/jpeg" || mimeType === "image/jpg") return startsWith(bytes, JPEG_SIGNATURE);
   if (mimeType === "image/png") return startsWith(bytes, PNG_SIGNATURE);
   if (mimeType === "image/webp") return hasWebpHeader(bytes);

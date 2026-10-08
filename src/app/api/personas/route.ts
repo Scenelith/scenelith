@@ -31,7 +31,7 @@ async function listPersonas(workspaceId: string) {
         id: asset.id,
         filename: asset.filename,
         sortOrder: asset.sort_order,
-        role: asset.role === "after" ? "after" as const : asset.role === "reference" ? "reference" as const : "before" as const,
+        role: asset.role === "after" ? "after" as const : asset.role === "before" ? "before" as const : "reference" as const,
         url: `/api/assets/${asset.id}`,
         thumbnailUrl: `/api/assets/${asset.id}?variant=thumbnail&delivery=direct&v=2`,
         ...(sourceAssetId ? { sourceAssetId } : {}),

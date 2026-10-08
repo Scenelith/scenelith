@@ -1,3 +1,4 @@
+import {editionMcpServer} from "@/editions/current/mcp-server";
 import { McpServer, type CallToolResult } from "@modelcontextprotocol/server";
 import { z } from "zod";
 import { automationWorkflowGraphSchema } from "@/lib/automation-workflows/types";
@@ -185,7 +186,7 @@ function safeTool<T>(callback: () => Promise<T>, wrap: (value: T) => Record<stri
 export function createScenelithMcpServer(principal: McpPrincipal, origin: string) {
   const server = new McpServer(
     { name: "scenelith", title: "Scenelith Creative Platform", version: "0.1.0" },
-    { instructions: SCENELITH_MCP_INSTRUCTIONS },
+    { instructions: [SCENELITH_MCP_INSTRUCTIONS,editionMcpServer.instructions].filter(Boolean).join("\n\n") },
   );
 
   server.registerResource("agent-workflows", "scenelith://guide/agent-workflows", {
@@ -1256,5 +1257,6 @@ export function createScenelithMcpServer(principal: McpPrincipal, origin: string
     ));
   }
 
+  editionMcpServer.register(server,principal,origin);
   return server;
 }

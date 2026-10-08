@@ -1,3 +1,4 @@
+import {editionMcpConfig} from "@/editions/current/mcp-config";
 import type { AutomationCapabilities } from "@/editions/contracts/access";
 import type { McpScope } from "@/lib/mcp/oauth";
 
@@ -37,5 +38,11 @@ export function mcpConsentPermissionCopy(scope: McpScope, workspaces: McpConsent
     "automation:credentials": { title: "Connect automation credentials", detail: "Use saved workspace credentials. Secret values stay private." },
     "automation:run": { title: "Run automations", detail: "Start or stop permitted workflow runs. May use credits." },
   };
-  return copy[scope];
+  return copy[scope] || editionMcpConfig.permissions.find(permission=>permission.id===scope) || {title:scope,detail:"Edition permission"};
+}
+
+/** Intersect presentation groups with the currently allowed request. Never grant by group ID. */
+export function mcpConsentGroups(scopes:readonly McpScope[], groups:readonly {id:string;title:string;detail?:string;scopes:readonly string[]}[]){
+  const used=new Set<string>();
+  return groups.map(group=>({...group,scopes:group.scopes.filter(scope=>scope!=="mcp:read"&&scopes.includes(scope)&&!used.has(scope)&&(used.add(scope),true))})).filter(group=>group.scopes.length>0);
 }

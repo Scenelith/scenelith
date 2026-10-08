@@ -47,7 +47,7 @@ button { color: inherit; }
 .auth-v2-showcase::before { display:none; }
 .auth-v2-showcase-inner { width: min(680px,calc(100% - 40px)); padding:clamp(24px,3.5vh,42px) 0; display:flex; flex-direction:column; align-items:center; position:relative; z-index:1; }
 .auth-v2-wordmark { display:flex; align-items:center; gap:11px; color:#f4f3ef; font:750 13px/1 ui-monospace,monospace; letter-spacing:.14em; }
-.scenelith-brand-mark { display:block; flex:0 0 auto; color:var(--color-mint); overflow:visible; }
+.scenelith-brand-mark { display:block; flex:0 0 auto; color:var(--color-mint); background:currentColor; aspect-ratio:293 / 280; mask:url(/brand/logo-v3.png) 13.3136% 48.7329% / 676.792% 283.214% no-repeat; }
 .auth-v2-wordmark .scenelith-brand-mark { width:35px; height:35px; }
 .auth-canvas-preview { width:100%; height:clamp(390px,48vh,530px); margin-top:clamp(16px,2.2vh,24px); position:relative; overflow:visible; border:0; background:transparent; pointer-events:none; }
 .auth-canvas-preview .react-flow { overflow:visible; background:transparent; }
@@ -226,7 +226,7 @@ button { color: inherit; }
 .profile-identity strong { overflow: hidden; color: var(--color-text); font-size: 12px; text-overflow: ellipsis; white-space: nowrap; }
 .profile-identity small { overflow: hidden; color: var(--color-text-muted); font-size: 10px; text-overflow: ellipsis; white-space: nowrap; }
 .profile-identity em { padding: 4px 6px; border-radius: 999px; background: var(--color-mint-soft); color: var(--color-mint); font: normal 7px/1 ui-monospace,monospace; text-transform: uppercase; }
-.profile-plan { min-height: 58px; margin: 4px 0 6px; padding: 9px 10px; display: flex; align-items: center; justify-content: space-between; border-top: 1px solid var(--color-border); border-bottom: 1px solid var(--color-border); background: transparent; }
+.profile-plan { min-height: 58px; margin: 4px 0 6px; padding: 9px 10px; display: flex; align-items: center; justify-content: space-between; border-top: 1px solid var(--color-border);  background: transparent; }
 .profile-plan > span { display: flex; flex-direction: column; gap: 3px; }
 .profile-plan small { color: var(--color-text-muted); font: 7px/1 ui-monospace,monospace; letter-spacing: .09em; }
 .profile-plan strong { color: var(--color-text); font-size: 12px; }
@@ -339,7 +339,7 @@ button { color: inherit; }
 .tool-rail button.is-active { color: #e9d6f2; border-color: #584161; background: #231b27; }
 .rail-rule { height: 1px; background: #302f2d; margin: 8px 8px; }
 
-.canvas-stage { position: absolute; inset: 0; background: var(--surface-canvas); }
+.canvas-stage { position: absolute; inset: 0; isolation:isolate; background: var(--surface-canvas); }
 .canvas-stage .react-flow__viewport { will-change: transform; }
 .canvas-project-loading { position:absolute; inset:0; z-index:20; overflow:hidden; background:transparent; pointer-events:auto; }
 .canvas-loading-dot-field { position:absolute; inset:0; pointer-events:none; overflow:hidden; }
@@ -1607,7 +1607,7 @@ select.panel-input { color-scheme: dark; }
 @media (max-width: 680px) {
   .topbar { right:8px; left:8px; gap:6px; padding-inline:7px; }
   .brand { flex:0 0 auto; }
-  .brand > span:not(.scenelith-brand-mark) { display:none; }
+  .brand > span:not(.scenelith-brand-mark):not(.scenelith-brand-logo) { display:none; }
   .workspace-switcher,.project-switcher,.source-bar { display:none; }
   .top-actions { min-width:0; margin-left:auto; }
   .profile-trigger { min-width:0; max-width:156px; padding-right:7px; }
@@ -1925,3 +1925,15 @@ select.panel-input { color-scheme: dark; }
 
 .generator-node-toolbar button.text-overlay-trigger { width:auto; min-width:58px; padding:0 8px; font-size:10px; white-space:nowrap; }
 .media-viewer-topbar button:disabled { opacity:.35; cursor:default; }
+
+.canvas-connection-message { position:absolute; top:45%; left:50%; transform:translate(-50%,-50%); width:min(420px,85%); padding:24px; text-align:center; border:1px solid var(--color-border-strong); border-radius:16px; background:var(--surface-canvas); }
+.canvas-connection-message p { color:var(--color-text-muted); font-size:13px; margin:12px 0; }
+
+.scenelith-brand-logo { display:block; width:145px; height:auto; aspect-ratio:1561 / 280; flex:none; background:linear-gradient(to right,var(--color-mint) 21%,var(--color-text) 21%); mask:url(/brand/logo-v3.png) 53.3175% 48.7329% / 127.034% 283.214% no-repeat; }
+.scenelith-brand-logo-light { background:linear-gradient(to right,var(--color-mint) 21%,#171717 21%); }
+.task-entry { position:relative; }
+.task-entry .task-row { width:100%; }
+.task-entry.has-download .task-row { padding-bottom:40px; }
+.task-download { position:absolute; bottom:10px; left:13px; display:inline-flex; align-items:center; gap:6px; color:var(--color-mint); font-size:11px; font-weight:650; text-decoration:none; }
+.task-download:hover { text-decoration:underline; }
+.task-download:focus-visible { outline:2px solid var(--color-mint); outline-offset:3px; }

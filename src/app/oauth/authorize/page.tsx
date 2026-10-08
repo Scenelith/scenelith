@@ -1,9 +1,10 @@
+import {editionMcpConfig} from "@/editions/current/mcp-config";
 import { headers } from "next/headers";
 import { redirect } from "next/navigation";
-import { CircleAlert, LockKeyhole } from "lucide-react";
+import { CircleAlert } from "lucide-react";
 import { getCurrentUser } from "@/lib/auth";
 import { createMcpOAuthConsentRequest } from "@/lib/mcp/oauth";
-import BrandMark from "@/components/BrandMark";
+import BrandLogo from "@/components/BrandLogo";
 import { OAuthConsentForm } from "./OAuthConsentForm";
 import { ConsentAccount } from "./ConsentAccount";
 import { ResourceAccessPicker } from "./ResourceAccessPicker";
@@ -46,8 +47,9 @@ export default async function OAuthAuthorizePage({ searchParams }: { searchParam
       resource: stringParam(params.resource),
     }, pageRequest);
   } catch (error) {
-    return <main className={styles.shell}><section className={`${styles.card} ${styles.errorCard}`}>
-      <span className={styles.brand}><BrandMark />Scenelith</span>
+    return <main className={`${styles.shell} ${editionMcpConfig.consent?.className || ""}`}>
+    {editionMcpConfig.consent?.images && <aside aria-hidden="true" className="edition-consent-art">{editionMcpConfig.consent.images.map(image=><img key={image.src} src={image.src} alt=""/>)}</aside>}<section className={`${styles.card} ${styles.errorCard}`}>
+      <span className={styles.brand}><BrandLogo /></span>
       <CircleAlert className={styles.errorIcon} aria-hidden="true" />
       <h1>Connection request could not be verified</h1>
       <p>{error instanceof Error ? error.message : "Return to your agent and try connecting again."}</p>
@@ -55,15 +57,15 @@ export default async function OAuthAuthorizePage({ searchParams }: { searchParam
     </section></main>;
   }
 
-  return <main className={styles.shell}>
+  return <main className={`${styles.shell} ${editionMcpConfig.consent?.className || ""}`}>
+    {editionMcpConfig.consent?.images && <aside aria-hidden="true" className="edition-consent-art">{editionMcpConfig.consent.images.map(image=><img key={image.src} src={image.src} alt=""/>)}</aside>}
     <section className={styles.card}>
       <header className={styles.header}>
-        <span className={styles.brand}><BrandMark />Scenelith</span>
-        <span className={styles.security}><LockKeyhole size={13} />Secure connection</span>
+        <span className={styles.brand}><BrandLogo /></span>
       </header>
 
       <div className={styles.intro}>
-        <div><p>Connect an AI agent</p><h1>{consent.client.name} wants to access Scenelith</h1></div>
+        <h1>Connect {consent.client.name}</h1>
       </div>
 
       <ConsentAccount requestId={consent.id} name={user.name || ""} email={user.email} teammate={consent.workspaces.length > 0 && consent.workspaces.every((workspace) => workspace.role === "member")} />
@@ -75,13 +77,13 @@ export default async function OAuthAuthorizePage({ searchParams }: { searchParam
         <ResourceAccessPicker workspaces={consent.workspaces} canvases={consent.canvases} requestedScopes={consent.requestedScopes} />
 
         <div className={styles.callback}>
-          <span>After approval, you will return to</span>
+          <span>Returns to</span>
           <strong>{consent.client.redirectHost}</strong>
         </div>
 
       </OAuthConsentForm>
 
-      <footer>You can revoke this connection at any time. Changes to your workspace access also apply to your agent.</footer>
+      <footer>You can revoke access anytime.</footer>
     </section>
   </main>;
 }

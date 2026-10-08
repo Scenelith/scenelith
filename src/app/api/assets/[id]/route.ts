@@ -1,3 +1,5 @@
+import { assetContentDisposition } from '@/lib/asset-download';
+import { parseVideoByteRange } from "@/lib/video-byte-range";
 import { requireApiUser } from "@/lib/auth";
 import { db, userCanAccessAsset } from "@/lib/postgres-db";
 import { ASSET_THUMBNAIL_CACHE_CONTROL, createAssetThumbnailFromStorage, createVideoAssetThumbnailFromStorage } from "@/lib/image-thumbnails";
@@ -47,11 +49,9 @@ function etagForHash(hash: string | null) {
 }
 
 function responseHeaders(asset: ServedAsset, download = false) {
-  const filename = asset.filename.replace(/[\r\n"\\]/g, "").trim() || "download";
-  const encodedFilename = encodeURIComponent(filename).replace(/[!'()*]/g, (character) => `%${character.charCodeAt(0).toString(16).toUpperCase()}`);
   const headers = new Headers({
     "content-type": asset.mimeType,
-    "content-disposition": `${download ? "attachment" : "inline"}; filename="${filename}"; filename*=UTF-8''${encodedFilename}`,
+    "content-disposition": assetContentDisposition(asset.filename, download),
     "cache-control": asset.cacheControl,
   });
   const etag = etagForHash(asset.contentHash);
@@ -59,21 +59,6 @@ function responseHeaders(asset: ServedAsset, download = false) {
   return headers;
 }
 
-export function parseVideoByteRange(value: string, size: number) {
-  if (!Number.isSafeInteger(size) || size <= 0 || !value.startsWith("bytes=") || value.includes(",")) return null;
-  const match = /^bytes=(\d*)-(\d*)$/.exec(value.trim());
-  if (!match || (!match[1] && !match[2])) return null;
-  if (!match[1]) {
-    const suffixLength = Number(match[2]);
-    if (!Number.isSafeInteger(suffixLength) || suffixLength <= 0) return null;
-    const start = Math.max(0, size - suffixLength);
-    return { start, end: size - 1 };
-  }
-  const start = Number(match[1]);
-  const requestedEnd = match[2] ? Number(match[2]) : size - 1;
-  if (!Number.isSafeInteger(start) || !Number.isSafeInteger(requestedEnd) || start < 0 || requestedEnd < start || start >= size) return null;
-  return { start, end: Math.min(requestedEnd, size - 1) };
-}
 
 async function originalAsset(row: AssetRow): Promise<ServedAsset> {
   const size = Number(row.size_bytes || 0) || Number((await statStorageObject(row.storage_path)).size || 0);

@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { parseVideoByteRange } from "../src/app/api/assets/[id]/route";
+import { parseVideoByteRange } from "../src/lib/video-byte-range";
 
 test("video range parser supports editor seek and suffix requests", () => {
   assert.deepEqual(parseVideoByteRange("bytes=0-", 1000), { start: 0, end: 999 });

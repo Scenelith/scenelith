@@ -90,7 +90,6 @@ export const kieModels: KieModel[] = [
   { id: "seedance-2-fast", label: "Seedance 2 Fast", mediaType: "video", description: "Fast multimodal video · 4–15s · frames, image, video and audio references", providerModel: "bytedance/seedance-2-fast", providerPath: "/api/v1/jobs/createTask", maxReferences: 15, maxPromptLength: 20_000, ratios: seedanceRatios, resolutions: ["480P", "720P"], durations: integerSeconds(4, 15), defaultRatio: "16:9", defaultResolution: "720P", defaultDuration: "5", defaultGenerateAudio: true, inputPorts: seedancePorts, supportsAudio: true },
   { id: "seedance-2-mini", label: "Seedance 2 Mini", mediaType: "video", description: "Efficient multimodal video · 4–15s · frames and reference media", providerModel: "bytedance/seedance-2-mini", providerPath: "/api/v1/jobs/createTask", maxReferences: 15, maxPromptLength: 20_000, ratios: seedanceRatios, resolutions: ["480P", "720P"], durations: integerSeconds(4, 15), defaultRatio: "16:9", defaultResolution: "720P", defaultDuration: "5", defaultGenerateAudio: true, inputPorts: seedancePorts, supportsAudio: true },
   { id: "seedance-2", label: "Seedance 2", mediaType: "video", description: "Cinematic multimodal video · 4–15s · up to 4K", providerModel: "bytedance/seedance-2", providerPath: "/api/v1/jobs/createTask", maxReferences: 15, maxPromptLength: 20_000, ratios: seedanceRatios, resolutions: ["480P", "720P", "1080P", "4K"], durations: integerSeconds(4, 15), defaultRatio: "16:9", defaultResolution: "720P", defaultDuration: "5", defaultGenerateAudio: true, inputPorts: seedancePorts, supportsAudio: true },
-  { id: "seedance-2-5", label: "Seedance 2.5", mediaType: "video", description: "Latest multimodal video · 4–30s · up to 1080p with video input", providerModel: "bytedance/seedance-2-5", providerPath: "/api/v1/jobs/createTask", maxReferences: 50, ratios: seedanceRatios, resolutions: ["480P", "720P", "1080P"], videoInputOnlyResolutions: ["1080P"], durations: integerSeconds(4, 30), defaultRatio: "adaptive", defaultResolution: "720P", defaultDuration: "5", defaultGenerateAudio: true, maxPromptLength: 30_000, referenceMediaDuration: { minSeconds: 2, maxSeconds: 30, maxTotalSeconds: 30 }, inputPorts: seedance25Ports, supportsAudio: true },
   { id: "kling-3", label: "Kling 3.0", mediaType: "video", description: "Regular Kling · 3–15s · 720p, 1080p or 4K", providerModel: "kling-3.0/video", providerPath: "/api/v1/jobs/createTask", maxReferences: 2, ratios: videoRatios, resolutions: ["720P", "1080P", "4K"], durations: integerSeconds(3, 15), defaultRatio: "16:9", defaultResolution: "1080P", defaultDuration: "5", defaultGenerateAudio: false, inputPorts: [{ id: "start-frame", label: "Start frame", kind: "image", max: 1 }, { id: "end-frame", label: "End frame", kind: "image", max: 1 }], supportsAudio: true },
   { id: "kling-3-turbo-text", label: "Kling 3.0 Turbo · Text", mediaType: "video", description: "Fast text-to-video · 3–15s · 720p or 1080p", providerModel: "kling/v3-turbo-text-to-video", providerPath: "/api/v1/jobs/createTask", maxReferences: 0, maxPromptLength: 2_500, ratios: videoRatios, resolutions: ["720P", "1080P"], durations: integerSeconds(3, 15), defaultRatio: "16:9", defaultResolution: "720P", defaultDuration: "5" },
   { id: "kling-3-turbo-image", label: "Kling 3.0 Turbo · Image", mediaType: "video", description: "Fast image-to-video · 3–15s · 720p or 1080p", providerModel: "kling/v3-turbo-image-to-video", providerPath: "/api/v1/jobs/createTask", maxReferences: 1, maxPromptLength: 2_500, ratios: videoRatios, resolutions: ["720P", "1080P"], durations: integerSeconds(3, 15), defaultRatio: "16:9", defaultResolution: "720P", defaultDuration: "5", inputPorts: [{ id: "start-frame", label: "Start image", kind: "image", required: true, max: 1 }] },
@@ -189,6 +188,7 @@ export type KieTask = {
   task_id?: string;
   status?: string;
   generated?: string[];
+  lastFrameUrl?: string;
   error?: unknown;
 };
 
@@ -223,10 +223,14 @@ export function normalizeKieTask(value: unknown): KieTask {
   const state = String(data.state || data.status || (successFlag === 1 ? "success" : successFlag === 2 || successFlag === 3 || responseCode >= 400 ? "fail" : "generating")).toLowerCase();
   const failure = state === "fail" || state === "failed" || successFlag === 2 || successFlag === 3 || responseCode >= 400;
   const errorMessage = data.failMsg || data.errorMessage || data.error || envelope.msg;
+  const lastFrameUrl = [resultRecord.lastFrameUrl, response.lastFrameUrl, data.lastFrameUrl]
+    .flatMap((value) => typeof value === "string" ? [value] : stringArray(value))
+    .find((value) => value.length > 0);
   return {
     task_id: String(data.taskId || data.task_id || envelope.taskId || "") || undefined,
     status: state,
     generated: urls,
+    ...(lastFrameUrl ? { lastFrameUrl } : {}),
     error: failure ? errorMessage || data.failCode || data.errorCode || "Kie.ai generation failed" : undefined,
   };
 }
@@ -249,7 +253,7 @@ function pruneKieReferenceUploads(now: number) {
 
 async function uploadKieReferenceFile(path: string, mimeType: string) {
   const bytes = await readStorageObject(path);
-  const extension = mimeType.split("/")[1]?.replace("jpeg", "jpg") || "bin";
+  const extension = ({"image/jpeg":"jpg","image/x-ms-bmp":"bmp","video/quicktime":"mov","audio/mpeg":"mp3","audio/x-wav":"wav"} as Record<string,string>)[mimeType] || mimeType.split("/")[1] || "bin";
   const filename = `${crypto.randomUUID()}.${extension}`;
   const form = new FormData();
   form.append("file", new Blob([bytes], { type: mimeType }), filename);
@@ -286,7 +290,7 @@ export async function uploadKieReference(path: string, mimeType: string, label =
   }
 }
 
-type StartInput = {
+type StartInput = import("./kie-new-models").GenerationModelOptions & {
   modelId: string;
   prompt: string;
   references: Array<ModelReference & { path: string; mimeType: string; label: string }>;
@@ -450,7 +454,7 @@ export async function startGeneration(input: StartInput) {
     body = {
       model: providerModel,
       ...(callBackUrl ? { callBackUrl } : {}),
-      input: buildKieInput(model.id, { prompt, aspectRatio: input.aspectRatio, resolution: input.resolution, duration: input.duration, generateAudio: input.generateAudio }, uploaded),
+      input: buildKieInput(model.id, { ...input, prompt }, uploaded),
     };
   }
   await acquireKieGenerationPermit();

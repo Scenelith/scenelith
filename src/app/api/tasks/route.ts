@@ -40,10 +40,11 @@ export async function GET() {
   const auth = await requireApiUser();
   if (auth.response) return auth.response;
 
-  const generations = await db.prepare(`SELECT g.*, p.name AS project_name, dispatch.payload_json::jsonb ->> 'targetClipId' AS target_clip_id
+  const generations = await db.prepare(`SELECT g.*, extras.processed_asset_id, extras.soundtrack_asset_id, extras.processing_error, p.name AS project_name, dispatch.payload_json::jsonb ->> 'targetClipId' AS target_clip_id
     FROM generations g
     JOIN projects p ON p.id = g.project_id
     LEFT JOIN generation_dispatch_jobs dispatch ON dispatch.generation_id = g.id
+    LEFT JOIN generation_output_extras extras ON extras.generation_id = g.id
     WHERE g.requested_by_user_id = ?
       AND (lower(g.status) NOT IN ('completed','complete','succeeded','success','fail','failed','error','cancelled','canceled')
         OR g.updated_at >= ?)
@@ -52,6 +53,7 @@ export async function GET() {
     LIMIT 32`).all(auth.user.id, new Date(Date.now() - 48 * 60 * 60_000).toISOString()) as Array<{
       id: string; project_id: string; project_name: string; node_id: string; status: string; media_type: string;
       model_id: string; operation: string; output_url: string | null; output_asset_id: string | null; error: string | null;
+      processed_asset_id: string | null; soundtrack_asset_id: string | null; processing_error: string | null;
       credit_cost: number; created_at: string; updated_at: string; target_clip_id: string | null;
     }>;
 
@@ -80,7 +82,10 @@ export async function GET() {
 
   const visibleGenerations = [];
   for (const row of generations) {
-    if (await userCanAccessProject(auth.user.id, row.project_id)) visibleGenerations.push(row);
+    if (await userCanAccessProject(auth.user.id, row.project_id)) {
+      const saving = generationComplete.has(row.status.toLowerCase()) && (!row.output_asset_id || (row.soundtrack_asset_id && !row.processed_asset_id && !row.processing_error));
+      visibleGenerations.push({...row, status: saving ? "finalizing" : row.status, output_asset_id: row.processed_asset_id || row.output_asset_id});
+    }
   }
   const creditUsage = await taskCreditUsage(visibleGenerations.map((row) => ({ id: row.id, kind: "generation" })));
   const generationTasks: BackgroundTaskRecord[] = visibleGenerations.map((row) => ({
@@ -97,7 +102,7 @@ export async function GET() {
     mediaType: row.media_type === "video" ? "video" : "image",
     modelId: row.model_id,
     operation: row.operation === "edit" ? "edit" : "generation",
-    outputUrl: row.output_asset_id ? `/api/assets/${row.output_asset_id}` : row.output_url,
+    outputUrl: row.output_asset_id ? `/api/assets/${row.output_asset_id}` : null,
     assetId: row.output_asset_id,
     creditCost: Number(row.credit_cost || 0),
     creditUsage: creditUsage[`generation:${row.id}`],
