@@ -70,7 +70,7 @@ type PlayerConfig = {
   seamlessEnd: boolean;
 };
 
-export function CanvasVideoPlayer({ src, variant, controlsPlacement = "overlay", controlsPortal, clipStart = 0, clipEnd, backdropUrl, blurBackdrop = false, autoPlay = false, hoverActive, hoverSession, selectionActive, clickToToggle = false, keyboardActive = false, seamlessClipEnd = false, preloadSrc, preloadStart = 0, playbackOwnerId, playbackKey, requestedRelativeTime, requestedSeekToken, requestedPlayback, externalCurrentTime, externalDuration, externalActions, onExternalSeek, onAspectRatio, onMediaDuration, onDoubleClick, onPlaybackChange, onTimeChange, onClipEnded }: {
+export function CanvasVideoPlayer({ src, variant, controlsPlacement = "overlay", controlsPortal, clipStart = 0, clipEnd, backdropUrl, blurBackdrop = false, autoPlay = false, hoverActive, hoverSession, selectionActive, clickToToggle = false, keyboardActive = false, seamlessClipEnd = false, preloadSrc, preloadStart = 0, playbackOwnerId, playbackKey = "media", requestedRelativeTime, requestedSeekToken, requestedPlayback, externalCurrentTime, externalDuration, externalActions, onExternalSeek, onAspectRatio, onMediaDuration, onDoubleClick, onPlaybackChange, onTimeChange, onClipEnded }: {
   src: string;
   variant: "generator" | "scene" | "card";
   controlsPlacement?: "overlay" | "dock" | "external";
