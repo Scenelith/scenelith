@@ -100,7 +100,6 @@ export async function executeGenerationRequest(userId: string, input: unknown, q
   let model;
   try { model = provider.getModel(parsed.data.modelId); } catch { return Response.json({error:"Unknown generation model"},{status:400}); }
   const project = await db.prepare("SELECT purpose,workspace_id FROM projects WHERE id=?").get(parsed.data.projectId) as {purpose:string;workspace_id:string}|undefined;
-  if (project?.purpose === "studio" && model.mediaType === "video" && !parsed.data.referenceRoles.includes("reference-video")) return Response.json({error:"Choose a source video to remake"},{status:400});
   if (parsed.data.prompt.trim().length < (model.minPromptLength || 2)) return Response.json({ error: `${model.label} requires at least ${model.minPromptLength || 2} prompt characters` }, { status: 400 });
   if (parsed.data.prompt.length > (model.maxPromptLength || 5000)) {
     return Response.json({ error: `${model.label} accepts prompts up to ${(model.maxPromptLength || 5000).toLocaleString("en-US")} characters` }, { status: 400 });
