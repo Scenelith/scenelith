@@ -433,7 +433,7 @@ export function CanvasVideoPlayer({ src, variant, controlsPlacement = "overlay",
       : undefined;
     if (requestApplies && effectivePlaybackRequest) {
       completedPlaybackRef.current = null;
-      manualPlaybackRef.current = effectivePlaybackRequest.playing;
+      manualPlaybackRef.current = effectivePlaybackRequest.playing && (!managerRequest || managerCommand.intent !== "hover");
       hoverSuppressedRef.current = !effectivePlaybackRequest.playing;
       managerCommandIdRef.current = effectivePlaybackRequest.token;
       if (Number.isFinite(effectivePlaybackRequest.relativeTime)) position = safeClipStart + Math.min(clipDuration, Math.max(0, Number(effectivePlaybackRequest.relativeTime)));
@@ -476,11 +476,13 @@ export function CanvasVideoPlayer({ src, variant, controlsPlacement = "overlay",
     if (!configRef.current.source) return;
     const current = videoPlaybackManager.getSnapshot();
     const targetKey = playbackKey || "media";
-    if (current.action === "play" && current.ownerId === ownerId && current.targetKey === targetKey && controllerRef.current?.isPlaying) {
+    if (current.action === "play" && current.ownerId === ownerId && current.targetKey === targetKey && current.intent !== "hover" && controllerRef.current?.isPlaying) {
       videoPlaybackManager.pause(ownerId, playbackKey || "media");
       return;
     }
-    videoPlaybackManager.play(ownerId, playbackKey || "media", { relativeTime });
+    videoPlaybackManager.play(ownerId, playbackKey || "media", {
+      relativeTime: relativeTime >= clipDuration - .08 ? 0 : relativeTime,
+    });
   };
 
   useEffect(() => {
