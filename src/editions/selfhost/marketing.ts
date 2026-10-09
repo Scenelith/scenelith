@@ -1,6 +1,6 @@
 import type { EditionMarketingChrome } from "@/editions/contracts/marketing";
 
-export const editionMarketingChrome = Object.freeze({
+export const editionMarketingChrome: EditionMarketingChrome = Object.freeze({
   homeHref: "/canvas",
   unauthenticatedPrimaryHref: "/login",
   navigation: [

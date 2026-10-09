@@ -706,3 +706,10 @@ test("source editor captures a durable still instead of exposing redundant scene
   assert.match(frameRoute, /`workspaces\/\$\{workspaceId\}\/projects\/\$\{projectId\}\/video-frames`/);
   assert.doesNotMatch(frameRoute, /WHERE id = \? AND project_id = \?/);
 });
+
+// Standalone generator outputs do not supply a scene key. Their Play command
+// must still match the player, exactly as it does for a named Master scene.
+test("generated video players accept their default media target and reset for new results", () => {
+  assert.match(canvasPlayer, /playbackKey = "media"/);
+  assert.match(frameNode, /CanvasVideoPlayer key=\{outputUrl\} src=\{outputUrl\}/);
+});

@@ -11,6 +11,7 @@ export type MarketingLinkGroup = Readonly<{
 }>;
 
 export type EditionMarketingChrome = Readonly<{
+  McpPage?: ComponentType<{ authenticated: boolean; endpoint: string }>;
   Footer?: ComponentType<{ authenticated?: boolean }>;
   homeHref: string;
   unauthenticatedPrimaryHref: string;

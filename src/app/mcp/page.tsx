@@ -1,3 +1,4 @@
+import { editionMarketingChrome } from "@/editions/current/marketing";
 import type { Metadata } from "next";
 import Link from "next/link";
 import {
@@ -27,6 +28,11 @@ export const metadata: Metadata = {
 export default async function McpPage() {
   const endpoint = new URL("/api/mcp", baseUrl()).toString();
   const authenticated = Boolean(await getCurrentUser());
+
+  if (editionMarketingChrome.McpPage) {
+    const Page = editionMarketingChrome.McpPage;
+    return <Page authenticated={authenticated} endpoint={endpoint} />;
+  }
 
   return (
     <div className={styles.page}>
