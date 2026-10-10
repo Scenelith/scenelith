@@ -1,0 +1,25 @@
+import assert from 'node:assert/strict';
+import {spawnSync} from 'node:child_process';
+import {before,after,test} from 'node:test';
+let db:typeof import('./postgres-test-db')['db'], close:()=>Promise<void>;
+before(async()=>{const t=await import('./postgres-test-db');db=t.db;close=t.closeRelationalPool;await t.resetTestDatabase();});
+after(async()=>close());
+test('playback copies are deduplicated, quota-accounted and deleted with their unchanged source',async()=>{
+ const {saveBytes,readStorageObject}=await import('../src/lib/storage');
+ const {assetVideoPlayback}=await import('../src/lib/asset-video-playback');
+ const now=new Date().toISOString(),workspace=crypto.randomUUID(),id=crypto.randomUUID();
+ await db.prepare("INSERT INTO workspaces(id,name,created_at,updated_at) VALUES(?,'Playback',?,?)").run(workspace,now,now);
+ const result=spawnSync('ffmpeg',['-v','error','-f','lavfi','-i','color=s=64x64:d=1','-c:v','libx264','-movflags','frag_keyframe+empty_moov','-f','mp4','pipe:1']);assert.equal(result.status,0,result.stderr.toString());
+ const original=await saveBytes(result.stdout,`workspaces/${workspace}`,'test.mp4','video/mp4');
+ await db.prepare("INSERT INTO assets(id,workspace_id,kind,role,filename,storage_path,size_bytes,mime_type,created_at) VALUES(?,?,'upload','reference_video','test.mp4',?,?,'video/mp4',?)").run(id,workspace,original.reference,original.size,now);
+ const source={id,workspace_id:workspace,project_id:null,storage_path:original.reference,size_bytes:original.size};
+ const [a,b]=await Promise.all([assetVideoPlayback(source),assetVideoPlayback(source)]);assert.deepEqual(a,b);assert.deepEqual(await assetVideoPlayback(source),a);
+ assert.deepEqual(await readStorageObject(original.reference),result.stdout);
+ const rows=await db.prepare('SELECT kind,role,persona_id FROM assets WHERE playback_source_asset_id=?').all(id);
+ assert.deepEqual(rows,[{kind:'video_preview',role:'internal',persona_id:null}]);
+ const usage=await db.prepare('SELECT used_bytes FROM workspace_storage_usage WHERE workspace_id=?').get(workspace) as {used_bytes:number};assert.equal(Number(usage.used_bytes),original.size+a.size);
+ await db.prepare('DELETE FROM assets WHERE id=?').run(id);
+ assert.equal((await db.prepare('SELECT id FROM assets WHERE workspace_id=?').all(workspace)).length,0);
+ const jobs=await db.prepare('SELECT storage_reference FROM storage_deletion_jobs WHERE workspace_id=?').all(workspace) as {storage_reference:string}[];
+ assert.deepEqual(jobs.map(j=>j.storage_reference).sort(),[original.reference,a.storagePath].sort());
+});

@@ -1,3 +1,4 @@
+import { assetVideoPlayback } from '@/lib/asset-video-playback';
 import { assetContentDisposition } from '@/lib/asset-download';
 import { parseVideoByteRange } from "@/lib/video-byte-range";
 import { requireApiUser } from "@/lib/auth";
@@ -18,6 +19,7 @@ const DIRECT_REDIRECT_CACHE_CONTROL = "private, max-age=300";
 type AssetRow = {
   id: string;
   workspace_id: string;
+  project_id: string | null;
   persona_id: string | null;
   kind: string;
   filename: string;
@@ -153,6 +155,7 @@ export async function GET(request: Request, context: RouteContext<"/api/assets/[
 
   const searchParams = new URL(request.url).searchParams;
   const wantsDownload = searchParams.get("download") === "1";
+  const wantsPlayback = !wantsDownload && searchParams.get("variant") === "playback" && row.mime_type.startsWith("video/");
   const wantsThumbnail = !wantsDownload && searchParams.get("variant") === "thumbnail";
   const requestedThumbnailTime = Number(searchParams.get("time"));
   const wantsTimedVideoThumbnail = wantsThumbnail
@@ -164,10 +167,16 @@ export async function GET(request: Request, context: RouteContext<"/api/assets/[
   const wantsDirectDelivery = wantsDownload || searchParams.get("delivery") === "direct";
   let served: ServedAsset;
   try {
-    served = wantsTimedVideoThumbnail
+    served = wantsPlayback
+      ? {...await assetVideoPlayback(row), mimeType:"video/mp4", filename:`${row.id}-preview.mp4`, cacheControl:VIDEO_STREAM_CACHE_CONTROL}
+      : wantsTimedVideoThumbnail
       ? await videoAssetThumbnailAtTime(row, requestedThumbnailTime)
       : wantsThumbnail ? await assetThumbnail(row) : await originalAsset(row);
   } catch (error) {
+    if (wantsPlayback) {
+      console.error("Video playback could not be prepared", {assetId:row.id,error});
+      return Response.json({error:"Could not prepare video playback"},{status:503,headers:{"cache-control":"no-store"}});
+    }
     if (!wantsThumbnail) return Response.json({ error: "Asset file is missing" }, { status: 404 });
     console.error("Asset thumbnail could not be prepared", { assetId: row.id, error });
     served = { ...(await originalAsset(row)), cacheControl: "private, max-age=60" };
