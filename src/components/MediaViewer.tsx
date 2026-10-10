@@ -10,6 +10,7 @@ import { ImageGeneration } from "./ui/ai-chat-image-generation-1";
 import { generationCreditCost } from "@/lib/generation-pricing";
 import { appendEditReferenceMention, editReferenceMentionToken } from "@/lib/reference-mentions";
 import { ImageEditReferencePicker, type ImageEditPersona, type ImageEditReference } from "./ImageEditReferencePicker";
+import { MediaPrompt } from "./MediaPrompt";
 import { AddToIdentityPopover } from "./AddToIdentityPopover";
 import { TextOverlayEditor, type ApplyTextOverlay } from "./TextOverlayEditor";
 import type { PersonaRecord } from "@/lib/types";
@@ -533,8 +534,8 @@ export function MediaViewer({
             <a href={textDirty ? undefined : assetDownloadUrl(url)} aria-disabled={textDirty} download title={textDirty ? "Apply text changes before downloading" : "Download current media"} aria-label="Download current media"><Download size={14} /></a>
             {onDelete && <button type="button" className="is-danger" title="Delete node" aria-label="Delete node" onPointerDown={onDelete}><Trash2 size={14} /></button>}
           </div>
-          <div className="media-viewer-context"><strong>{mediaTitle || relativeTime(createdAt)}</strong><span>{projectName} / {canvasName}</span></div>
-          {node.data.prompt && <section><label>PROMPT</label><p className="media-viewer-prompt" title={node.data.prompt}>{node.data.prompt}</p></section>}
+          <div className="media-viewer-context"><strong>{mediaTitle && mediaTitle.trim() !== node.data.prompt?.trim() ? mediaTitle : relativeTime(createdAt)}</strong><span>{projectName} / {canvasName}</span></div>
+          {node.data.prompt && <MediaPrompt key={node.id} prompt={node.data.prompt} />}
           <section><label>SETTINGS</label><div className="media-viewer-chips"><span>{model?.label || (node.data.kind === "prompt" ? "Image generation" : "Original media")}</span><span>{node.data.aspectRatio || "Original ratio"}</span>{node.data.resolution && <span>{node.data.resolution}</span>}{node.data.role && <span>{node.data.role}</span>}</div></section>
           {persona && <section><label>IDENTITY</label><div className="media-viewer-persona">{persona.avatarUrl ? <img src={persona.avatarUrl} alt={persona.name} /> : references.find((reference) => reference.personaId)?.url ? <img src={references.find((reference) => reference.personaId)?.url} alt={persona.name} /> : null}<span><strong>{persona.name}</strong><small>{persona.variant ? `${persona.variant[0].toUpperCase()}${persona.variant.slice(1)} references` : "Identity references"}</small></span></div></section>}
           {references.length > 0 && <section><label>REFERENCES</label><div className="media-viewer-references">{references.map((reference) => <figure key={reference.id}><img src={reference.url} alt={reference.title} /><figcaption>{reference.title}</figcaption></figure>)}</div></section>}
