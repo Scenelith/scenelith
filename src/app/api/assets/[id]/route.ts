@@ -155,7 +155,7 @@ export async function GET(request: Request, context: RouteContext<"/api/assets/[
 
   const searchParams = new URL(request.url).searchParams;
   const wantsDownload = searchParams.get("download") === "1";
-  const wantsPlayback = !wantsDownload && searchParams.get("variant") === "playback" && row.mime_type.startsWith("video/");
+  const wantsPlayback = !wantsDownload && searchParams.get("variant") === "playback" && row.kind !== "video_preview" && row.mime_type.startsWith("video/");
   const wantsThumbnail = !wantsDownload && searchParams.get("variant") === "thumbnail";
   const requestedThumbnailTime = Number(searchParams.get("time"));
   const wantsTimedVideoThumbnail = wantsThumbnail
