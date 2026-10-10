@@ -46,6 +46,16 @@ function relativeTime(value: string) {
   return `${years} year${years === 1 ? "" : "s"} ago`;
 }
 
+function mediaRatioLabel(width: number, height: number) {
+  const w = Math.round(width), h = Math.round(height);
+  if (w <= 0 || h <= 0) return "";
+  let a = w, b = h;
+  while (b) [a, b] = [b, a % b];
+  const x = w / a, y = h / a;
+  if (x <= 30 && y <= 30) return `${x}:${y}`;
+  return w >= h ? `${Number((w / h).toFixed(2))}:1` : `1:${Number((h / w).toFixed(2))}`;
+}
+
 function formatVideoTime(seconds: number) {
   if (!Number.isFinite(seconds) || seconds < 0) return "0:00";
   const wholeSeconds = Math.floor(seconds);
@@ -152,7 +162,7 @@ export function MediaViewer({
   const [editPhase, setEditPhase] = useState<"preparing" | "queued" | "generating" | "loading" | null>(null);
   const isVideo = node.data.mediaType === "video" || node.data.kind === "videoMaster";
   const [displayUrl, setDisplayUrl] = useState(isVideo ? assetDirectUrl(url) : assetThumbnailUrl(url));
-  const [mediaFrame, setMediaFrame] = useState<{ width: number; height: number; sourceWidth: number; sourceHeight: number } | null>(null);
+  const [mediaFrame, setMediaFrame] = useState<{ width: number; height: number; sourceWidth: number; sourceHeight: number; sourceUrl: string } | null>(null);
   const [error, setError] = useState("");
   const editableModels = models.filter((item) => item.mediaType === "image" && item.maxReferences > 0);
   const initialEditModel = editableModels.find((item) => item.id === node.data.modelId)
@@ -279,8 +289,8 @@ export function MediaViewer({
     if (!canvas || !sourceWidth || !sourceHeight) return;
     const scale = Math.min(canvas.clientWidth / sourceWidth, canvas.clientHeight / sourceHeight);
     if (!Number.isFinite(scale) || scale <= 0) return;
-    setMediaFrame({ width: sourceWidth * scale, height: sourceHeight * scale, sourceWidth, sourceHeight });
-  }, []);
+    setMediaFrame({ width: sourceWidth * scale, height: sourceHeight * scale, sourceWidth, sourceHeight, sourceUrl: displayUrl });
+  }, [displayUrl]);
 
   useEffect(() => {
     const closeOnEscape = (event: KeyboardEvent) => {
@@ -536,7 +546,7 @@ export function MediaViewer({
           </div>
           <div className="media-viewer-context"><strong>{mediaTitle && mediaTitle.trim() !== node.data.prompt?.trim() ? mediaTitle : relativeTime(createdAt)}</strong><span>{projectName} / {canvasName}</span></div>
           {node.data.prompt && <MediaPrompt key={node.id} prompt={node.data.prompt} />}
-          <section><label>SETTINGS</label><div className="media-viewer-chips"><span>{model?.label || (node.data.kind === "prompt" ? "Image generation" : "Original media")}</span><span>{node.data.aspectRatio || "Original ratio"}</span>{node.data.resolution && <span>{node.data.resolution}</span>}{node.data.role && <span>{node.data.role}</span>}</div></section>
+          <section><label>SETTINGS</label><div className="media-viewer-chips"><span>{model?.label || (node.data.kind === "prompt" ? "Image generation" : "Original media")}</span>{mediaFrame?.sourceUrl === displayUrl && <span title={`${mediaFrame.sourceWidth} × ${mediaFrame.sourceHeight} pixels`} aria-label="Media aspect ratio">{mediaRatioLabel(mediaFrame.sourceWidth, mediaFrame.sourceHeight)}</span>}{node.data.resolution && <span>{node.data.resolution}</span>}{node.data.role && <span>{node.data.role}</span>}</div></section>
           {persona && <section><label>IDENTITY</label><div className="media-viewer-persona">{persona.avatarUrl ? <img src={persona.avatarUrl} alt={persona.name} /> : references.find((reference) => reference.personaId)?.url ? <img src={references.find((reference) => reference.personaId)?.url} alt={persona.name} /> : null}<span><strong>{persona.name}</strong><small>{persona.variant ? `${persona.variant[0].toUpperCase()}${persona.variant.slice(1)} references` : "Identity references"}</small></span></div></section>}
           {references.length > 0 && <section><label>REFERENCES</label><div className="media-viewer-references">{references.map((reference) => <figure key={reference.id}><img src={reference.url} alt={reference.title} /><figcaption>{reference.title}</figcaption></figure>)}</div></section>}
           {mode === "edit" && hasTextEditor && <section className="text-overlay-panel" ref={setTextPanel} aria-label="Text settings" />}

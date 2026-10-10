@@ -1216,8 +1216,19 @@ select.panel-input { color-scheme: dark; }
 .media-viewer-details section { display: flex; flex-direction: column; gap: 9px; }.media-viewer-details section > label { color: var(--color-text-muted); font: 700 8px/1 ui-monospace, monospace; letter-spacing: .07em; }.media-viewer-details section > p { max-height: 108px; margin: 0; overflow-y: auto; color: var(--color-text-soft); font-size: 9px; line-height: 1.55; white-space: pre-wrap; }
 .media-viewer-details section > .media-viewer-prompt { max-height: none; display: -webkit-box; overflow: hidden; -webkit-box-orient: vertical; -webkit-line-clamp: 4; line-clamp: 4; overflow-wrap: anywhere; }
 .media-viewer-details section > .media-viewer-prompt.is-expanded { display: block; overflow: visible; -webkit-line-clamp: unset; line-clamp: unset; }
-.media-viewer-prompt-toggle { align-self: flex-start; padding: 4px 0; border: 0; background: transparent; color: var(--color-mint); font: inherit; font-size: 10px; cursor: pointer; }
-.media-viewer-prompt-toggle:hover { text-decoration: underline; }
+/* Scoped above host-page button resets; these are secondary media controls. */
+.media-viewer .media-viewer-details .media-viewer-prompt-toggle { align-self:flex-start; min-height:24px; padding:2px 0; border:0; outline:0; box-shadow:none; background:transparent; color:var(--color-text-muted); font-family:inherit; font-size:9px; font-weight:400; line-height:1.4; text-decoration:none; cursor:pointer; }
+.media-viewer .media-viewer-details .media-viewer-prompt-toggle:hover { color:var(--color-text-soft); }
+.media-viewer .media-viewer-details .media-viewer-prompt-toggle:focus-visible { outline:0; text-decoration:underline; text-underline-offset:3px; }
+.media-viewer-prompt-head { display:flex; align-items:center; gap:6px; }
+.media-viewer-prompt-head > label { color:var(--color-text-muted); font:700 8px/1 ui-monospace,monospace; letter-spacing:.07em; }
+.media-viewer .media-viewer-details .media-viewer-prompt-copy { width:24px; height:24px; padding:0; display:grid; place-items:center; border:0; border-radius:4px; outline:0; box-shadow:none; background:transparent; color:var(--color-text-muted); cursor:pointer; }
+.media-viewer .media-viewer-details .media-viewer-prompt-copy:hover { color:var(--color-text-soft); }
+.media-viewer .media-viewer-details .media-viewer-prompt-copy:focus-visible { outline:0; background:var(--color-stone-1); }
+.media-viewer-prompt-status { position:absolute; width:1px; height:1px; padding:0; overflow:hidden; clip-path:inset(50%); white-space:nowrap; }
+.media-viewer .media-viewer-quick-actions :is(button,a):not(.is-danger) { color:var(--color-text-muted); background:transparent; outline:0; box-shadow:none; }
+.media-viewer .media-viewer-quick-actions :is(button,a):not(.is-danger):hover { color:var(--color-text-soft); background:transparent; }
+.media-viewer .media-viewer-quick-actions :is(button,a):not(.is-danger):focus-visible { outline:0; background:var(--color-stone-1); }
 
 .media-viewer-chips { display: flex; flex-wrap: wrap; gap: 5px; }.media-viewer-chips span { min-height: 23px; padding: 0 7px; display: inline-flex; align-items: center; border: 0; border-radius: 6px; background: var(--color-stone-1); color: var(--color-text-soft); font-size: 7px; }
 .media-viewer-persona { display: flex; align-items: center; gap: 9px; }.media-viewer-persona > img { width: 38px; height: 38px; flex: 0 0 auto; display: block; object-fit: cover; border: 0; border-radius: 8px; }.media-viewer-persona > span { min-width: 0; display: flex; flex-direction: column; gap: 4px; }.media-viewer-persona strong { overflow: hidden; color: var(--color-text-soft); font-size: 9px; text-overflow: ellipsis; white-space: nowrap; }.media-viewer-persona small { color: var(--color-text-dim); font-size: 7px; }
@@ -1466,7 +1477,8 @@ select.panel-input { color-scheme: dark; }
   .media-viewer.is-viewing .media-viewer-context strong { font-size:13px; }
   .media-viewer.is-viewing .media-viewer-context span { font-size:11px; }
   .media-viewer.is-viewing .media-viewer-details section > p { font-size:12px; }
-  .media-viewer.is-viewing .media-viewer-prompt-toggle { min-height:32px; font-size:12px; }
+  .media-viewer.is-viewing .media-viewer-details .media-viewer-prompt-toggle { min-height:32px; font-size:11px; }
+  .media-viewer.is-viewing .media-viewer-details .media-viewer-prompt-copy { width:32px; height:32px; }
 }
 
 .modal-head { display: flex; align-items: flex-start; justify-content: space-between; }
