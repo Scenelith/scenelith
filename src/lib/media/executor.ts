@@ -12,6 +12,7 @@ import { mediaProcess } from './process';
 import { importMedia } from './import';
 import { extractSceneFiles } from './scenes';
 import { renderPlan, type LocalMedia } from './render';
+import { retainMediaStaging, claimMediaCleanup } from './staging';
 
 export type MediaFileOutcome={file:string;mime:string;metadata?:unknown;kind?:string;role?:string;filename?:string};
 type Outcome={assetId?:string;file?:string;mime?:string;metadata?:unknown;plan?:unknown;files?:MediaFileOutcome[]};
@@ -96,6 +97,7 @@ async function publish(job:MediaJob,outcome:Outcome,uploads:Array<{file:MediaFil
     const owned=await db.prepare(`SELECT id FROM media_jobs WHERE id=? AND worker_id=? AND fence=? AND status='running' AND lease_until>now() FOR UPDATE`).get(job.id,job.worker_id,job.fence);
     if(!owned)throw new MediaError('LEASE_LOST',409);
     await assertJobAccess(job);
+    await retainMediaStaging(job.id,job.fence,uploads.length);
     await db.prepare('DELETE FROM media_storage_reservations WHERE job_id=? AND fence=?').run(job.id,job.fence);
     await assertWorkspaceStorageCapacity(job.workspace_id,uploads.reduce((total,item)=>total+item.stored.size,0));
     const assets:Array<{id:string;url:string;downloadUrl:string;metadata:unknown;kind:string;role:string;filename:string}>=[];
@@ -116,7 +118,6 @@ async function publish(job:MediaJob,outcome:Outcome,uploads:Array<{file:MediaFil
       }
       assets.push({id,url:`/api/assets/${id}`,downloadUrl:`/api/assets/${id}?download=1`,metadata,kind,role,filename});
     }
-    await db.prepare('UPDATE media_job_objects SET retained=true WHERE job_id=? AND fence=?').run(job.id,job.fence);
     const assetId=outcome.assetId||assets[0]?.id;
     const result={asset:assetId?{id:assetId,url:`/api/assets/${assetId}`,downloadUrl:`/api/assets/${assetId}?download=1`}:null,
       ...(outcome.files?{assets}:{}),metadata:outcome.metadata,plan:outcome.plan};
@@ -176,14 +177,12 @@ export async function executeMediaJob(job:MediaJob,shutdownSignal?:AbortSignal) 
   }
 }
 export async function cleanupMediaObjects() {
-  const rows=await db.prepare(`SELECT o.* FROM media_job_objects o LEFT JOIN media_jobs j ON j.id=o.job_id
-    WHERE NOT o.retained AND (j.id IS NULL OR j.status IN ('failed','cancelled','completed') OR o.fence<>j.fence) AND o.created_at<now()-interval '10 minutes' LIMIT 50`)
-    .all() as Array<{job_id:string;fence:number;ordinal:number;storage_reference:string}>;
+  const rows=await claimMediaCleanup();
   for(const row of rows){
     try {
       await deleteStorageObject(row.storage_reference);
       if(!/^[a-z0-9]+:\/\//i.test(row.storage_reference))await rm(`${row.storage_reference}.partial`,{force:true});
-      await db.prepare('DELETE FROM media_job_objects WHERE job_id=? AND fence=? AND ordinal=? AND NOT retained').run(row.job_id,row.fence,row.ordinal);
+      await db.prepare('DELETE FROM media_job_objects WHERE job_id=? AND fence=? AND ordinal=? AND NOT retained AND cleanup_claimed_at IS NOT NULL').run(row.job_id,row.fence,row.ordinal);
     }catch{console.error('Media staging cleanup deferred',{jobId:row.job_id,fence:row.fence});}
   }
 }

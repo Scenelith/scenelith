@@ -36,7 +36,8 @@ export async function storeProviderVideo(url:string,keyPrefix:string,stagingId:s
     await pipeline(body,limit,createWriteStream(path,{flags:'wx'}),{signal});
     const extension=safeExtension(/^https?:\/\//i.test(url)?new URL(url).pathname:'generated',contentType);
     const key=`${keyPrefix}${extension}`;
-    await db.prepare('INSERT INTO media_job_objects(job_id,fence,ordinal,storage_reference) VALUES(?,0,0,?)').run(stagingId,storageFileDestination(key).reference);
+    await db.prepare("INSERT INTO media_job_objects(job_id,fence,ordinal,storage_reference,protected_until) VALUES(?,0,0,?,now()+(? * interval '1 millisecond'))")
+      .run(stagingId,storageFileDestination(key).reference,mediaConfig().transferTimeoutMs+90_000);
     const stored=await putStorageFile(path,key,{contentType},signal);
     return {stored,extension,contentType};
   } finally {await rm(dir,{recursive:true,force:true});}

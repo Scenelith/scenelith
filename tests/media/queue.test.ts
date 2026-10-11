@@ -148,3 +148,31 @@ test('storage cleanup keeps files referenced by saved assets or active media job
  await db.prepare("UPDATE media_jobs SET status='failed' WHERE id=?").run(job.id);await drainStorageLifecycle();
  await assert.rejects(readStorageObject(temporary.reference));
 });
+
+test('staging cleanup and late publication are mutually exclusive, including provider objects',async()=>{
+ const {claimMediaCleanup,retainMediaStaging}=await import('../../src/lib/media/staging');
+ const {cleanupMediaObjects}=await import('../../src/lib/media/executor');
+ const stage=async(name:string,protectedUpload=false)=>{
+  const id=crypto.randomUUID();const stored=await saveBytes(Buffer.from(name),`workspaces/${workspace}`,`${id}.bin`,'application/octet-stream');
+  await db.prepare("INSERT INTO media_job_objects(job_id,fence,ordinal,storage_reference,created_at,protected_until) VALUES(?,0,0,?,now()-interval '20 minutes',now()+(? * interval '1 minute'))").run(id,stored.reference,protectedUpload?120:-1);
+  return {id,stored};
+ };
+ const uploading=await stage('still uploading',true);
+ assert.ok(!(await claimMediaCleanup()).some(r=>r.job_id===uploading.id));
+ const collected=await stage('collection wins');
+ assert.ok((await claimMediaCleanup()).some(r=>r.job_id===collected.id));
+ await assert.rejects(db.transaction(()=>retainMediaStaging(collected.id,0,1))(),/STAGING_OWNERSHIP_LOST/);
+ await cleanupMediaObjects();await assert.rejects(readStorageObject(collected.stored.reference));
+ const published=await stage('publication wins');
+ await db.transaction(()=>retainMediaStaging(published.id,0,1))();
+ await cleanupMediaObjects();assert.equal((await readStorageObject(published.stored.reference)).toString(),'publication wins');
+ // Concurrent calls contend on the same staging row; exactly one can own it.
+ const race=await stage('concurrent');
+ const [retain,cleanup]=await Promise.allSettled([db.transaction(()=>retainMediaStaging(race.id,0,1))(),claimMediaCleanup()]);
+ assert.equal(cleanup.status,'fulfilled');
+ const claimed=cleanup.status==='fulfilled'&&cleanup.value.some(r=>r.job_id===race.id);
+ assert.equal(retain.status==='fulfilled',!claimed);
+ await cleanupMediaObjects();
+ if(retain.status==='fulfilled')assert.equal((await readStorageObject(race.stored.reference)).toString(),'concurrent');
+ else await assert.rejects(readStorageObject(race.stored.reference));
+});

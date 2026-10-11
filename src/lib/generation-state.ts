@@ -278,6 +278,10 @@ export async function persistGenerationOutput(id: string, outputUrl: string) {
   const persisted = await db.transaction(async () => {
     const current = await db.prepare("SELECT output_asset_id FROM generations WHERE id = ? FOR UPDATE").get(id) as { output_asset_id: string | null } | undefined;
     if (current?.output_asset_id) return { assetId: current.output_asset_id, inserted: false };
+    if (generation.media_execution_version === 1 && generation.media_type === 'video') {
+      const {retainMediaStaging}=await import('./media/staging');
+      await retainMediaStaging(assetId,0,1);
+    }
     await db.prepare(`INSERT INTO assets
       (id, workspace_id, project_id, kind, role, filename, storage_path, storage_provider, storage_bucket, object_key, size_bytes, content_hash, mime_type, metadata_json, created_at)
       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`).run(
@@ -297,7 +301,6 @@ export async function persistGenerationOutput(id: string, outputUrl: string) {
         JSON.stringify({ generationId: id, sourceUrl: outputUrl, ...generationMetadata }),
         now,
       );
-    if (generation.media_execution_version === 1 && generation.media_type === 'video') await db.prepare('UPDATE media_job_objects SET retained=true WHERE job_id=? AND fence=0').run(assetId);
     if (generation.media_execution_version === 1 && generationOwner?.requested_by_user_id) {
       await enqueueMediaAnalysis(generationOwner.requested_by_user_id,{id:assetId,projectId:generation.project_id,workspaceId:project.workspace_id,mimeType:contentType},true);
     }

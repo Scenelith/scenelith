@@ -28,7 +28,7 @@ export async function extractSceneFiles(source:LocalMedia,dir:string,signal:Abor
     role:index===0?'hook':index===files.length-1?'cta':'scene',filename,metadata:{...segments[index],duration}}));
   const count=Math.max(24,Math.min(600,Math.ceil(duration*15))),columns=Math.min(30,count),rows=Math.ceil(count/columns);
   const file=join(dir,'timeline-sprite.jpg');
-  await mediaProcess('ffmpeg',['-i',source.path,'-vf',`fps=${count/duration},scale=-2:72,tile=${columns}x${rows}:padding=0:margin=0`,
+  await mediaProcess('ffmpeg',['-i',source.path,'-vf',`fps=${count/duration},scale=1024:72:force_original_aspect_ratio=decrease:force_divisible_by=2,setsar=1,tile=${columns}x${rows}:padding=0:margin=0`,
     '-frames:v','1','-q:v','3',file],signal);
   result.push({file,mime:'image/jpeg',kind:'scene',role:'timeline',filename:'timeline-sprite.jpg',
     metadata:{timelineSprite:true,frameCount:count,columns,rows,duration}});
