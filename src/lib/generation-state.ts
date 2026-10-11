@@ -258,6 +258,7 @@ export async function persistGenerationOutput(id: string, outputUrl: string) {
     const requestedDurationSeconds = Number(payload.duration || 0) || undefined;
     generationMetadata = {
       personaId: payload.personaId,
+      outputRole: payload.outputRole,
       background: payload.background,
       hasAlpha: generation.media_type === "image" ? !(await sharp(bytes).stats()).isOpaque : undefined,
       modelId: payload.modelId,
@@ -279,11 +280,12 @@ export async function persistGenerationOutput(id: string, outputUrl: string) {
     if (current?.output_asset_id) return { assetId: current.output_asset_id, inserted: false };
     await db.prepare(`INSERT INTO assets
       (id, workspace_id, project_id, kind, role, filename, storage_path, storage_provider, storage_bucket, object_key, size_bytes, content_hash, mime_type, metadata_json, created_at)
-      VALUES (?, ?, ?, ?, 'generated', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`).run(
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`).run(
         assetId,
         project.workspace_id,
         generation.project_id,
         generation.media_type === "video" ? "generated_video" : "generated_image",
+        generationMetadata.outputRole === "internal" ? "internal" : "generated",
         filename,
         stored.reference,
         stored.provider,

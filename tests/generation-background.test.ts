@@ -405,3 +405,11 @@ test("old completed output is saved directly while its URL still works", async (
   assert.equal(result.status, "completed");
   assert.ok(result.output_asset_id);
 });
+
+test('server-owned internal generation parts are saved without publishing a Library item',async()=>{
+ const seeded=await seedGeneration();
+ await db.prepare("INSERT INTO generation_dispatch_jobs(generation_id,payload_json,status,attempts,available_at,created_at,updated_at) VALUES(?,?,'dispatched',1,now(),now(),now())").run(seeded.generationId,JSON.stringify({outputRole:'internal'}));
+ const assetId=await state.persistGenerationOutput(seeded.generationId,tinyPng);
+ assert.deepEqual(await db.prepare('SELECT role FROM assets WHERE id=?').get(assetId),{role:'internal'});
+ assert.equal(await state.persistGenerationOutput(seeded.generationId,tinyPng),assetId);
+});

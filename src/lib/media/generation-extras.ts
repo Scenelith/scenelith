@@ -38,7 +38,7 @@ export async function reconcileMediaExtras(id:string) {
     if(job.status!=='completed')return;
     await db.transaction(async()=>{
       await db.prepare('UPDATE generation_output_extras SET processed_asset_id=?,processing_error=NULL WHERE generation_id=? AND processed_asset_id IS NULL').run(job.result_asset_id,id);
-      await db.prepare("UPDATE assets SET role='generated',metadata_json=(metadata_json::jsonb || ?::jsonb) WHERE id=?").run(JSON.stringify({generationId:id,outputRole:'original-soundtrack'}),job.result_asset_id);
+      await db.prepare("UPDATE assets SET role=(SELECT role FROM assets WHERE id=?),metadata_json=(metadata_json::jsonb || ?::jsonb) WHERE id=?").run(row.output_asset_id,JSON.stringify({generationId:id,outputRole:'original-soundtrack'}),job.result_asset_id);
     })();
   }catch(error){
     // Failed assembly does not change the successful generation or release/start any AI request.

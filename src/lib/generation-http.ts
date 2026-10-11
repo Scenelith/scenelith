@@ -52,7 +52,7 @@ export async function handleGenerationRequest(request: Request, quoteOnly = fals
   return executeGenerationRequest(auth.user.id, await request.json().catch(() => null), quoteOnly);
 }
 
-export async function executeGenerationRequest(userId: string, input: unknown, quoteOnly = false, options: Pick<import("./generation-admission").GenerationAdmissionInput,"beforeAdmit"|"afterAdmit"|"mediaExecutionVersion"> = {}) {
+export async function executeGenerationRequest(userId: string, input: unknown, quoteOnly = false, options: Pick<import("./generation-admission").GenerationAdmissionInput,"beforeAdmit"|"afterAdmit"|"mediaExecutionVersion"|"outputRole"> = {}) {
   const parsed = schema.safeParse(input);
   if (!parsed.success) {
     const field = String(parsed.error.issues[0]?.path[0] || "request");

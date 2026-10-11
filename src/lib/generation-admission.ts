@@ -25,6 +25,7 @@ export type GenerationAdmissionReference = {
 
 export type GenerationAdmissionInput = import("./kie-new-models").GenerationModelOptions & {
   mediaExecutionVersion?: 0 | 1;
+  outputRole?: "generated" | "internal";
   requestKey?: string;
   expectedCredits?: number;
   personaId?: string;
@@ -62,6 +63,7 @@ export function generationDispatchPayload(input: GenerationAdmissionInput): Gene
     ...(input.background !== undefined ? {background:input.background}:{}),
     ...(input.seed !== undefined ? {seed:input.seed}:{}),
     ...(input.outputFormat !== undefined ? {outputFormat:input.outputFormat}:{}),
+    ...(input.outputRole ? {outputRole:input.outputRole}:{}),
     ...(input.returnLastFrame !== undefined ? {returnLastFrame:input.returnLastFrame}:{}),
     ...(input.webSearch !== undefined ? {webSearch:input.webSearch}:{}),
     ...(input.originalAudioAssetId ? {originalAudioAssetId:input.originalAudioAssetId}:{}),
