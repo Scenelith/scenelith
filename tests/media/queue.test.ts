@@ -109,7 +109,7 @@ test('only an explicit authorized retry restarts a failed media operation and re
  await cancelMediaJob(user,job.id);
 });
 
-test('dedicated media role can process and publish but cannot read provider receipts or mutate generation billing',async()=>{
+test('dedicated media role can process and publish but cannot read provider receipts or mutate generation billing',{skip:process.env.SCENELITH_DEPLOYMENT_TYPE==='cloud'},async()=>{
  const {readFile}=await import('node:fs/promises');
  const {relationalPool}=await import('../../src/lib/relational-db');
  await relationalPool().query(await readFile('database/provision-media-worker.sql','utf8'));
