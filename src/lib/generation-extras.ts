@@ -60,5 +60,5 @@ export async function processGenerationExtras(id:string) {
       }finally{await rm(dir,{recursive:true,force:true});}
     }
     await db.prepare('UPDATE generation_output_extras SET processing_error=NULL WHERE generation_id=?').run(id);
-  })().catch(async()=>{await Promise.allSettled(written.map(deleteStorageObject));await db.prepare("UPDATE generation_output_extras SET processing_error='Video is saved. Soundtrack or last-frame processing needs a retry.' WHERE generation_id=?").run(id);});
+  })().catch(async()=>{await Promise.allSettled(written.map(path=>deleteStorageObject(path)));await db.prepare("UPDATE generation_output_extras SET processing_error='Video is saved. Soundtrack or last-frame processing needs a retry.' WHERE generation_id=?").run(id);});
 }

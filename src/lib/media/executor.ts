@@ -178,9 +178,11 @@ export async function executeMediaJob(job:MediaJob,shutdownSignal?:AbortSignal) 
 }
 export async function cleanupMediaObjects() {
   const rows=await claimMediaCleanup();
+  const signal=AbortSignal.timeout(mediaConfig().cleanupTimeoutMs);
   for(const row of rows){
+    if(signal.aborted)break;
     try {
-      await deleteStorageObject(row.storage_reference);
+      await deleteStorageObject(row.storage_reference,signal);
       if(!/^[a-z0-9]+:\/\//i.test(row.storage_reference))await rm(`${row.storage_reference}.partial`,{force:true});
       await db.prepare('DELETE FROM media_job_objects WHERE job_id=? AND fence=? AND ordinal=? AND NOT retained AND cleanup_claimed_at IS NOT NULL').run(row.job_id,row.fence,row.ordinal);
     }catch{console.error('Media staging cleanup deferred',{jobId:row.job_id,fence:row.fence});}

@@ -233,10 +233,10 @@ export async function readStorageObject(reference: string) {
   return Buffer.from(await response.Body.transformToByteArray());
 }
 
-export async function statStorageObject(reference: string) {
+export async function statStorageObject(reference: string, signal?: AbortSignal) {
   const object = parseObjectStorageReference(reference);
   if (!object) return stat(/* turbopackIgnore: true */ reference);
-  const response = await objectStorageRequest("head_object", () => getObjectStorageClient().send(new HeadObjectCommand({ Bucket: object.bucket, Key: object.key })));
+  const response = await objectStorageRequest("head_object", () => getObjectStorageClient().send(new HeadObjectCommand({ Bucket: object.bucket, Key: object.key }), {abortSignal:signal}));
   return { size: Number(response.ContentLength || 0) };
 }
 
@@ -303,10 +303,10 @@ export async function signedStorageReadUrl(reference: string, options: SignedRea
   );
 }
 
-export async function deleteStorageObject(reference: string) {
+export async function deleteStorageObject(reference: string, signal?: AbortSignal) {
   const object = parseObjectStorageReference(reference);
   if (object) {
-    await objectStorageRequest("delete_object", () => getObjectStorageClient().send(new DeleteObjectCommand({ Bucket: object.bucket, Key: object.key })));
+    await objectStorageRequest("delete_object", () => getObjectStorageClient().send(new DeleteObjectCommand({ Bucket: object.bucket, Key: object.key }), {abortSignal:signal}));
     return;
   }
   await unlink(/* turbopackIgnore: true */ reference).catch((error: NodeJS.ErrnoException) => {
@@ -363,7 +363,7 @@ export async function putStorageFile(path: string,key: string,options: PutStorag
       Bucket:destination.bucket!,Key:destination.key,Body:createReadStream(path),ContentLength:info.size,
       ContentType:options.contentType,CacheControl:options.cacheControl,Metadata:{sha256:contentHash},
     }),{abortSignal:signal}));
-    const uploaded = await statStorageObject(destination.reference);
+    const uploaded = await statStorageObject(destination.reference,signal);
     if(uploaded.size !== info.size) throw new Error("MEDIA_UPLOAD_SIZE_MISMATCH");
   }
   return {...destination,size:info.size,contentHash};
