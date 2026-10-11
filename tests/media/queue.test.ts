@@ -132,3 +132,19 @@ test('operational metrics include stage timing, processing paths and expired own
  assert.match(text,/scenelith_media_processing_path_24h/);
  assert.match(text,/scenelith_media_expired_leases/);
 });
+
+test('storage cleanup keeps files referenced by saved assets or active media jobs',async()=>{
+ const {enqueueStorageDeletion,drainStorageLifecycle}=await import('../../src/lib/storage-lifecycle');
+ const row=await db.prepare('SELECT storage_path FROM assets WHERE id=?').get(asset) as {storage_path:string};
+ await enqueueStorageDeletion(row.storage_path,workspace,'test-retention');
+ await drainStorageLifecycle();
+ assert.ok((await readStorageObject(row.storage_path)).length>0);
+ const temporary=await saveBytes(Buffer.from('temporary dependent input'),`workspaces/${workspace}`,'retained-test.bin','application/octet-stream');
+ const job=await createMediaJob(user,request('retention-test',.8,1.8));
+ // Simulate the immutable input snapshot remaining after source metadata removal.
+ await db.prepare('UPDATE media_jobs SET inputs_json=? WHERE id=?').run(JSON.stringify([{storage_path:temporary.reference}]),job.id);
+ await enqueueStorageDeletion(temporary.reference,workspace,'test-retention');await drainStorageLifecycle();
+ assert.equal((await readStorageObject(temporary.reference)).toString(),'temporary dependent input');
+ await db.prepare("UPDATE media_jobs SET status='failed' WHERE id=?").run(job.id);await drainStorageLifecycle();
+ await assert.rejects(readStorageObject(temporary.reference));
+});

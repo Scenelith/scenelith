@@ -143,6 +143,9 @@ async function claimStorageDeletion(workerId: string) {
   return await db.transaction(async () => {
     const row = await db.prepare(`SELECT id, storage_reference, attempts, max_attempts FROM storage_deletion_jobs
       WHERE attempts < max_attempts AND ((status = 'queued' AND available_at <= ?) OR (status = 'processing' AND locked_at < ?))
+      AND NOT EXISTS (SELECT 1 FROM assets live WHERE live.storage_path=storage_deletion_jobs.storage_reference)
+      AND NOT EXISTS (SELECT 1 FROM media_jobs active, jsonb_array_elements(active.inputs_json::jsonb) input
+        WHERE active.status IN ('queued','running','retry_wait') AND input->>'storage_path'=storage_deletion_jobs.storage_reference)
       ORDER BY available_at ASC, created_at ASC FOR UPDATE SKIP LOCKED LIMIT 1`).get(now, staleBefore) as
       { id: string; storage_reference: string; attempts: number; max_attempts: number } | undefined;
     if (!row) return null;
