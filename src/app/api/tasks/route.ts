@@ -1,3 +1,4 @@
+import { editionServer } from "@/editions/current/server";
 import { taskCreditUsage } from "@/modules/usage";
 import { requireApiUser } from "@/lib/auth";
 import { db, userCanAccessProject } from "@/lib/postgres-db";
@@ -152,7 +153,11 @@ export async function GET() {
     updatedAt: row.updated_at,
   }));
 
-  const tasks = [...generationTasks, ...automationTasks, ...workflowTasks]
+  const coreTasks = [...generationTasks, ...automationTasks, ...workflowTasks];
+  const projectedTasks = editionServer.projectBackgroundTasks
+    ? await editionServer.projectBackgroundTasks(auth.user.id, coreTasks)
+    : coreTasks;
+  const tasks = projectedTasks
     .sort((left, right) => {
       const leftActive = left.status === "queued" || left.status === "running";
       const rightActive = right.status === "queued" || right.status === "running";
