@@ -9,6 +9,19 @@ import {planProcessing} from '../../src/lib/media/planner';
 import {renderPlan} from '../../src/lib/media/render';
 const signal=new AbortController().signal;
 function ffmpeg(args:string[]){const r=spawnSync('ffmpeg',['-v','error','-y',...args],{maxBuffer:32*1024*1024});assert.equal(r.status,0,r.stderr.toString());return r.stdout;}
+test('copy concatenation ignores container audio tails when placing the next video',async()=>{
+ const dir=await mkdtemp(join(tmpdir(),'media-audio-tail-'));
+ try{
+  const source=join(dir,'source.mp4');
+  ffmpeg(['-f','lavfi','-i','testsrc2=s=96x64:r=25:d=1','-f','lavfi','-i','sine=sample_rate=48000:duration=1.4','-c:v','libx264','-c:a','aac',source]);
+  const metadata=await probeFile(source,signal),clip={id:'a',start:0,end:1,metadata};
+  const plan=planProcessing([clip,clip],'selected');assert.equal(plan.video,'copy');
+  const output=await renderPlan(plan,new Map([['a',{path:source,metadata}]]),dir,signal);
+  const hashes=(path:string)=>ffmpeg(['-i',path,'-map','0:v','-f','framemd5','-']).toString().split('\n').filter(l=>l&&!l.startsWith('#')).map(l=>l.split(',').at(-1)?.trim());
+  assert.deepEqual(hashes(output),[...hashes(source),...hashes(source)]);
+  assert.ok(Math.abs((await probeFile(output,signal)).duration-2)<.04);
+ }finally{await rm(dir,{recursive:true,force:true});}
+});
 test('real media: unchanged video frames survive audio removal; exact 25fps trim and concatenation decode',async()=>{
   const dir=await mkdtemp(join(tmpdir(),'media-proof-'));
   try{

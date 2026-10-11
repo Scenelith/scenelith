@@ -23,7 +23,9 @@ export async function renderPlan(plan:ProcessingPlan,media:Map<string,LocalMedia
     if(clips.length===1)await mediaProcess('ffmpeg',['-i',media.get(first.id)!.path,'-map','0:v:0','-an','-c:v','copy','-movflags','+faststart',video],signal);
     else {
       const list=join(dir,'concat.txt');
-      await writeFile(list,clips.map(c=>`file '${concatPath(media.get(c.id)!.path)}'`).join('\n'));
+      // Container duration may include a longer audio tail. The separately
+      // assembled soundtrack must not shift the next video's timestamps.
+      await writeFile(list,clips.map(c=>`file '${concatPath(media.get(c.id)!.path)}'\nduration ${time(c.end-c.start)}`).join('\n'));
       await mediaProcess('ffmpeg',['-f','concat','-safe','0','-i',list,'-map','0:v:0','-an','-c:v','copy','-movflags','+faststart',video],signal);
     }
   } else {
