@@ -1,3 +1,4 @@
+import { queuedAssetVariant } from "@/lib/media/asset-variant";
 import { assetVideoPlayback } from '@/lib/asset-video-playback';
 import { assetContentDisposition } from '@/lib/asset-download';
 import { parseVideoByteRange } from "@/lib/video-byte-range";
@@ -154,6 +155,7 @@ export async function GET(request: Request, context: RouteContext<"/api/assets/[
   if (!row || !await userCanAccessAsset(auth.user.id, id)) return Response.json({ error: "Asset not found" }, { status: 404 });
 
   const searchParams = new URL(request.url).searchParams;
+  if(searchParams.get("status")==="1" && process.env.SCENELITH_MEDIA_QUEUE_ENABLED!=="true")return Response.json({status:"disabled"},{headers:{"cache-control":"no-store"}});
   const wantsDownload = searchParams.get("download") === "1";
   const wantsPlayback = !wantsDownload && searchParams.get("variant") === "playback" && row.kind !== "video_preview" && row.mime_type.startsWith("video/");
   const wantsThumbnail = !wantsDownload && searchParams.get("variant") === "thumbnail";
@@ -167,7 +169,13 @@ export async function GET(request: Request, context: RouteContext<"/api/assets/[
   const wantsDirectDelivery = wantsDownload || searchParams.get("delivery") === "direct";
   let served: ServedAsset;
   try {
-    served = wantsPlayback
+    if (process.env.SCENELITH_MEDIA_QUEUE_ENABLED === "true" && row.mime_type.startsWith("video/") && (wantsPlayback || wantsThumbnail)) {
+      const variant = await queuedAssetVariant(auth.user.id,row,wantsPlayback
+        ? {operation:"preview",assetId:row.id}
+        : {operation:"frame",assetId:row.id,time:wantsTimedVideoThumbnail?requestedThumbnailTime:0,maxWidth:1600},searchParams.get("status")==="1");
+      if (variant instanceof Response) return variant;
+      served=variant;
+    } else served = wantsPlayback
       ? {...await assetVideoPlayback(row), mimeType:"video/mp4", filename:`${row.id}-preview.mp4`, cacheControl:VIDEO_STREAM_CACHE_CONTROL}
       : wantsTimedVideoThumbnail
       ? await videoAssetThumbnailAtTime(row, requestedThumbnailTime)

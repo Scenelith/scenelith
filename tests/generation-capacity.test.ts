@@ -108,3 +108,26 @@ test('reference uploads are idempotent after a lost response and reject reuse fo
  await assert.rejects(persistStudioUpload({...file,bytes:Buffer.from('different')}),/another file/);
  await assert.rejects(persistStudioUpload({...file,workspaceId:'other'}),/another file/);
 });
+
+test('durable order handoff commits with admission and rolls back when ownership is lost',async()=>{
+ mock.method(await usageAuthority(),'reserveGeneration',async()=>true);
+ const input={...request,requestKey:crypto.randomUUID(),mediaExecutionVersion:1 as const,
+  beforeAdmit:async()=>{await db.prepare("UPDATE workspaces SET name='hold released' WHERE id='space'").run();},
+  afterAdmit:async()=>{throw new Error('LEASE_LOST');}};
+ await assert.rejects(admitGeneration(input),/LEASE_LOST/);
+ assert.deepEqual(await db.prepare("SELECT name FROM workspaces WHERE id='space'").get(),{name:'space'});
+ assert.deepEqual(await db.prepare('SELECT count(*) AS n FROM generations').get(),{n:0});
+ assert.deepEqual(await db.prepare('SELECT count(*) AS n FROM generation_dispatch_jobs').get(),{n:0});
+ const before=mock.fn(input.beforeAdmit),after=mock.fn(async(result:{generationId:string})=>{await db.prepare('UPDATE workspaces SET name=? WHERE id=\'space\'').run(result.generationId);});
+ const admitted=await admitGeneration({...input,beforeAdmit:before,afterAdmit:after});assert.ok(admitted.ok);
+ const replay=await admitGeneration({...input,beforeAdmit:before,afterAdmit:after});assert.ok(replay.ok);
+ assert.equal(admitted.generationId,replay.generationId);assert.equal(before.mock.callCount(),1);assert.equal(after.mock.callCount(),2);
+ assert.deepEqual(await db.prepare('SELECT media_execution_version FROM generations WHERE id=?').get(admitted.generationId),{media_execution_version:1});
+});
+
+test('capacity rejection never exchanges the saved order hold',async()=>{
+ await generation('one','running');await generation('two','running');
+ const before=mock.fn(async()=>{}),after=mock.fn(async()=>{});
+ const result=await admitGeneration({...request,beforeAdmit:before,afterAdmit:after});
+ assert.equal(!result.ok&&result.status,429);assert.equal(before.mock.callCount(),0);assert.equal(after.mock.callCount(),0);
+});

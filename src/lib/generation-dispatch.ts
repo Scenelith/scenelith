@@ -1,9 +1,11 @@
+import { prepareProviderReceipt,markProviderSubmission,recordProviderTask,requireProviderReconciliation,recoverProviderReceipts } from "./generation-receipts";
 import { usageAuthority } from "@/modules/usage";
 import { generationProvider } from "@/platform/providers/registry";
 import { db } from "./postgres-db";
 import { workerIdentity } from "./worker-identity";
 
 export type GenerationDispatchPayload = import("./kie-new-models").GenerationModelOptions & {
+  mediaExecutionVersion?: number;
   personaId?: string;
   originalAudioAssetId?: string;
   modelId: string;
@@ -90,7 +92,11 @@ async function dispatchJob(job: DispatchJob) {
   }
 
   try {
-    const task = await generationProvider().start(payload);
+    const receipt=payload.mediaExecutionVersion===1?await prepareProviderReceipt(job.generation_id):null;
+    if(receipt?.submitted_at){await requireProviderReconciliation(job.generation_id,dispatchWorkerId,job.attempts);return;}
+    const task = await generationProvider().start({...payload,mediaExecutionVersion:payload.mediaExecutionVersion||0,
+      ...(receipt?{callbackToken:receipt.callback_token,beforeProviderSubmit:()=>markProviderSubmission(job.generation_id,dispatchWorkerId,job.attempts)}:{})});
+    if(receipt && task.task_id)await recordProviderTask(job.generation_id,task.task_id);
     const now = new Date().toISOString();
     await db.transaction(async () => {
       const lease = await db.prepare(`SELECT status FROM generation_dispatch_jobs
@@ -118,6 +124,12 @@ async function dispatchJob(job: DispatchJob) {
     const message = error instanceof Error ? error.message : "Generation dispatch failed";
     const nowMs = Date.now();
     const retryAfterMs = generationProvider().rateLimitRetryAfter(error);
+    if(payload.mediaExecutionVersion===1){
+      const receipt=await prepareProviderReceipt(job.generation_id);
+      const rejected=Boolean(error && typeof error==='object' && 'providerRejected' in error && error.providerRejected);
+      if(receipt.submitted_at && retryAfterMs===null && !rejected){await requireProviderReconciliation(job.generation_id,dispatchWorkerId,job.attempts);return;}
+      if(retryAfterMs!==null || rejected)await db.prepare('UPDATE generation_provider_receipts SET submitted_at=NULL,updated_at=now() WHERE generation_id=? AND provider_task_id IS NULL').run(job.generation_id);
+    }
     if (retryAfterMs !== null) {
       const retryAt = new Date(nowMs + Math.max(1_000, retryAfterMs)).toISOString();
       const now = new Date(nowMs).toISOString();
@@ -147,6 +159,7 @@ async function dispatchJob(job: DispatchJob) {
 
 async function runDrain() {
   const recoveredAt = new Date(Date.now() - recoveryAgeMs).toISOString();
+  await recoverProviderReceipts(recoveredAt);
   await db.prepare(
     `UPDATE generation_dispatch_jobs
      SET status = 'queued', available_at = ?, locked_at = NULL, locked_by = NULL, updated_at = ?

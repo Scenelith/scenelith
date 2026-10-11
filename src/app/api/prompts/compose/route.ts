@@ -1,3 +1,5 @@
+import { MediaPending } from "@/lib/media/compatibility";
+import { mediaResponse } from "@/lib/media/http";
 import { requireApiUser, sameOriginRequest } from "@/lib/auth";
 import { promptComposeRequestSchema, promptComposeValidationMessage } from "@/lib/prompt-compose-request";
 import { enforceDistributedRateLimit } from "@/lib/distributed-rate-limit";
@@ -17,6 +19,7 @@ export async function POST(request: Request) {
   try {
     return Response.json(await composeCanvasGenerationPrompt({ userId: auth.user.id, ...parsed.data }));
   } catch (error) {
+    if(error instanceof MediaPending)return mediaResponse(error.job,true);
     const value = error as { status?: number; code?: string; requiredCredits?: number };
     return Response.json({ error: error instanceof Error ? error.message : "Prompt assistant failed", ...(value.code ? { code: value.code } : {}), ...(value.requiredCredits ? { requiredCredits: value.requiredCredits } : {}) }, { status: value.status || 502 });
   }

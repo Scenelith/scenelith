@@ -20,6 +20,7 @@ function runFfmpeg(args: string[]) {
 }
 
 export async function extractPromptStoryboard(input: { path: string; mimeType: string; durationSeconds?: number; frameCount?: number }) {
+  if(process.env.SCENELITH_MEDIA_QUEUE_ENABLED === "true") throw new Error("Storyboard must be prepared by media-worker before composing a prompt");
   const duration = Math.max(.1, Number(input.durationSeconds || 0));
   const frameCount = Math.min(6, Math.max(3, input.frameCount || 5));
   const extension = input.mimeType.includes("webm") ? ".webm" : input.mimeType.includes("quicktime") ? ".mov" : ".mp4";

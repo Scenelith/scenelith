@@ -1,3 +1,4 @@
+import { waitForMediaResult, type MediaJobStatus } from "./media-client";
 type GenerationResponse = { error?: string; code?: string; generationId?: string; retryAfterMs?: number; status?: string };
 
 function waitForSlot(ms: number, signal: AbortSignal) {
@@ -32,6 +33,9 @@ export async function submitGenerationWhenAvailable(
       method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(request), signal,
     });
     const body = await response.json().catch(() => ({})) as GenerationResponse;
+    if(response.status===202 && !body.generationId && 'stage' in body && 'id' in body){
+      await waitForMediaResult(body as MediaJobStatus,undefined,signal);continue;
+    }
     // Another tab or workspace member can take the last slot between GET and
     // POST. Admission remains authoritative; return to read-only waiting.
     if (response.status === 429 && body.code === "GENERATION_CONCURRENCY_LIMIT") {

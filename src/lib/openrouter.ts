@@ -272,6 +272,7 @@ async function storageImageUrl(path: string, mimeType: string) {
 export const assistantModelId = model;
 
 type GenerationPromptReference = {
+  storyboard?: Array<{timeSeconds:number;dataUrl:string}>;
   path: string;
   mimeType: string;
   token: string;
@@ -449,7 +450,7 @@ export async function composeGenerationPrompt(input: GenerationPromptContext) {
     const referenceContent: Array<Record<string, unknown>> = [];
     let storyboardFrameBudget = 12;
     if (input.sceneSource?.mimeType.startsWith("video/") && storyboardFrameBudget >= 3) {
-      const sourceStoryboard = await extractPromptStoryboard({
+      const sourceStoryboard = input.sceneSource.storyboard ?? await extractPromptStoryboard({
         path: input.sceneSource.path,
         mimeType: input.sceneSource.mimeType,
         durationSeconds: input.sceneSource.durationSeconds,
@@ -470,7 +471,7 @@ export async function composeGenerationPrompt(input: GenerationPromptContext) {
       if (reference.mimeType.startsWith("image/")) {
         referenceContent.push({ type: "image_url", image_url: { url: await storageImageUrl(reference.path, reference.mimeType) } });
       } else if (reference.mimeType.startsWith("video/") && storyboardFrameBudget >= 3) {
-        const storyboard = await extractPromptStoryboard({ path: reference.path, mimeType: reference.mimeType, durationSeconds: reference.durationSeconds, frameCount: Math.min(5, storyboardFrameBudget) }).catch(() => []);
+        const storyboard = reference.storyboard ?? await extractPromptStoryboard({ path: reference.path, mimeType: reference.mimeType, durationSeconds: reference.durationSeconds, frameCount: Math.min(5, storyboardFrameBudget) }).catch(() => []);
         storyboardFrameBudget -= storyboard.length;
         if (storyboard.length) {
           referenceContent.push({ type: "text", text: `CHRONOLOGICAL STORYBOARD FOR ${reference.token} — ${storyboard.length} frames from start to end. Read these as one continuous video, not separate images.` });

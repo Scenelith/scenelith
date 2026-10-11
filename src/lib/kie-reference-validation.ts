@@ -1,13 +1,14 @@
+import { verifiedMediaMetadata,legacyMetadata } from "./media/metadata";
 import sharp from "sharp";
 import { mediaContentMatchesMime } from "./media-content";
 import { extname } from "node:path";
 import { newKieModel, type ModelReference } from "./kie-new-models";
-import { readStorageObject } from "./storage";
+import { readStorageObject, readStoragePrefix } from "./storage";
 import { probeVideoMetadata } from "./media-probe";
 
 /** Old uploads may lack duration/dimensions. Measure the actual stored media
  * before admission, rather than making up a trim range or skipping limits. */
-export async function prepareNewKieReferences<T extends ModelReference & { path: string; mimeType: string }>(modelId: string, references: T[]): Promise<T[]> {
+export async function prepareNewKieReferences<T extends ModelReference & { path: string; mimeType: string }>(modelId: string, references: T[], mediaExecutionVersion?:number): Promise<T[]> {
   if (!newKieModel(modelId)) return references;
   return Promise.all(references.map(async (reference) => {
     const wan = modelId.startsWith("wan-3") || modelId === "seedance-2-5";
@@ -17,6 +18,12 @@ export async function prepareNewKieReferences<T extends ModelReference & { path:
     const needsDimensions = (wan && video) || (strict && image);
     const needsDuration = (wan || (modelId.startsWith("gemini-omni") && !reference.durationSeconds)) && !image;
     if (reference.sizeBytes && !needsDimensions && !needsDuration) return reference;
+    if(!image && (mediaExecutionVersion===1 || (mediaExecutionVersion===undefined && process.env.SCENELITH_MEDIA_QUEUE_ENABLED === "true"))){
+      if(strict && !mediaContentMatchesMime(await readStoragePrefix(reference.path,64),reference.mimeType))throw new Error("Reference content does not match its format");
+      const measured=await verifiedMediaMetadata(reference.path);
+      if(!measured.metadata)throw Object.assign(new Error("Reference media is still being analyzed"),{code:"MEDIA_ANALYSIS_PENDING",assetId:measured.asset.id,status:409});
+      return {...reference,...legacyMetadata(measured.metadata),sizeBytes:measured.asset.size_bytes};
+    }
     const bytes = await readStorageObject(reference.path);
     if (strict && !mediaContentMatchesMime(bytes, reference.mimeType)) throw new Error("Reference content does not match its format");
     const bitmap = ["image/bmp", "image/x-ms-bmp"].includes(reference.mimeType);

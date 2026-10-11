@@ -1,0 +1,42 @@
+# Independent host, same reviewed image digest as the application. No host ports.
+name: scenelith-media
+services:
+  media-worker:
+    image: ${SCENELITH_IMAGE:?Set the verified application image by digest}
+    command: ["node", "--import", "tsx", "src/media-worker.ts"]
+    restart: unless-stopped
+    init: true
+    user: "1001:1001"
+    read_only: true
+    cap_drop: [ALL]
+    security_opt: ["no-new-privileges:true"]
+    cpus: ${MEDIA_CPU_LIMIT:-2}
+    mem_limit: ${MEDIA_MEMORY_LIMIT:-2g}
+    pids_limit: 128
+    stop_grace_period: 2m
+    env_file: ./worker.env
+    environment:
+      DATABASE_POOL_SIZE: 4
+      SCENELITH_MEDIA_WORKER_ACCESS: "true"
+      MEDIA_LIGHT_CONCURRENCY: ${MEDIA_LIGHT_CONCURRENCY:-1}
+      MEDIA_TRANSCODE_CONCURRENCY: ${MEDIA_TRANSCODE_CONCURRENCY:-1}
+      MEDIA_FFMPEG_THREADS: ${MEDIA_FFMPEG_THREADS:-2}
+      MEDIA_MAX_FILE_BYTES: ${MEDIA_MAX_FILE_BYTES:-2000000000}
+      MEDIA_MAX_TEMP_BYTES: ${MEDIA_MAX_TEMP_BYTES:-8000000000}
+      MEDIA_TEMP_ROOT: /app/media-tmp
+    tmpfs:
+      - /tmp:rw,nosuid,nodev,size=64m
+    volumes:
+      - type: bind
+        source: ${MEDIA_TEMP_DIRECTORY:?Use an isolated quota-limited directory}
+        target: /app/media-tmp
+        bind:
+          create_host_path: false
+    healthcheck:
+      test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:3001').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"]
+      interval: 15s
+      timeout: 5s
+      retries: 8
+    logging:
+      driver: json-file
+      options: {max-size: "20m", max-file: "3"}

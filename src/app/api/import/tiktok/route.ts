@@ -1,3 +1,5 @@
+import { MediaPending } from "@/lib/media/compatibility";
+import { mediaResponse } from "@/lib/media/http";
 import { z } from "zod";
 import { requireApiUser, sameOriginRequest } from "@/lib/auth";
 import { db, rowToHook, userCanAccessProject } from "@/lib/postgres-db";
@@ -26,7 +28,7 @@ export async function POST(request: Request) {
   const project = await db.prepare("SELECT id, workspace_id FROM projects WHERE id = ?").get(parsed.data.projectId) as { id: string; workspace_id: string } | undefined;
   if (!project) return Response.json({ error: "Project not found" }, { status: 404 });
   try {
-    const result = await importProvider("tikwm").importTikTok(parsed.data.url, parsed.data.projectId);
+    const result = await importProvider("tikwm").importTikTok(parsed.data.url, parsed.data.projectId, auth.user.id);
     await db.transaction(async () => {
       await db.prepare("UPDATE projects SET name = ?, source_url = ?, status = 'imported', updated_at = ? WHERE id = ?").run(
         result.post.title.slice(0, 120) || "TikTok study",
@@ -38,6 +40,7 @@ export async function POST(request: Request) {
         userId: auth.user.id,
         projectId: parsed.data.projectId,
         event: "tiktok.imported",
+        sourceKey: `tiktok:${result.assets[0]?.id}`,
         payload: { sourceUrl: parsed.data.url, assetIds: result.assets.map((asset) => asset.id), title: String(result.post.title || "") },
       });
     });
@@ -59,6 +62,7 @@ export async function POST(request: Request) {
     }
     return Response.json({ ...result, hook, hookError });
   } catch (error) {
+    if(error instanceof MediaPending)return mediaResponse(error.job,true);
     return Response.json(
       { error: error instanceof Error ? error.message : "TikTok import failed" },
       { status: 502 },

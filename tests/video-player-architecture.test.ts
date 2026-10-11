@@ -384,7 +384,7 @@ test("Video Master assistant and generation overlays cannot leak clicks into pla
   assert.match(canvasApp, /targetClipId: generatorNode\.data\.kind === "videoMaster" \? generatorNode\.data\.videoMasterGeneratingClipId : undefined/);
   assert.match(canvasApp, /targetSourceAssetId: preparedMasterSource\?\.assetId \|\| masterSourceTarget\?\.sourceAssetId/);
   assert.match(canvasApp, /materializeVideoSegmentForGeneration\(clip\.sourceNodeId, clip\.sourceSegmentId, videoMasterReferencePreparationDuration\(model, clip\)\)/);
-  assert.match(canvasApp, /body: JSON\.stringify\(\{ projectId: project\.id, assetId: sourceAssetId, start: segment\.start, end, segmentId \}\)/);
+  assert.match(canvasApp, /runMediaOperation\(project\.id,\{operation:"segment",range:\{id:sourceAssetId,start:segment\.start,end\}\}\)/);
   assert.match(canvasApp, /model\?\.durationSource === "reference-video" \? \{\} : \{ duration: generatorNode\.data\.duration \|\| "5" \}/);
   assert.match(canvasApp, /generationClipAssetId: generationSourceAsset\?\.id \|\| sourceSegment\.clipAssetId/);
   assert.match(generateRoute, /duration: z\.string\(\)\.regex\(\/\^\\d\+\(\?:\\\.\\d\+\)\?\$\//);
@@ -694,7 +694,7 @@ test("source editor captures a durable still instead of exposing redundant scene
   assert.doesNotMatch(canvasApp, /\[requestedSegment\] : sourceSegments/);
   assert.match(frameNode, /segment: outputSegment, intent: "video-master"/);
   assert.doesNotMatch(sceneTimeline, />Replace scene<\/button>/);
-  assert.match(canvasApp, /fetch\("\/api\/assets\/frame"/);
+  assert.match(canvasApp, /runMediaOperation\(project\.id,\{operation:"frame",assetId:sourceAssetId,time\}\)/);
   assert.match(canvasApp, /canvasMediaOrigin: "capture"/);
   assert.match(canvasApp, /y: sourceNode\.position\.y \+ sourceHeight \+ 64/);
   assert.match(frameNode, /closest\("button,input,\[role=slider\]"\)\) return;\s*generator\?\.selectNode\(id\)/);

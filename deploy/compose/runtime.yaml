@@ -1,5 +1,6 @@
 x-deployment-environment: &deployment-environment
   SCENELITH_DEPLOYMENT_TYPE: ${SCENELITH_DEPLOYMENT_TYPE:-cloud}
+  SCENELITH_MEDIA_QUEUE_ENABLED: ${SCENELITH_MEDIA_QUEUE_ENABLED:-false}
   SCENELITH_USAGE_MODE: ${SCENELITH_USAGE_MODE:-bring_your_own}
   SCENELITH_REGISTRATION_MODE: ${SCENELITH_REGISTRATION_MODE:-open}
 
@@ -128,6 +129,29 @@ services:
       retries: 8
       start_period: 30s
 
+  media-worker:
+    <<: *worker
+    command: ["node", "--import", "tsx", "src/media-worker.ts"]
+    cpus: ${MEDIA_CPU_LIMIT:-2}
+    mem_limit: ${MEDIA_MEMORY_LIMIT:-2g}
+    pids_limit: 128
+    environment:
+      <<: [*deployment-environment, *storage-environment, *observability-environment]
+      DATABASE_URL: ${MEDIA_DATABASE_URL:-postgresql://${POSTGRES_USER}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB}}
+      DATABASE_POOL_SIZE: 4
+      SCENELITH_MEDIA_WORKER_ACCESS: "true"
+      MEDIA_LIGHT_CONCURRENCY: ${MEDIA_LIGHT_CONCURRENCY:-1}
+      MEDIA_TRANSCODE_CONCURRENCY: ${MEDIA_TRANSCODE_CONCURRENCY:-1}
+      MEDIA_FFMPEG_THREADS: ${MEDIA_FFMPEG_THREADS:-2}
+      MEDIA_MAX_FILE_BYTES: ${MEDIA_MAX_FILE_BYTES:-2000000000}
+      MEDIA_MAX_TEMP_BYTES: ${MEDIA_MAX_TEMP_BYTES:-8000000000}
+      MEDIA_TEMP_ROOT: /app/media-tmp
+    # No published port and no provider/payment keys.
+    tmpfs:
+      - /tmp:rw,nosuid,nodev,size=64m
+    volumes:
+      - scenelith-media-tmp:/app/media-tmp
+
   generation-worker:
     <<: *worker
     environment:
@@ -195,3 +219,6 @@ services:
       timeout: 5s
       retries: 10
       start_period: 20s
+
+volumes:
+  scenelith-media-tmp:

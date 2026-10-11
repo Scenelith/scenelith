@@ -1,3 +1,4 @@
+import { bindProviderReceipt } from "@/lib/generation-receipts";
 import { db } from "@/lib/postgres-db";
 import { generationProvider } from "@/platform/providers/registry";
 import { finalizeGenerationFromWebhook } from "@/lib/generation-state";
@@ -26,7 +27,9 @@ export async function POST(request: Request) {
     ? typeof task.error === "string" ? task.error : JSON.stringify(task.error)
     : null;
   const status = String(task.status || "").toLowerCase();
-  const generation = await db.prepare("SELECT id FROM generations WHERE provider_task_id = ?").get(task.task_id) as { id: string } | undefined;
+  const receipt=new URL(request.url).searchParams.get("receipt");
+  const generation = (await db.prepare("SELECT id FROM generations WHERE provider_task_id = ?").get(task.task_id) as { id: string } | undefined)
+    || (receipt?await bindProviderReceipt(receipt,task.task_id):null);
   if (generation) {
     try {
       await finalizeGenerationFromWebhook({

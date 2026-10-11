@@ -29,6 +29,18 @@ services:
         target: /app/data
         volume:
           nocopy: true
+  media-worker:
+    <<: *selfhost-application
+    environment:
+      SCENELITH_DEPLOYMENT_TYPE: selfhost
+      SCENELITH_USAGE_MODE: bring_your_own
+    volumes:
+      - type: volume
+        source: scenelith-data
+        target: /app/data
+        volume:
+          nocopy: true
+
   generation-worker:
     <<: *selfhost-application
     command: ["node", "--import", "tsx", "src/worker.ts"]

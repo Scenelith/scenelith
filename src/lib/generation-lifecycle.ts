@@ -46,7 +46,10 @@ export async function timeoutGeneration(generationId: string, mediaType: string,
       | { status: string; output_url: string | null; output_asset_id: string | null }
       | undefined;
     if (!generation || generation.output_asset_id) return false;
+    const uncertain=await db.prepare('SELECT generation_id FROM generation_provider_receipts WHERE generation_id=? AND submitted_at IS NOT NULL AND provider_task_id IS NULL').get(generationId);
+    if(uncertain)return false;
     const status = generation.status.toLowerCase();
+    if(status === "reconciling")return false;
     const unsavedSuccess = failedFinalization && Boolean(generation.output_url)
       && ["completed", "complete", "succeeded", "success"].includes(status);
     if (!unsavedSuccess && (generation.output_url || terminalStatuses.has(status))) return false;
@@ -66,7 +69,9 @@ export async function cancelGeneration(generationId: string, reason = "Automatio
     const generation = await db.prepare("SELECT status, output_url, output_asset_id FROM generations WHERE id = ? FOR UPDATE").get(generationId) as
       | { status: string; output_url: string | null; output_asset_id: string | null }
       | undefined;
-    if (!generation || generation.output_url || generation.output_asset_id || terminalStatuses.has(generation.status.toLowerCase())) return false;
+    if (!generation || generation.output_url || generation.output_asset_id || generation.status === "reconciling" || terminalStatuses.has(generation.status.toLowerCase())) return false;
+    const uncertain=await db.prepare('SELECT generation_id FROM generation_provider_receipts WHERE generation_id=? AND submitted_at IS NOT NULL AND provider_task_id IS NULL').get(generationId);
+    if(uncertain)return false;
     const dispatch = await db.prepare("SELECT status FROM generation_dispatch_jobs WHERE generation_id = ?").get(generationId) as { status: string } | undefined;
     const now = new Date().toISOString();
     const changed = await db.prepare(`UPDATE generations SET status = 'cancelled', error = ?, updated_at = ?

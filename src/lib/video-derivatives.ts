@@ -1,3 +1,4 @@
+import { preparedDerivative } from "@/lib/media/compatibility";
 import { spawn } from "node:child_process";
 import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -43,7 +44,12 @@ async function existingFrame(projectId: string, sourceAssetId: string, time: num
   return null;
 }
 
-export async function captureVideoFrameAsset(input: { source: VideoDerivativeSource; projectId: string; workspaceId: string; time: number }) {
+export async function captureVideoFrameAsset(input: { userId?:string; source: VideoDerivativeSource; projectId: string; workspaceId: string; time: number }) {
+  if(process.env.SCENELITH_MEDIA_QUEUE_ENABLED === "true"){
+    if(!input.userId)throw new Error("Media processing requires an authorized user");
+    const result=await preparedDerivative(input.userId,input.projectId,{operation:"frame",assetId:input.source.id,time:input.time});
+    return {...result.asset,time:input.time,mimeType:"image/png" as const};
+  }
   const time = Math.round(input.time * 1_000_000) / 1_000_000;
   const key = `${input.projectId}:${input.source.id}:${time.toFixed(6)}`;
   const running = frameJobs.get(key);
@@ -82,7 +88,12 @@ async function existingSegment(projectId: string, sourceAssetId: string, segment
   return null;
 }
 
-export async function materializeVideoSegmentAsset(input: { source: VideoDerivativeSource; projectId: string; workspaceId: string; segmentId: string; start: number; end: number }) {
+export async function materializeVideoSegmentAsset(input: { userId?:string; source: VideoDerivativeSource; projectId: string; workspaceId: string; segmentId: string; start: number; end: number }) {
+  if(process.env.SCENELITH_MEDIA_QUEUE_ENABLED === "true"){
+    if(!input.userId)throw new Error("Media processing requires an authorized user");
+    const result=await preparedDerivative(input.userId,input.projectId,{operation:"segment",range:{id:input.source.id,start:input.start,end:input.end}});
+    return {...result.asset,durationSeconds:result.plan?.duration ?? result.metadata?.duration ?? input.end-input.start};
+  }
   const start = Math.round(input.start * 1_000_000) / 1_000_000;
   const end = Math.round(input.end * 1_000_000) / 1_000_000;
   if (start < 0 || end <= start || end - start > 30) throw new Error("Choose a video segment between 0 and 30 seconds");

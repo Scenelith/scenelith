@@ -1,3 +1,4 @@
+import { queuedExport } from "@/lib/media/compatibility";
 import { db, userCanAccessAsset, userCanAccessProject } from "@/lib/postgres-db";
 import { coalesceContiguousVideoAssets, videoMasterExportRequestSchema } from "@/lib/video-export";
 import { renderVideoMasterExport, type VideoMasterRenderSource as ExportSource } from "@/lib/video-master-render";
@@ -15,6 +16,7 @@ function safeFilename(value: string) {
 }
 
 export async function exportVideoMedia(userId: string, input: unknown) {
+  if (process.env.SCENELITH_MEDIA_QUEUE_ENABLED === "true") return queuedExport(userId,input);
   const parsed = videoMasterExportRequestSchema.safeParse(input);
   if (!parsed.success) return Response.json({ error: "Choose at least one valid video scene" }, { status: 400 });
   if (!await userCanAccessProject(userId, parsed.data.projectId)) return Response.json({ error: "Canvas not found" }, { status: 404 });

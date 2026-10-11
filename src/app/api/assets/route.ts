@@ -1,3 +1,4 @@
+import { enqueueMediaAnalysis } from "@/lib/media/ingestion";
 import { persistStudioUpload } from "@/lib/studio-upload";
 import { requireApiUser, sameOriginRequest } from "@/lib/auth";
 import { db, userCanAccessProject } from "@/lib/postgres-db";
@@ -215,13 +216,14 @@ export async function POST(request: Request) {
     if (!mediaContentMatchesMime(new Uint8Array(bytes, 0, Math.min(bytes.byteLength, 64)), mimeType)) {
       return Response.json({ error: `File ${file.name || index + 1} does not match its format` }, { status: 400 });
     }
-    const videoMetadata: { durationSeconds?: number; width?: number; height?: number; aspectRatio?: number } = mediaType !== "image"
+    const videoMetadata: { durationSeconds?: number; width?: number; height?: number; aspectRatio?: number } = mediaType !== "image" && process.env.SCENELITH_MEDIA_QUEUE_ENABLED !== "true"
       ? await probeVideoMetadata(bytes, extension).catch(() => ({}))
       : {};
     const { durationSeconds, width, height, aspectRatio } = videoMetadata;
     if (generationReference) {
       try {
         const assetId = await persistStudioUpload({id:uploadKey||id,workspaceId:project.workspace_id,projectId,bytes:Buffer.from(bytes),mimeType,name:file.name||filename,metadata:{durationSeconds,width,height,aspectRatio,mediaType}});
+        await enqueueMediaAnalysis(auth.user.id,{id:assetId,projectId,workspaceId:project.workspace_id,mimeType});
         assets.push({id:assetId,url:`/api/assets/${assetId}`,filename,originalName:file.name||filename,mediaType,mimeType,durationSeconds,width,height,aspectRatio});
         continue;
       } catch(error) { return Response.json({error:error instanceof Error?error.message:"Could not save reference"},{status:409}); }
@@ -234,6 +236,7 @@ export async function POST(request: Request) {
           `INSERT INTO assets (id, workspace_id, project_id, kind, role, filename, storage_path, storage_provider, storage_bucket, object_key, size_bytes, content_hash, mime_type, metadata_json, created_at)
            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
         ).run(id, project.workspace_id, projectId, editReferenceUpload ? "edit_reference" : libraryUpload ? `library_${mediaType}` : "scene", editReferenceUpload ? "edit_reference" : libraryUpload ? "library" : "canvas_upload", filename, stored.reference, stored.provider, stored.bucket, stored.key, stored.size, stored.contentHash, mimeType, JSON.stringify({ source: editReferenceUpload ? "image_edit" : libraryUpload ? "project_library" : "canvas_upload", mediaType, originalName: file.name || null, durationSeconds, width, height, aspectRatio }), now);
+        await enqueueMediaAnalysis(auth.user.id,{id,projectId,workspaceId:project.workspace_id,mimeType});
       })();
     } catch (error) {
       await deleteStorageObject(stored.reference).catch(() => undefined);
