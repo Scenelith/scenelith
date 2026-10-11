@@ -7,6 +7,7 @@ import { MediaError } from './contracts';
 import { probeFile } from './probe';
 import { extractSceneFiles } from './scenes';
 import type { MediaFileOutcome } from './executor';
+import { mediaTransfer } from './transfer';
 
 export async function importMedia(url:string,dir:string,signal:AbortSignal,timings:Record<string,number>) {
   const data=await resolveTikTok(url),images=data.images||[],config=mediaConfig();
@@ -14,7 +15,7 @@ export async function importMedia(url:string,dir:string,signal:AbortSignal,timin
   const files:MediaFileOutcome[]=[];let totalBytes=0;
   const download=async(url:string,path:string,maxBytes=config.maxFileBytes)=>{
     const start=performance.now();
-    const result=await downloadExternalMedia(url,path,Math.min(maxBytes,config.maxTempBytes-totalBytes),AbortSignal.any([signal,AbortSignal.timeout(config.transferTimeoutMs)]));
+    const result=await mediaTransfer(signal,config.transferTimeoutMs,transferSignal=>downloadExternalMedia(url,path,Math.min(maxBytes,config.maxTempBytes-totalBytes),transferSignal));
     totalBytes+=result.size;timings.downloadMs=(timings.downloadMs||0)+performance.now()-start;return result;
   };
   if(images.length){

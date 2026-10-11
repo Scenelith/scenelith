@@ -13,6 +13,7 @@ import { importMedia } from './import';
 import { extractSceneFiles } from './scenes';
 import { renderPlan, type LocalMedia } from './render';
 import { retainMediaStaging, claimMediaCleanup } from './staging';
+import { mediaTransfer } from './transfer';
 
 export type MediaFileOutcome={file:string;mime:string;metadata?:unknown;kind?:string;role?:string;filename?:string};
 type Outcome={assetId?:string;file?:string;mime?:string;metadata?:unknown;plan?:unknown;files?:MediaFileOutcome[]};
@@ -28,7 +29,7 @@ async function processJob(job:MediaJob,dir:string,signal:AbortSignal,timings:Rec
     const space=await statfs(dir);
     if(Number(space.bavail)*Number(space.bsize)<Number(input.size_bytes)*2)throw new MediaError('MEDIA_DISK_FULL');
     const path=join(dir,`${media.size}.source`),start=performance.now();
-    totalBytes+=await downloadStorageFile(input.storage_path,path,Math.min(config.maxFileBytes,config.maxTempBytes-totalBytes),AbortSignal.any([signal,AbortSignal.timeout(config.transferTimeoutMs)]),{size:input.size_bytes,hash:input.content_hash});
+    totalBytes+=await mediaTransfer(signal,config.transferTimeoutMs,transferSignal=>downloadStorageFile(input.storage_path,path,Math.min(config.maxFileBytes,config.maxTempBytes-totalBytes),transferSignal,{size:input.size_bytes,hash:input.content_hash}));
     timings.downloadMs=(timings.downloadMs||0)+performance.now()-start;
     const cached=await db.prepare('SELECT metadata_json FROM media_asset_analysis WHERE asset_id=? AND content_identity=? AND analyzer_version=1').get(input.id,input.identity) as {metadata_json:string}|undefined;
     const probeStart=performance.now();
@@ -160,7 +161,7 @@ export async function executeMediaJob(job:MediaJob,shutdownSignal?:AbortSignal) 
       const destination=storageFileDestination(key);
       await db.prepare('INSERT INTO media_job_objects(job_id,fence,ordinal,storage_reference) VALUES(?,?,?,?) ON CONFLICT DO NOTHING').run(job.id,job.fence,ordinal,destination.reference);
       const started=performance.now();
-      const stored=await putStorageFile(file.file,key,{contentType:file.mime},AbortSignal.any([signal,AbortSignal.timeout(config.transferTimeoutMs)]));
+      const stored=await mediaTransfer(signal,config.transferTimeoutMs,transferSignal=>putStorageFile(file.file,key,{contentType:file.mime},transferSignal));
       timings.uploadMs=(timings.uploadMs||0)+performance.now()-started;uploads.push({file,stored});
     }
     timings.executionMs=performance.now()-executionStart;

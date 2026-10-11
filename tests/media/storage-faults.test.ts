@@ -5,6 +5,7 @@ import {mkdtemp,rm,writeFile} from 'node:fs/promises';
 import {join} from 'node:path';
 import {tmpdir} from 'node:os';
 import {downloadStorageFile,putStorageFile,deleteStorageObject} from '../../src/lib/storage';
+import {mediaTransfer} from '../../src/lib/media/transfer';
 
 test('storage outage and hanging verification/deletion obey the transfer deadline',async()=>{
  const dir=await mkdtemp(join(tmpdir(),'media-storage-fault-'));let heads=0,deletes=0;
@@ -22,7 +23,7 @@ test('storage outage and hanging verification/deletion obey the transfer deadlin
   await assert.rejects(downloadStorageFile('s3://fixture/source',join(dir,'download'),1000,AbortSignal.timeout(2000)),(error:unknown)=>Boolean(error&&typeof error==='object'&&'$metadata' in error&&(error.$metadata as {httpStatusCode:number}).httpStatusCode===503));
   const file=join(dir,'source');await writeFile(file,'fixture');
   const started=Date.now();
-  await assert.rejects(putStorageFile(file,'verification',{bucket:'fixture'},AbortSignal.timeout(500)));
+  await assert.rejects(mediaTransfer(new AbortController().signal,500,signal=>putStorageFile(file,'verification',{bucket:'fixture'},signal)),{name:'TimeoutError'});
   assert.equal(heads,1,'deadline must cover post-upload verification');assert.ok(Date.now()-started<2000);
   await assert.rejects(deleteStorageObject('s3://fixture/orphan',AbortSignal.timeout(500)));
   assert.equal(deletes,1,'cleanup deletion must be cancellable');
