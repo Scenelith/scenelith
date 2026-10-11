@@ -1,4 +1,4 @@
-import type { UserRecord } from "@/lib/types";
+import type { UserRecord, BackgroundTaskRecord } from "@/lib/types";
 
 export type AuthSearchParams = {
   [key: string]: string | string[] | undefined;
@@ -33,5 +33,7 @@ export type EditionServer = Readonly<{
   authProviderSettings(): Record<string, unknown>;
   featureAccessDenial(kind: FeatureAccessKind): FeatureAccessDenial;
   operationsQueueProjectionSql: string;
+  /** Add authorized edition-owned parent orders and replace their internal child tasks. */
+  projectBackgroundTasks?(userId: string, tasks: BackgroundTaskRecord[]): Promise<BackgroundTaskRecord[]>;
   recoveryDrillStatus(): Promise<RecoveryDrillStatus | null>;
 }>;
