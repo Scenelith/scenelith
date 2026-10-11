@@ -176,3 +176,33 @@ test('staging cleanup and late publication are mutually exclusive, including pro
  if(retain.status==='fulfilled')assert.equal((await readStorageObject(race.stored.reference)).toString(),'concurrent');
  else await assert.rejects(readStorageObject(race.stored.reference));
 });
+
+test('worker shutdown retries without publishing, and an absent source fails without paid work',async()=>{
+ const interrupted=await createMediaJob(user,request('shutdown-proof',.51,1.51));
+ const active=await claimMediaJob('shutting-down','transcode');assert.equal(active?.id,interrupted.id);
+ const abort=new AbortController();abort.abort();await executeMediaJob(active!,abort.signal);
+ const pending=await getMediaJob(user,interrupted.id);assert.equal(pending.status,'retry_wait');assert.equal(pending.result_asset_id,null);
+ await db.prepare('UPDATE media_jobs SET available_at=now() WHERE id=?').run(pending.id);
+ const resumed=await claimMediaJob('replacement','transcode');assert.equal(resumed?.id,pending.id);await executeMediaJob(resumed!);
+ assert.equal((await getMediaJob(user,pending.id)).status,'completed');
+ const original=await db.prepare('SELECT * FROM assets WHERE id=?').get(asset) as {storage_path:string;content_hash:string;size_bytes:number};
+ const missing=crypto.randomUUID();
+ await db.prepare("INSERT INTO assets(id,workspace_id,project_id,kind,role,filename,storage_path,mime_type,size_bytes,content_hash,created_at) VALUES(?,?,?,'upload','reference_video','removed.mp4',?,'video/mp4',?,?,now())").run(missing,workspace,project,original.storage_path,original.size_bytes,original.content_hash);
+ const removed=await createMediaJob(user,{projectId:project,requestKey:'removed-source',spec:{operation:'frame',assetId:missing,time:0}});
+ const claimed=await claimMediaJob('missing-source','light');assert.equal(claimed?.id,removed.id);
+ await db.prepare('DELETE FROM assets WHERE id=?').run(missing);await executeMediaJob(claimed!);
+ assert.deepEqual(await db.prepare('SELECT status,result_asset_id FROM media_jobs WHERE id=?').get(removed.id),{status:'failed',result_asset_id:null});
+});
+
+test('provider crash cleanup removes expired private directories and preserves live work and links',async()=>{
+ const {mkdtemp,mkdir,utimes,symlink,stat,rm}=await import('node:fs/promises');
+ const {tmpdir}=await import('node:os');const {join}=await import('node:path');
+ const {cleanupProviderTemp}=await import('../../src/lib/media/provider-output');
+ const root=await mkdtemp(join(tmpdir(),'media-cleanup-proof-'));
+ try{
+  const old=join(root,'scenelith-provider-old'),live=join(root,'scenelith-provider-live'),other=join(root,'unrelated');
+  for(const path of [old,live,other])await mkdir(path);
+  await utimes(old,new Date(0),new Date(0));await symlink(other,join(root,'scenelith-provider-link'));
+  await cleanupProviderTemp(root);await assert.rejects(stat(old));await stat(live);await stat(other);await stat(join(root,'scenelith-provider-link'));
+ }finally{await rm(root,{recursive:true,force:true});}
+});

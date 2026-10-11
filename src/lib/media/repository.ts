@@ -111,8 +111,9 @@ export async function recoverMediaJobs() {
       WHERE d.job_id=j.id AND parent.status IN ('failed','cancelled'))`).run();
   return db.prepare(`UPDATE media_jobs SET status=CASE WHEN attempts>=? THEN 'failed' ELSE 'retry_wait' END,
     stage=CASE WHEN attempts>=? THEN 'failed' ELSE 'queued' END,error_code='WORKER_LOST',worker_id=NULL,lease_until=NULL,fence=fence+1,
-    available_at=now()+interval '5 seconds',updated_at=now() WHERE status='running' AND lease_until<now()`)
-    .run(mediaConfig().maxAttempts,mediaConfig().maxAttempts);
+    available_at=now()+interval '5 seconds',updated_at=now(),completed_at=CASE WHEN attempts>=? THEN now() ELSE NULL END
+    WHERE status='running' AND lease_until<now()`)
+    .run(mediaConfig().maxAttempts,mediaConfig().maxAttempts,mediaConfig().maxAttempts);
 }
 export async function claimMediaJob(workerId: string,resource: 'light'|'transcode') {
   return db.transaction(async()=> {

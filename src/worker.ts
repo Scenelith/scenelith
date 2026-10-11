@@ -4,6 +4,7 @@ import { closeRelationalPool } from "./lib/relational-db";
 import { db } from "./lib/postgres-db";
 import { closeKieRateLimiter } from "./lib/kie-rate-limit";
 import { tickGenerationWorker } from "./lib/generation-worker";
+import { cleanupProviderTemp } from "./lib/media/provider-output";
 import { drainTikTokAutomationJobs, startTikTokAutomationWorkers } from "./lib/tiktok-automation-jobs";
 import { drainAutomationWorkflowRuns, startAutomationWorkflowWorkers } from "./lib/automation-workflows/runs";
 import { drainAutomationProductEvents, drainAutomationWorkflowTriggers } from "./lib/automation-workflows/triggers";
@@ -70,6 +71,7 @@ async function heartbeat() {
         ? db.prepare("DELETE FROM tiktok_automation_jobs WHERE status IN ('completed', 'failed', 'cancelled') AND completed_at < ?").run(sevenDaysAgo)
         : Promise.resolve({ changes: 0 }),
       runsAutomation ? cleanupAutomationRetention() : Promise.resolve(),
+      runsGeneration ? cleanupProviderTemp() : Promise.resolve(),
       runsDistribution ? editionWorker.cleanup(thirtyDaysAgo) : Promise.resolve(),
       runsStorage
         ? db.prepare("DELETE FROM audit_events WHERE expires_at < ?").run(now)

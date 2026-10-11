@@ -1,5 +1,5 @@
 import { createWriteStream } from 'node:fs';
-import { mkdtemp, rm } from 'node:fs/promises';
+import { mkdtemp, rm, readdir, lstat } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { Readable, Transform } from 'node:stream';
@@ -8,6 +8,16 @@ import { putStorageFile, safeExtension, storageFileDestination } from '../storag
 import { db } from '../postgres-db';
 import { mediaConfig } from './config';
 import { MediaError } from './contracts';
+
+/** A crashed provider transfer cannot live beyond the maximum configured
+ * transfer deadline (two hours). Do not follow links or touch other temp data. */
+export async function cleanupProviderTemp(root=tmpdir(),now=Date.now()) {
+  for(const entry of await readdir(root,{withFileTypes:true}).catch(()=>[])){
+    if(!entry.isDirectory() || !/^scenelith-provider-[A-Za-z0-9]+$/.test(entry.name))continue;
+    const path=join(root,entry.name),info=await lstat(path).catch(()=>null);
+    if(info && !info.isSymbolicLink() && now-info.mtimeMs>7_500_000)await rm(path,{recursive:true,force:true});
+  }
+}
 
 /** Provider reconciliation stores the immutable result. Decoding belongs to media-worker. */
 export async function storeProviderVideo(url:string,keyPrefix:string,stagingId:string) {
