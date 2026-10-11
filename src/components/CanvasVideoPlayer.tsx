@@ -1,6 +1,8 @@
 "use client";
+import { PreparedMediaImage } from "./PreparedMediaImage";
 
 import { useEffect, useId, useLayoutEffect, useMemo, useRef, useState, useSyncExternalStore, type CSSProperties, type ReactNode } from "react";
+import { usePreparedVideoSource } from "@/lib/prepared-video-source";
 import { createPortal } from "react-dom";
 import { Pause, Play, Volume2, VolumeX } from "lucide-react";
 import { SegmentedVideoController, type SegmentPlaybackIntent } from "@/lib/segmented-video-controller";
@@ -104,6 +106,7 @@ export function CanvasVideoPlayer({ src, variant, controlsPlacement = "overlay",
   onTimeChange?: (relativeTime: number, duration: number) => void;
   onClipEnded?: (playback: "manual" | "hover", playbackSessionKey: string) => void;
 }) {
+  const preparedSource = usePreparedVideoSource(src);
   const generatedOwnerId = useId();
   const ownerId = playbackOwnerId || `canvas-video:${generatedOwnerId}`;
   const managerCommand = useSyncExternalStore(videoPlaybackManager.subscribe, videoPlaybackManager.getSnapshot, videoPlaybackManager.getSnapshot);
@@ -162,7 +165,7 @@ export function CanvasVideoPlayer({ src, variant, controlsPlacement = "overlay",
     transportAttachedRef.current = transportAttached;
   }, [transportAttached]);
   const effectivePlaybackRequest = managerRequest || requestedPlayback;
-  const directSource = useMemo(() => src ? assetPlaybackUrl(src) : "", [src]);
+  const directSource = useMemo(() => src ? assetPlaybackUrl(preparedSource) : "", [preparedSource]);
   const directPreloadSource = useMemo(() => preloadSrc ? assetPlaybackUrl(preloadSrc) : "", [preloadSrc]);
   const configRef = useRef<PlayerConfig>({ key: sessionKey, source: directSource, start: safeClipStart, end: safeClipEnd, duration: clipDuration, autoPlay, hoverActive, hoverFallback: hoverSession !== undefined, seamlessEnd: seamlessClipEnd });
   useLayoutEffect(() => {
@@ -598,7 +601,7 @@ export function CanvasVideoPlayer({ src, variant, controlsPlacement = "overlay",
     onDoubleClick={(event) => { event.stopPropagation(); onDoubleClick?.(); }}
   >
     {blurBackdrop && backdropUrl && <span className="inline-video-backdrop" style={{ backgroundImage: `url("${assetThumbnailUrl(backdropUrl)}")` }} aria-hidden="true" />}
-    {!transportAttached && directSource && <img className="inline-video-deck inline-video-poster" data-active-deck="true" src={assetThumbnailUrl(src)} alt="" loading="lazy" decoding="async" draggable={false} />}
+    {!transportAttached && directSource && <PreparedMediaImage className="inline-video-deck inline-video-poster" data-active-deck="true" src={assetThumbnailUrl(src)} alt="" loading="lazy" decoding="async" draggable={false} />}
     <video ref={deckARef} className="inline-video-deck" muted playsInline preload="none" draggable={false} />
     <video ref={deckBRef} className="inline-video-deck" muted playsInline preload="none" draggable={false} />
     <div className="inline-video-shade" aria-hidden="true" />

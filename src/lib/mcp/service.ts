@@ -1,3 +1,6 @@
+import { enqueueMediaAnalysis } from "@/lib/media/ingestion";
+import { createMediaJob, getMediaJob } from "@/lib/media/repository";
+import { jobView, fingerprint } from "@/lib/media/contracts";
 import { detachWorkspaceAssetReferences } from "@/lib/identity-reference-deletion";
 import { newKieRoleError } from "@/lib/kie-new-models";
 import { canvasNodeBounds, canvasNodeSize, placeChangedCanvasNodes } from "../canvas-node-placement";
@@ -950,7 +953,7 @@ export async function runMcpCanvasGeneration(principal: McpPrincipal, input: {
     if (!segment) throw Object.assign(new Error("Source scene no longer exists"), { status: 409 });
     const requested = videoMasterReferencePreparationDuration(model, masterClip);
     if (requested < segment.end - segment.start - .01) {
-      const trimmed = await materializeVideoSegmentAsset({ source: source.source, projectId: input.projectId, workspaceId: source.workspaceId, segmentId: segment.id, start: segment.start, end: segment.start + requested });
+      const trimmed = await materializeVideoSegmentAsset({ userId:principal.userId, source: source.source, projectId: input.projectId, workspaceId: source.workspaceId, segmentId: segment.id, start: segment.start, end: segment.start + requested });
       const prior = "targetSourceAssetId" in inspected ? inspected.targetSourceAssetId : undefined;
       inspected.references = inspected.references.map((reference) => reference.assetId === prior && reference.role === "reference-video" ? { ...reference, assetId: trimmed.id, durationSeconds: trimmed.durationSeconds } : reference);
       if ("targetSourceAssetId" in inspected) inspected.targetSourceAssetId = trimmed.id;
@@ -1193,7 +1196,7 @@ export async function importMcpTikTokToCanvas(principal: McpPrincipal, input: {
   const initial = await getMcpCanvas(principal, input.projectId);
   if (initial.revision !== input.expectedRevision) throw Object.assign(new Error(`Canvas changed. Read it again and use revision ${initial.revision}.`), { code: "CANVAS_REVISION_CONFLICT", status: 409, currentRevision: initial.revision });
   const workspaceId = await assertProject(principal, input.projectId);
-  const result = await importProvider("tikwm").importTikTok(input.url, input.projectId);
+  const result = await importProvider("tikwm").importTikTok(input.url, input.projectId, principal.userId);
   await db.transaction(async () => {
     await db.prepare("UPDATE projects SET name = ?, source_url = ?, status = 'imported', updated_at = ? WHERE id = ?").run(
       result.post.title.slice(0, 120) || "TikTok study",
@@ -1622,7 +1625,7 @@ export async function uploadMcpLibraryAsset(principal: McpPrincipal, input: {
   const extension = safeExtension(input.filename, input.mimeType);
   const id = crypto.randomUUID();
   const filename = `library-${mediaType}-${Date.now()}${extension}`;
-  const videoMetadata = mediaType === "video" ? await probeVideoMetadata(bytes, extension).catch(() => ({})) : {};
+  const videoMetadata = mediaType === "video" && process.env.SCENELITH_MEDIA_QUEUE_ENABLED !== "true" ? await probeVideoMetadata(bytes, extension).catch(() => ({})) : {};
   const stored = await saveBytes(bytes, `workspaces/${workspaceId}/projects/${input.projectId}/library`, filename, input.mimeType);
   try {
     await db.transaction(async () => {
@@ -1632,6 +1635,7 @@ export async function uploadMcpLibraryAsset(principal: McpPrincipal, input: {
         id, workspaceId, input.projectId, `library_${mediaType}`, filename, stored.reference, stored.provider, stored.bucket, stored.key,
         stored.size, stored.contentHash, input.mimeType, JSON.stringify({ source: "mcp_library_upload", mediaType, originalName: input.filename, ...videoMetadata }), new Date().toISOString(),
       );
+      await enqueueMediaAnalysis(principal.userId,{id,workspaceId,projectId:input.projectId,mimeType:input.mimeType});
     })();
   } catch (error) {
     await deleteStorageObject(stored.reference).catch(() => undefined);
@@ -1831,6 +1835,10 @@ export async function exportMcpVideoMasterMedia(principal: McpPrincipal, input: 
     if (!assetId) throw new Error(input.lane === "output" ? `Generate ${clip.title} before exporting OUTPUT` : `${clip.title} has no ORIGINAL video`);
     return { id: assetId, start: media.start, end: media.end };
   });
+  if (process.env.SCENELITH_MEDIA_QUEUE_ENABLED === "true") {
+    const spec={operation:"export",assets:requested,audioMode:"selected"};
+    return jobView(await createMediaJob(principal.userId,{projectId:input.projectId,requestKey:`mcp-export:${fingerprint(spec)}`,spec}));
+  }
   const ranges = coalesceContiguousVideoAssets(requested);
   const sources: VideoMasterRenderSource[] = [];
   for (const range of ranges) {
@@ -1870,7 +1878,7 @@ async function mcpVideoSource(principal: McpPrincipal, projectId: string, source
 export async function captureMcpCanvasVideoFrame(principal: McpPrincipal, input: { projectId: string; expectedRevision: number; sourceNodeId: string; time: number }) {
   const initial = await mcpVideoSource(principal, input.projectId, input.sourceNodeId);
   if (initial.canvas.revision !== input.expectedRevision) throw Object.assign(new Error(`Canvas changed. Read it again and use revision ${initial.canvas.revision}.`), { code: "CANVAS_REVISION_CONFLICT", status: 409, currentRevision: initial.canvas.revision });
-  const asset = await captureVideoFrameAsset({ source: initial.source, projectId: input.projectId, workspaceId: initial.workspaceId, time: input.time });
+  const asset = await captureVideoFrameAsset({ userId:principal.userId, source: initial.source, projectId: input.projectId, workspaceId: initial.workspaceId, time: input.time });
   const current = await getMcpCanvas(principal, input.projectId);
   const sourceNode = current.graph.nodes.find((node) => node.id === input.sourceNodeId);
   if (!sourceNode) throw Object.assign(new Error("Source video changed while the frame was captured"), { status: 409 });
@@ -1907,7 +1915,7 @@ export async function materializeMcpCanvasVideoSegment(principal: McpPrincipal, 
       }
     } catch { /* Rebuild stale or legacy scene derivatives from the authoritative source range. */ }
   }
-  const asset = await materializeVideoSegmentAsset({ source: initial.source, projectId: input.projectId, workspaceId: initial.workspaceId, segmentId: segment.id, start: segment.start, end: segment.end });
+  const asset = await materializeVideoSegmentAsset({ userId:principal.userId, source: initial.source, projectId: input.projectId, workspaceId: initial.workspaceId, segmentId: segment.id, start: segment.start, end: segment.end });
   for (let attempt = 0; attempt < 5; attempt++) {
     const current = await getMcpCanvas(principal, input.projectId);
     const source = current.graph.nodes.find((node) => node.id === input.sourceNodeId);
@@ -2050,10 +2058,18 @@ function mcpSafePreviewMetadata(value: string) {
   return safe;
 }
 
-async function mcpAssetPreview(row: McpPreviewAssetRow) {
+async function mcpAssetPreview(row: McpPreviewAssetRow,userId:string) {
   let previewPath = row.thumbnail_storage_path;
   let previewMimeType = row.thumbnail_mime_type || "image/webp";
   let bytes: Buffer;
+  if(!previewPath && row.mime_type.startsWith("video/") && process.env.SCENELITH_MEDIA_QUEUE_ENABLED === "true"){
+    const {createMediaJob}=await import("../media/repository");
+    const {waitForMediaJob,MediaPending}=await import("../media/compatibility");
+    let job=await createMediaJob(userId,{...(row.project_id?{projectId:row.project_id}:{workspaceId:row.workspace_id}),requestKey:`mcp-preview:${row.id}`,spec:{operation:'frame',assetId:row.id,time:0,maxWidth:1600}});
+    job=await waitForMediaJob(userId,job);if(job.status!=='completed')throw new MediaPending(job);
+    const derivative=await db.prepare('SELECT storage_path,mime_type FROM assets WHERE id=?').get(job.result_asset_id) as {storage_path:string;mime_type:string};
+    previewPath=derivative.storage_path;previewMimeType=derivative.mime_type;
+  }
   if (previewPath) {
     bytes = await readStorageObject(previewPath);
   } else {
@@ -2098,7 +2114,7 @@ export async function inspectMcpLibraryAsset(principal: McpPrincipal, input: { w
   if (!row || !row.project_id || !tokenAllowsProject(principal, row.project_id) || !await userCanAccessAsset(principal.userId, row.id)) {
     throw Object.assign(new Error("Library asset not found"), { status: 404 });
   }
-  return mcpAssetPreview(row);
+  return mcpAssetPreview(row,principal.userId);
 }
 
 export async function inspectMcpIdentityReference(principal: McpPrincipal, input: { workspaceId: string; identityId: string; assetId: string }) {
@@ -2110,7 +2126,7 @@ export async function inspectMcpIdentityReference(principal: McpPrincipal, input
       AND a.kind = 'persona_ref' AND a.role IN ('reference', 'before', 'after')`)
     .get(input.assetId, input.identityId, input.workspaceId, input.workspaceId) as McpPreviewAssetRow | undefined;
   if (!row) throw Object.assign(new Error("Identity reference not found"), { status: 404 });
-  return mcpAssetPreview(row);
+  return mcpAssetPreview(row,principal.userId);
 }
 
 type McpIdentityRole = "reference" | "before" | "after";
@@ -2958,4 +2974,11 @@ export async function retryMcpAutomationRun(principal: McpPrincipal, runId: stri
     });
   }
   return result;
+}
+
+export async function getMcpMediaJob(principal:McpPrincipal,id:string) {
+  const job=await getMediaJob(principal.userId,id);
+  if(job.project_id)await assertProject(principal,job.project_id);
+  else await assertWorkspace(principal,job.workspace_id);
+  return jobView(job);
 }

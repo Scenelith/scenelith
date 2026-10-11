@@ -1,8 +1,9 @@
 import { assetContentDisposition } from './asset-download';
 import { createHash } from "node:crypto";
-import { createReadStream } from "node:fs";
-import { mkdir, readFile, stat, unlink, writeFile } from "node:fs/promises";
-import { Readable } from "node:stream";
+import { createReadStream, createWriteStream } from "node:fs";
+import { mkdir, readFile, stat, unlink, writeFile, rename } from "node:fs/promises";
+import { Readable, Transform } from "node:stream";
+import { pipeline } from "node:stream/promises";
 import { dirname, extname, join, normalize, relative } from "node:path";
 import { AbortMultipartUploadCommand, CompleteMultipartUploadCommand, CreateMultipartUploadCommand, DeleteObjectCommand, GetObjectCommand, HeadObjectCommand, ListPartsCommand, PutObjectCommand, S3Client, UploadPartCommand } from "@aws-sdk/client-s3";
 import { getSignedUrl } from "@aws-sdk/s3-request-presigner";
@@ -40,7 +41,7 @@ async function objectStorageRequest<T>(operation: string, request: () => Promise
   }
 }
 
-export function storageProvider() {
+export function storageProvider(): "local" | "r2" | "s3" {
   const provider = (process.env.STORAGE_PROVIDER || "local").toLowerCase();
   if (provider === "r2" || provider === "s3") return provider;
   return "local";
@@ -239,7 +240,7 @@ export async function statStorageObject(reference: string) {
   return { size: Number(response.ContentLength || 0) };
 }
 
-export async function streamStorageObject(reference: string, range?: { start: number; end: number }) {
+export async function streamStorageObject(reference: string, range?: { start: number; end: number }, signal?: AbortSignal) {
   const object = parseObjectStorageReference(reference);
   if (!object) {
     const stream = range ? createReadStream(/* turbopackIgnore: true */ reference, range) : createReadStream(/* turbopackIgnore: true */ reference);
@@ -249,7 +250,7 @@ export async function streamStorageObject(reference: string, range?: { start: nu
     Bucket: object.bucket,
     Key: object.key,
     Range: range ? `bytes=${range.start}-${range.end}` : undefined,
-  })));
+  }), {abortSignal:signal}));
   if (!response.Body) throw new Error("Object storage returned no body");
   return response.Body.transformToWebStream();
 }
@@ -320,4 +321,50 @@ export async function fileToData(path: string) {
 export function publicMediaUrl(key: string) {
   const base = process.env.NEXT_PUBLIC_MEDIA_BASE_URL?.replace(/\/$/, "");
   return base ? `${base}/${safeObjectKey(key)}` : `/${safeObjectKey(key)}`;
+}
+
+/** Immutable destination registered durably before upload, so interrupted writes can be collected. */
+export function storageFileDestination(key: string, options: PutStorageOptions = {}) {
+  const normalizedKey = safeObjectKey(key), provider = storageProvider();
+  const bucket = provider === "local" ? null : bucketName(options.bucket);
+  return { provider, bucket, key: normalizedKey, reference: provider === "local" ? localPathForKey(normalizedKey) : objectStorageReference(provider, bucket!, normalizedKey) };
+}
+
+export async function downloadStorageFile(reference: string, destination: string, maxBytes: number, signal: AbortSignal, expected?: {size: number; hash: string | null}) {
+  const response = await streamStorageObject(reference,undefined,signal);
+  let received = 0;
+  const hash = createHash("sha256");
+  const limit = new Transform({ transform(chunk, _encoding, callback) {
+    received += chunk.length;
+    hash.update(chunk);
+    callback(received > maxBytes ? new Error("MEDIA_FILE_LIMIT") : null, chunk);
+  }});
+  await pipeline(Readable.fromWeb(response as import("node:stream/web").ReadableStream),limit,createWriteStream(destination,{flags:"wx"}),{signal});
+  if (expected && (received !== expected.size || (expected.hash && hash.digest("hex") !== expected.hash))) {
+    throw Object.assign(new Error("SOURCE_CONTENT_CHANGED"), {code:"SOURCE_CONTENT_CHANGED"});
+  }
+  return received;
+}
+
+export async function putStorageFile(path: string,key: string,options: PutStorageOptions = {},signal?: AbortSignal): Promise<StoredObject> {
+  const destination = storageFileDestination(key,options);
+  const info = await stat(path), hash = createHash("sha256");
+  for await (const chunk of createReadStream(path)) { signal?.throwIfAborted(); hash.update(chunk); }
+  const contentHash = hash.digest("hex");
+  if(destination.provider === "local") {
+    await mkdir(dirname(destination.reference),{recursive:true});
+    const pending = `${destination.reference}.partial`;
+    try {
+      await pipeline(createReadStream(path),createWriteStream(pending),{signal});
+      await rename(pending,destination.reference);
+    } finally { await unlink(pending).catch(()=>undefined); }
+  } else {
+    await objectStorageRequest("put_file",()=>getObjectStorageClient().send(new PutObjectCommand({
+      Bucket:destination.bucket!,Key:destination.key,Body:createReadStream(path),ContentLength:info.size,
+      ContentType:options.contentType,CacheControl:options.cacheControl,Metadata:{sha256:contentHash},
+    }),{abortSignal:signal}));
+    const uploaded = await statStorageObject(destination.reference);
+    if(uploaded.size !== info.size) throw new Error("MEDIA_UPLOAD_SIZE_MISMATCH");
+  }
+  return {...destination,size:info.size,contentHash};
 }

@@ -1,3 +1,4 @@
+import { preparePromptStoryboards, type PreparedStoryboard } from "./media/reference-preparation";
 import { db, readProjectGraphSnapshot, usageWorkspaceForUserProject, userCanAccessAsset, userCanAccessProject } from "@/lib/postgres-db";
 import { intelligenceProvider } from "@/platform/providers/registry";
 import { usageSummary } from "@/modules/usage";
@@ -106,9 +107,9 @@ export async function composeCanvasGenerationPrompt(input: {
       if (!await userCanAccessAsset(input.userId, reference.assetId)) throw serviceError(`${reference.token} is no longer available`, 404);
       const asset = await db.prepare("SELECT storage_path, mime_type FROM assets WHERE id = ?").get(reference.assetId) as { storage_path: string; mime_type: string } | undefined;
       if (!asset) throw serviceError(`${reference.token} is no longer available`, 404);
-      return { path: asset.storage_path, mimeType: asset.mime_type, token: reference.token, title: reference.title, role: reference.role, purpose: reference.purpose, durationSeconds: reference.durationSeconds };
+      return { path: asset.storage_path, mimeType: asset.mime_type, token: reference.token, title: reference.title, role: reference.role, purpose: reference.purpose, durationSeconds: reference.durationSeconds, storyboard: undefined as PreparedStoryboard|undefined };
     }));
-    let sceneSource: { path: string; mimeType: string; token: string; title: string; durationSeconds?: number } | undefined;
+    let sceneSource: { path: string; mimeType: string; token: string; title: string; durationSeconds?: number; storyboard?: PreparedStoryboard } | undefined;
     if (input.sceneSource) {
       const context = input.videoMasterContext;
       if (!context) throw serviceError("Selected scene context is missing", 400);
@@ -120,6 +121,7 @@ export async function composeCanvasGenerationPrompt(input: {
       }
       sceneSource = { path: asset.storage_path, mimeType: asset.mime_type, token: input.sceneSource.token, title: input.sceneSource.title, durationSeconds: input.sceneSource.durationSeconds };
     }
+    if(input.mediaType === "video") await preparePromptStoryboards(input.userId,input.projectId,[...(sceneSource?[sceneSource]:[]),...loadedReferences]);
     const metered = await runAssistantUsage({
       modelId: selectedAssistantModel.id,
       workspaceId,

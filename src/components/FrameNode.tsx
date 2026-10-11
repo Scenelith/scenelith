@@ -1,4 +1,5 @@
 "use client";
+import { PreparedMediaImage } from "./PreparedMediaImage";
 
 /* eslint-disable @next/next/no-img-element */
 
@@ -1185,17 +1186,17 @@ export function GeneratorReferencePreview({ reference, compact = false }: { refe
       {isAudio
         ? <Volume2 size={15} />
         : reference.thumbnailUrl
-          ? <img src={assetThumbnailUrl(reference.thumbnailUrl)} alt="" loading="eager" decoding="async" />
+          ? <PreparedMediaImage src={assetThumbnailUrl(reference.thumbnailUrl)} alt="" loading="eager" decoding="async" />
           : isVideo && reference.url
-            ? <img src={assetThumbnailUrl(reference.url)} alt="" loading="lazy" decoding="async" />
-            : <img src={assetThumbnailUrl(reference.url)} alt="" loading="lazy" decoding="async" />}
+            ? <PreparedMediaImage src={assetThumbnailUrl(reference.url)} alt="" loading="lazy" decoding="async" />
+            : <PreparedMediaImage src={assetThumbnailUrl(reference.url)} alt="" loading="lazy" decoding="async" />}
     </span>;
   }
   if (reference.role === "reference-video" || reference.role === "motion-video") return <span className={`generator-reference-media-icon ${reference.thumbnailUrl ? "has-thumbnail" : reference.url ? "has-video" : ""}`}>{reference.thumbnailUrl
-    ? <img src={assetThumbnailUrl(reference.thumbnailUrl)} alt="" loading="lazy" decoding="async" />
-    : reference.url ? <img src={assetThumbnailUrl(reference.url)} alt="" loading="lazy" decoding="async" /> : null}<Video size={14} /></span>;
+    ? <PreparedMediaImage src={assetThumbnailUrl(reference.thumbnailUrl)} alt="" loading="lazy" decoding="async" />
+    : reference.url ? <PreparedMediaImage src={assetThumbnailUrl(reference.url)} alt="" loading="lazy" decoding="async" /> : null}<Video size={14} /></span>;
   if (reference.role === "reference-audio") return <span className="generator-reference-media-icon"><Volume2 size={14} /></span>;
-  return <img src={assetThumbnailUrl(reference.url)} alt="" loading="lazy" decoding="async" />;
+  return <PreparedMediaImage src={assetThumbnailUrl(reference.url)} alt="" loading="lazy" decoding="async" />;
 }
 export type GeneratorNodeActions = {
   projectId?: string;
@@ -2140,7 +2141,7 @@ function FrameNodeCardComponent({ id, data, selected }: NodeProps<FrameNode>) {
       <div className="generator-reference-list nowheel">
         {generator.personas.length > 0 && <div className={`generator-persona-picker ${referencePersonaPickerOpen ? "is-open" : ""}`}>
           <button type="button" className="generator-persona-picker-trigger" aria-expanded={referencePersonaPickerOpen} onPointerDown={(event) => event.stopPropagation()} onClick={(event) => { event.preventDefault(); event.stopPropagation(); setReferencePersonaPickerOpen((open) => !open); }}>
-            <span className="generator-persona-picker-avatar">{selectedReferencePersona?.avatarUrl ? <img src={selectedReferencePersona.avatarUrl} alt="" loading="lazy" decoding="async" /> : <UserRound size={14} />}</span>
+            <span className="generator-persona-picker-avatar">{selectedReferencePersona?.avatarUrl ? <PreparedMediaImage src={selectedReferencePersona.avatarUrl} alt="" loading="lazy" decoding="async" /> : <UserRound size={14} />}</span>
             <span><small>Selected identity</small><strong>{selectedReferencePersona?.name || "Choose identity"}</strong></span>
             <ChevronDown size={13} />
           </button>
@@ -2150,7 +2151,7 @@ function FrameNodeCardComponent({ id, data, selected }: NodeProps<FrameNode>) {
               const afterCount = persona.assets.filter((asset) => asset.role === "after").length;
               const referenceCount = persona.assets.filter((asset) => asset.role === "reference").length;
               return <button type="button" className={selectedReferencePersona?.id === persona.id ? "is-selected" : ""} key={persona.id} onPointerDown={(event) => event.stopPropagation()} onClick={(event) => { event.preventDefault(); event.stopPropagation(); setReferencePersonaId(persona.id); setReferencePersonaPickerOpen(false); }}>
-                <span className="generator-persona-picker-avatar">{persona.avatarUrl ? <img src={persona.avatarUrl} alt="" loading="lazy" decoding="async" /> : <UserRound size={14} />}</span>
+                <span className="generator-persona-picker-avatar">{persona.avatarUrl ? <PreparedMediaImage src={persona.avatarUrl} alt="" loading="lazy" decoding="async" /> : <UserRound size={14} />}</span>
                 <span><strong>{persona.name}</strong><small>{referenceCount ? `${referenceCount} identity photos` : `${beforeCount} before · ${afterCount} after`}</small></span>
                 {selectedReferencePersona?.id === persona.id && <Check size={12} />}
               </button>;
@@ -2165,7 +2166,7 @@ function FrameNodeCardComponent({ id, data, selected }: NodeProps<FrameNode>) {
           return <div className="generator-persona-option" key={selectedReferencePersona.id}>
             {states.map(([variant, assets]) => <div className="generator-persona-state" key={variant}>
               <header><span>{variant === "reference" ? "identity" : variant}</span><button type="button" disabled={!assets.some((asset) => !attachedReferenceIds.has(asset.id)) || availableReferenceSlots === 0} onPointerDown={(event) => event.stopPropagation()} onClick={(event) => { event.preventDefault(); event.stopPropagation(); attachPersonaVariant(selectedReferencePersona, variant); }}>Add available</button></header>
-              <div>{assets.map((asset, index) => { const active = attachedReferenceIds.has(asset.id); return <button type="button" className={active ? "is-attached" : ""} disabled={!active && availableReferenceSlots === 0} title={`${active ? "Remove" : "Attach"} ${selectedReferencePersona.name} ${variant} ${index + 1}`} key={asset.id} onPointerDown={(event) => event.stopPropagation()} onClick={(event) => { event.preventDefault(); event.stopPropagation(); attachPersonaAsset(selectedReferencePersona, asset); }}><img src={asset.thumbnailUrl || asset.url} alt="" loading="lazy" decoding="async" /><span>{String(index + 1).padStart(2, "0")}</span>{active && <Check size={9} />}</button>; })}{!assets.length && <small>No {variant} photos</small>}</div>
+              <div>{assets.map((asset, index) => { const active = attachedReferenceIds.has(asset.id); return <button type="button" className={active ? "is-attached" : ""} disabled={!active && availableReferenceSlots === 0} title={`${active ? "Remove" : "Attach"} ${selectedReferencePersona.name} ${variant} ${index + 1}`} key={asset.id} onPointerDown={(event) => event.stopPropagation()} onClick={(event) => { event.preventDefault(); event.stopPropagation(); attachPersonaAsset(selectedReferencePersona, asset); }}><PreparedMediaImage src={asset.thumbnailUrl || asset.url} alt="" loading="lazy" decoding="async" /><span>{String(index + 1).padStart(2, "0")}</span>{active && <Check size={9} />}</button>; })}{!assets.length && <small>No {variant} photos</small>}</div>
             </div>)}
           </div>;
         })()}
@@ -2188,7 +2189,7 @@ function FrameNodeCardComponent({ id, data, selected }: NodeProps<FrameNode>) {
       </NodeToolbar>
       <header className="generator-node-title"><span><GeneratorNodeIcon size={15} />{canvasNodeLabel(data)}</span></header>
       <div className={`generator-media-stage ${displayedOutputUrl ? "has-output" : ""} ${generatedOutputs.length ? "has-history" : ""} ${busy && !previewOwnsPlayback ? "is-generating" : ""} ${queued && !previewOwnsPlayback ? "is-queued" : ""} ${failed || outputLoadFailed ? "is-failed" : ""}`} style={{ aspectRatio: ratioCss, "--prompt-max-height": `${promptMaxHeight}px` } as CSSProperties}>
-        {outputMediaType === "video" && outputUrl ? <CanvasVideoPlayer key={outputUrl} src={outputUrl} variant="generator" selectionActive={Boolean(selected)} onDoubleClick={() => generator.openPreview(id)} /> : displayedOutputUrl ? <img key={`${outputUrl}:${outputRetryAttempt}`} className="generator-output-image" src={displayedOutputUrl} alt="Generated output" draggable={false} loading={selected ? "eager" : "lazy"} fetchPriority={selected ? "high" : "auto"} decoding="async" onLoad={outputIsLoaded ? undefined : markOutputLoaded} onError={outputIsLoaded ? undefined : retryOutputLoad} onPointerDown={(event) => event.stopPropagation()} onDoubleClick={(event) => { event.stopPropagation(); if (readyOutputUrl) generator.openPreview(id); }} /> : null}
+        {outputMediaType === "video" && outputUrl ? <CanvasVideoPlayer key={outputUrl} src={outputUrl} variant="generator" selectionActive={Boolean(selected)} onDoubleClick={() => generator.openPreview(id)} /> : displayedOutputUrl ? <PreparedMediaImage key={`${outputUrl}:${outputRetryAttempt}`} className="generator-output-image" src={displayedOutputUrl} alt="Generated output" draggable={false} loading={selected ? "eager" : "lazy"} fetchPriority={selected ? "high" : "auto"} decoding="async" onLoad={outputIsLoaded ? undefined : markOutputLoaded} onError={outputIsLoaded ? undefined : retryOutputLoad} onPointerDown={(event) => event.stopPropagation()} onDoubleClick={(event) => { event.stopPropagation(); if (readyOutputUrl) generator.openPreview(id); }} /> : null}
         {displayedOutputUrl && <div className="generator-output-vignette" />}
         {showCanvasGenerationProgress && <GenerationOutline />}
         {busy && !previewOwnsPlayback && <ImageGeneration className="generator-generation-progress" startingLabel="Preparing generation…" generatingLabel={`Creating ${outputMediaType}. This may take a moment.`}><div className={`generator-generation-preview ${displayedOutputUrl ? "has-output" : ""}`} /></ImageGeneration>}
@@ -2253,7 +2254,7 @@ function FrameNodeCardComponent({ id, data, selected }: NodeProps<FrameNode>) {
         {outputGalleryOpen && <div className="generator-history-panel">
           <div className="generator-history-head"><span>NODE OUTPUTS</span><b>{generatedOutputs.length} SAVED</b></div>
           <div className="generator-history-grid" onWheel={(event) => event.stopPropagation()}>{generatedOutputs.map((output, index) => <button type="button" key={`${output.url}-${index}`} className={output.url === outputUrl ? "is-active" : ""} onPointerDown={(event) => event.stopPropagation()} onClick={(event) => { event.preventDefault(); event.stopPropagation(); selectGeneratedOutput(index); }} aria-label={`Show generated output ${index + 1}`}>
-            <img src={assetThumbnailUrl(output.url)} alt={`Generated output ${index + 1}`} loading="lazy" decoding="async" fetchPriority="low" />
+            <PreparedMediaImage src={assetThumbnailUrl(output.url)} alt={`Generated output ${index + 1}`} loading="lazy" decoding="async" fetchPriority="low" />
             <span>{String(index + 1).padStart(2, "0")}</span>
           </button>)}</div>
         </div>}
@@ -2701,10 +2702,10 @@ function FrameNodeCardComponent({ id, data, selected }: NodeProps<FrameNode>) {
         })}</div>}
         {!portReferences.length && <div className="generator-reference-empty"><Images size={17} /><span>Connect {activeReferencePort.kind === "image" ? "an image" : activeReferencePort.kind === "video" ? "a video" : "audio"} from the canvas to this scene input.</span></div>}
         {activeReferencePort.kind === "image" && <><div className="generator-reference-divider"><span>IDENTITY LIBRARY</span></div><div className="generator-reference-list nowheel">
-          {generator.personas.length > 0 && <div className={`generator-persona-picker ${referencePersonaPickerOpen ? "is-open" : ""}`}><button type="button" className="generator-persona-picker-trigger" aria-expanded={referencePersonaPickerOpen} onClick={(event) => { event.preventDefault(); event.stopPropagation(); setReferencePersonaPickerOpen((open) => !open); }}><span className="generator-persona-picker-avatar">{selectedReferencePersona?.avatarUrl ? <img src={selectedReferencePersona.avatarUrl} alt="" /> : <UserRound size={14} />}</span><span><small>Selected identity</small><strong>{selectedReferencePersona?.name || "Choose identity"}</strong></span><ChevronDown size={13} /></button>
-            {referencePersonaPickerOpen && <div className="generator-persona-picker-options nowheel">{generator.personas.map((persona) => <button type="button" className={selectedReferencePersona?.id === persona.id ? "is-selected" : ""} key={persona.id} onClick={(event) => { event.preventDefault(); event.stopPropagation(); setReferencePersonaId(persona.id); setReferencePersonaPickerOpen(false); }}><span className="generator-persona-picker-avatar">{persona.avatarUrl ? <img src={persona.avatarUrl} alt="" /> : <UserRound size={14} />}</span><span><strong>{persona.name}</strong><small>{persona.assets.length} photos</small></span>{selectedReferencePersona?.id === persona.id && <Check size={12} />}</button>)}</div>}
+          {generator.personas.length > 0 && <div className={`generator-persona-picker ${referencePersonaPickerOpen ? "is-open" : ""}`}><button type="button" className="generator-persona-picker-trigger" aria-expanded={referencePersonaPickerOpen} onClick={(event) => { event.preventDefault(); event.stopPropagation(); setReferencePersonaPickerOpen((open) => !open); }}><span className="generator-persona-picker-avatar">{selectedReferencePersona?.avatarUrl ? <PreparedMediaImage src={selectedReferencePersona.avatarUrl} alt="" /> : <UserRound size={14} />}</span><span><small>Selected identity</small><strong>{selectedReferencePersona?.name || "Choose identity"}</strong></span><ChevronDown size={13} /></button>
+            {referencePersonaPickerOpen && <div className="generator-persona-picker-options nowheel">{generator.personas.map((persona) => <button type="button" className={selectedReferencePersona?.id === persona.id ? "is-selected" : ""} key={persona.id} onClick={(event) => { event.preventDefault(); event.stopPropagation(); setReferencePersonaId(persona.id); setReferencePersonaPickerOpen(false); }}><span className="generator-persona-picker-avatar">{persona.avatarUrl ? <PreparedMediaImage src={persona.avatarUrl} alt="" /> : <UserRound size={14} />}</span><span><strong>{persona.name}</strong><small>{persona.assets.length} photos</small></span>{selectedReferencePersona?.id === persona.id && <Check size={12} />}</button>)}</div>}
           </div>}
-          {selectedReferencePersona && <div className="generator-persona-option">{(["reference", "before", "after"] as const).map((variant) => { const assets = selectedReferencePersona.assets.filter((asset) => asset.role === variant); if (!assets.length) return null; return <div className="generator-persona-state" key={variant}><header><span>{variant === "reference" ? "identity" : variant}</span><button type="button" disabled={!assets.some((asset) => !attachedReferenceIds.has(asset.id)) || availableReferenceSlots === 0} onClick={(event) => { event.preventDefault(); event.stopPropagation(); attachPersonaVariant(selectedReferencePersona, variant); }}>Add available</button></header><div>{assets.map((asset, index) => { const active = attachedReferenceIds.has(asset.id); return <button type="button" className={active ? "is-attached" : ""} disabled={!active && availableReferenceSlots === 0} key={asset.id} onClick={(event) => { event.preventDefault(); event.stopPropagation(); attachPersonaAsset(selectedReferencePersona, asset); }}><img src={asset.thumbnailUrl || asset.url} alt="" /><span>{String(index + 1).padStart(2, "0")}</span>{active && <Check size={9} />}</button>; })}</div></div>; })}</div>}
+          {selectedReferencePersona && <div className="generator-persona-option">{(["reference", "before", "after"] as const).map((variant) => { const assets = selectedReferencePersona.assets.filter((asset) => asset.role === variant); if (!assets.length) return null; return <div className="generator-persona-state" key={variant}><header><span>{variant === "reference" ? "identity" : variant}</span><button type="button" disabled={!assets.some((asset) => !attachedReferenceIds.has(asset.id)) || availableReferenceSlots === 0} onClick={(event) => { event.preventDefault(); event.stopPropagation(); attachPersonaVariant(selectedReferencePersona, variant); }}>Add available</button></header><div>{assets.map((asset, index) => { const active = attachedReferenceIds.has(asset.id); return <button type="button" className={active ? "is-attached" : ""} disabled={!active && availableReferenceSlots === 0} key={asset.id} onClick={(event) => { event.preventDefault(); event.stopPropagation(); attachPersonaAsset(selectedReferencePersona, asset); }}><PreparedMediaImage src={asset.thumbnailUrl || asset.url} alt="" /><span>{String(index + 1).padStart(2, "0")}</span>{active && <Check size={9} />}</button>; })}</div></div>; })}</div>}
         </div></>}
     </ReferenceMenuShell>;
     const renderedMasterWidth = Math.max(860, Number(liveNodeWidth || data.nodeWidth || 920));
@@ -2857,7 +2858,7 @@ function FrameNodeCardComponent({ id, data, selected }: NodeProps<FrameNode>) {
                 if (nextClip) selectClip(nextClip, playback === "manual", 0, videoMasterSelectedLane, playback === "manual", seamlessNext);
                 else { videoPlaybackManager.complete(videoMasterPlaybackOwnerId, `${selectedClip.id}:${videoMasterSelectedLane}`); setVideoMasterSequencePlaying(false); setVideoMasterRelativeTime(selectedPlaybackMedia.duration); }
               }}
-            /> : selectedClip && clipMediaUrl ? <img className="video-master-passive-frame" src={videoMasterClipThumbnail(selectedClip, selectedPlaybackMedia.usesOutput ? "output" : "original")} alt="" draggable={false} /> : <div className="video-master-empty-stage"><Video size={20} /><strong>New scene</strong></div>}
+            /> : selectedClip && clipMediaUrl ? <PreparedMediaImage className="video-master-passive-frame" src={videoMasterClipThumbnail(selectedClip, selectedPlaybackMedia.usesOutput ? "output" : "original")} alt="" draggable={false} /> : <div className="video-master-empty-stage"><Video size={20} /><strong>New scene</strong></div>}
             {!masterBusy && selectedClip && clipMediaUrl && <button type="button" className="video-master-stage-toggle" aria-label="Toggle Video Master playback" onClick={(event) => { event.preventDefault(); event.stopPropagation(); toggleMasterPlaybackFromStage(); }} onDoubleClick={(event) => { event.preventDefault(); event.stopPropagation(); openMasterPreview(); }} />}
             {selectedClip && !clipMediaUrl && <div className="video-master-empty-stage is-overlay"><Video size={20} /><strong>New scene</strong></div>}
             {masterBusy && !previewOwnsPlayback && <>
@@ -2975,7 +2976,7 @@ function FrameNodeCardComponent({ id, data, selected }: NodeProps<FrameNode>) {
             const targetOpen = videoMasterOutputTarget === `${clip.id}:${output.url}`;
             return <div className={`video-master-history-item ${active ? "is-active" : ""}`} key={`${clip.id}:${output.url}:${outputIndex}`}>
               <button type="button" className="video-master-history-preview" onClick={(event) => { event.preventDefault(); event.stopPropagation(); applyMasterOutput(clip.id, output); }} aria-label={`Use ${clip.title} output ${outputIndex + 1}`}>
-                <img src={output.thumbnailUrl || assetThumbnailUrl(output.url)} alt={`${clip.title} version ${outputIndex + 1}`} loading="lazy" decoding="async" />
+                <PreparedMediaImage src={output.thumbnailUrl || assetThumbnailUrl(output.url)} alt={`${clip.title} version ${outputIndex + 1}`} loading="lazy" decoding="async" />
                 <span className="video-master-history-scene">S{String(clipIndex + 1).padStart(2, "0")}</span>
                 <span className="video-master-history-version">V{String(outputIndex + 1).padStart(2, "0")}</span>
                 {active && <i><Check size={9} /></i>}
@@ -3059,7 +3060,7 @@ function FrameNodeCardComponent({ id, data, selected }: NodeProps<FrameNode>) {
     return <article className={`frame-node frame-node--scene-media ${sceneIsVideo ? "is-video" : "is-image"} ${selected ? "is-selected" : ""}`} style={{ width: renderedSceneWidth }}>
       <header className="scene-floating-title"><span><i className={`scene-floating-title-media-icon ${sceneIsVideo ? "is-video" : "is-image"}`} aria-hidden="true">{sceneIsVideo ? <Video size={15} /> : <Icon size={15} />}</i>{canvasNodeLabel(data)}{data.title ? ` · ${data.title}` : ""}</span></header>
       <div className="scene-media-shell" style={naturalSceneRatio ? { aspectRatio: naturalSceneRatio } : undefined} onDoubleClick={(event) => { event.stopPropagation(); generator?.openPreview(id); }}>
-        {sceneIsVideo ? <CanvasVideoPlayer src={image} variant="scene" selectionActive={Boolean(selected)} clipStart={Number(data.videoClipStart || 0)} clipEnd={typeof data.videoClipEnd === "number" ? data.videoClipEnd : undefined} onAspectRatio={setNaturalSceneRatio} onDoubleClick={() => generator?.openPreview(id)} /> : <img src={thumbnailImage} alt={data.title} draggable={false} loading="lazy" decoding="async" onLoad={(event) => {
+        {sceneIsVideo ? <CanvasVideoPlayer src={image} variant="scene" selectionActive={Boolean(selected)} clipStart={Number(data.videoClipStart || 0)} clipEnd={typeof data.videoClipEnd === "number" ? data.videoClipEnd : undefined} onAspectRatio={setNaturalSceneRatio} onDoubleClick={() => generator?.openPreview(id)} /> : <PreparedMediaImage src={thumbnailImage} alt={data.title} draggable={false} loading="lazy" decoding="async" onLoad={(event) => {
           const element = event.currentTarget;
           if (element.naturalWidth > 0 && element.naturalHeight > 0) setNaturalSceneRatio(element.naturalWidth / element.naturalHeight);
         }} />}
@@ -3090,7 +3091,7 @@ function FrameNodeCardComponent({ id, data, selected }: NodeProps<FrameNode>) {
           {data.mediaType === "video" && data.outputUrl ? (
             <CanvasVideoPlayer src={image} variant="card" selectionActive={Boolean(selected)} onDoubleClick={() => generator?.openPreview(id)} />
           ) : (
-            <img src={thumbnailImage} alt="" draggable={false} loading="lazy" decoding="async" />
+            <PreparedMediaImage src={thumbnailImage} alt="" draggable={false} loading="lazy" decoding="async" />
           )}
           {data.role && <span className="role-chip">{data.role}</span>}
         </div>

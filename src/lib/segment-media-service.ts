@@ -1,3 +1,4 @@
+import { queuedSegment } from "@/lib/media/compatibility";
 import { videoSegmentArguments } from "@/lib/video-segment";
 import { probeVideoMetadata } from "@/lib/media-probe";
 import { assertWorkspaceStorageCapacity } from "@/lib/storage-lifecycle";
@@ -102,6 +103,7 @@ async function createSegment(source: AssetRow, projectId: string, workspaceId: s
 }
 
 export async function prepareVideoSegment(userId: string, input: unknown) {
+  if (process.env.SCENELITH_MEDIA_QUEUE_ENABLED === "true") return queuedSegment(userId,input);
   const parsed = requestSchema.safeParse(input);
   if (!parsed.success || parsed.data.end <= parsed.data.start || parsed.data.end - parsed.data.start > 30) {
     return Response.json({ error: "Choose a video segment between 0 and 30 seconds" }, { status: 400 });

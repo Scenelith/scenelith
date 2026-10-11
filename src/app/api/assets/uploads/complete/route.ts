@@ -1,3 +1,4 @@
+import { enqueueMediaAnalysis } from "@/lib/media/ingestion";
 import { requireApiUser, sameOriginRequest } from "@/lib/auth";
 import { db, userCanAccessProject } from "@/lib/postgres-db";
 import { probeVideoMetadataUrl } from "@/lib/media-probe";
@@ -51,7 +52,7 @@ export async function POST(request: Request) {
       return Response.json({ error: "File content does not match its format" }, { status: 400 });
     }
     const mediaType = upload.mimeType.startsWith("video/") ? "video" : "image";
-    const videoMetadata = mediaType === "video"
+    const videoMetadata = mediaType === "video" && process.env.SCENELITH_MEDIA_QUEUE_ENABLED !== "true"
       ? await signedStorageReadUrl(upload.reference, { expiresIn: 10 * 60 }).then((url) => url ? probeVideoMetadataUrl(url) : {}).catch(() => ({}))
       : {};
     const metadata = { source: upload.purpose === "edit-reference" ? "image_edit" : upload.purpose === "library" ? "project_library" : "canvas_upload", mediaType, originalName: upload.originalName, ...videoMetadata };
@@ -62,6 +63,7 @@ export async function POST(request: Request) {
         VALUES (?, ?, ?, ?, ?, ?, ?, 'r2', ?, ?, ?, NULL, ?, ?, ?)`)
         .run(upload.assetId, upload.workspaceId, upload.projectId, kind, role, upload.filename, upload.reference, upload.bucket, upload.key, upload.size, upload.mimeType, JSON.stringify(metadata), new Date().toISOString());
       await completeDurableUploadSession(upload.assetId, auth.user.id);
+      await enqueueMediaAnalysis(auth.user.id,{id:upload.assetId,projectId:upload.projectId,workspaceId:upload.workspaceId,mimeType:upload.mimeType});
     })();
     return Response.json({ asset: { id: upload.assetId, url: `/api/assets/${upload.assetId}`, filename: upload.filename, originalName: upload.originalName, mediaType, mimeType: upload.mimeType, ...videoMetadata } });
   } catch (error) {

@@ -1,3 +1,4 @@
+import { referenceMultipart } from "./media/reference-upload";
 import { prepareNewKieReferences } from "./kie-reference-validation";
 import { newKieModels, newKieInputError, newKiePayload, newKiePrompt, newKieModel, type ModelReference } from "./kie-new-models";
 import { createHmac, timingSafeEqual } from "node:crypto";
@@ -179,7 +180,7 @@ async function kieFetch(path: string, init?: RequestInit) {
     throw new KieRateLimitError("Kie.ai generation capacity is temporarily busy", retryAfterMs(response));
   }
   if (!response.ok || code !== 200) {
-    throw new Error(String(data.msg || data.message || data.error || `Kie.ai returned ${response.status}`));
+    throw Object.assign(new Error(String(data.msg || data.message || data.error || `Kie.ai returned ${response.status}`)),{providerRejected:code>=400 && code<500});
   }
   return data;
 }
@@ -252,18 +253,24 @@ function pruneKieReferenceUploads(now: number) {
 }
 
 async function uploadKieReferenceFile(path: string, mimeType: string) {
-  const bytes = await readStorageObject(path);
   const extension = ({"image/jpeg":"jpg","image/x-ms-bmp":"bmp","video/quicktime":"mov","audio/mpeg":"mp3","audio/x-wav":"wav"} as Record<string,string>)[mimeType] || mimeType.split("/")[1] || "bin";
   const filename = `${crypto.randomUUID()}.${extension}`;
-  const form = new FormData();
-  form.append("file", new Blob([bytes], { type: mimeType }), filename);
-  form.append("uploadPath", "scenelith/references");
-  form.append("fileName", filename);
-  const response = await fetch(`${uploadApiBase}/api/file-stream-upload`, {
-    method: "POST",
-    headers: { Authorization: `Bearer ${apiKey()}` },
-    body: form,
-  });
+  const signal=AbortSignal.timeout(300_000);
+  let response:Response;
+  if(/^(video|audio)\//.test(mimeType)){
+    const multipart=await referenceMultipart(path,mimeType,filename,signal);
+    response=await fetch(`${uploadApiBase}/api/file-stream-upload`,{method:'POST',signal,
+      headers:{Authorization:`Bearer ${apiKey()}`,...multipart.headers},body:multipart.body,duplex:'half'} as unknown as RequestInit);
+  }else{
+    const bytes=await readStorageObject(path);
+    const form = new FormData();
+    form.append("file", new Blob([bytes], { type: mimeType }), filename);
+    form.append("uploadPath", "scenelith/references");
+    form.append("fileName", filename);
+    response = await fetch(`${uploadApiBase}/api/file-stream-upload`, {
+      method: "POST",signal,headers: { Authorization: `Bearer ${apiKey()}` },body: form,
+    });
+  }
   const body = await response.json().catch(() => ({})) as { code?: number | string; msg?: string; data?: { downloadUrl?: string; fileUrl?: string } };
   const bodyCode = Number(body.code ?? response.status);
   const url = body.data?.downloadUrl || body.data?.fileUrl;
@@ -291,6 +298,9 @@ export async function uploadKieReference(path: string, mimeType: string, label =
 }
 
 type StartInput = import("./kie-new-models").GenerationModelOptions & {
+  mediaExecutionVersion?:number;
+  callbackToken?:string;
+  beforeProviderSubmit?:()=>Promise<void>;
   modelId: string;
   prompt: string;
   references: Array<ModelReference & { path: string; mimeType: string; label: string }>;
@@ -409,7 +419,7 @@ export async function startGeneration(input: StartInput) {
   if (input.references.length > model.maxReferences) {
     throw new Error(`${model.label} accepts at most ${model.maxReferences} reference inputs`);
   }
-  input = { ...input, references: await prepareNewKieReferences(model.id, input.references) };
+  input = { ...input, references: await prepareNewKieReferences(model.id, input.references,input.mediaExecutionVersion) };
   const validationError = newKieInputError(model.id, input);
   if (validationError) throw new Error(validationError);
   const uploaded = await Promise.all(input.references.map(async (reference) => ({ ...reference, ...(await uploadKieReference(reference.path, reference.mimeType, reference.label)) })));
@@ -419,7 +429,7 @@ export async function startGeneration(input: StartInput) {
       ? newKiePrompt(model.id, providerPrompt(input.prompt), uploaded)
       : kieProviderPrompt(input.prompt, uploaded.map((item) => item.label));
   assertKiePromptLength(model.id, prompt);
-  const callBackUrl = process.env.PUBLIC_URL ? `${process.env.PUBLIC_URL.replace(/\/$/, "")}/api/webhooks/kie` : undefined;
+  const callBackUrl = process.env.PUBLIC_URL ? `${process.env.PUBLIC_URL.replace(/\/$/, "")}/api/webhooks/kie${input.callbackToken?`?receipt=${encodeURIComponent(input.callbackToken)}`:""}` : undefined;
   let body: Record<string, unknown>;
   if (model.providerPath === "/api/v1/veo/generate") {
     const roleUrls = (role: string) => uploaded.filter((reference) => reference.role === role).map((reference) => reference.assetUrl);
@@ -458,6 +468,7 @@ export async function startGeneration(input: StartInput) {
     };
   }
   await acquireKieGenerationPermit();
+  await input.beforeProviderSubmit?.();
   const response = await kieFetch(model.providerPath, { method: "POST", body: JSON.stringify(body) });
   const task = normalizeKieTask(response);
   if (!task.task_id) throw new Error("Kie.ai did not return a task ID");

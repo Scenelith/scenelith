@@ -86,6 +86,7 @@ try {
   run(process.execPath, ["collaboration/migrate.mjs"], { env });
   const tests = testFiles("tests")
     .filter((path) => !path.includes(`${join("tests", "editions")}${process.platform === "win32" ? "\\" : "/"}`) || !edition || path.includes(join("tests", "editions", edition)))
+    .filter((path) => !argument("--filter") || path.includes(argument("--filter")))
     .sort();
   const testProcess = spawn(join("node_modules", ".bin", "tsx"), ["--test", "--test-concurrency=1", ...tests], {
     env,

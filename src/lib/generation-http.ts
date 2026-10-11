@@ -1,3 +1,6 @@
+import { prepareReferenceAnalyses } from "./media/reference-preparation";
+import { MediaPending } from "./media/compatibility";
+import { mediaResponse } from "./media/http";
 import { prepareNewKieReferences } from "@/lib/kie-reference-validation";
 import { generationCreditCost } from "@/lib/generation-pricing";
 import { loadGenerationReferenceAssets } from "@/lib/generation-reference-assets";
@@ -49,7 +52,7 @@ export async function handleGenerationRequest(request: Request, quoteOnly = fals
   return executeGenerationRequest(auth.user.id, await request.json().catch(() => null), quoteOnly);
 }
 
-export async function executeGenerationRequest(userId: string, input: unknown, quoteOnly = false) {
+export async function executeGenerationRequest(userId: string, input: unknown, quoteOnly = false, options: Pick<import("./generation-admission").GenerationAdmissionInput,"beforeAdmit"|"afterAdmit"|"mediaExecutionVersion"> = {}) {
   const parsed = schema.safeParse(input);
   if (!parsed.success) {
     const field = String(parsed.error.issues[0]?.path[0] || "request");
@@ -220,8 +223,8 @@ export async function executeGenerationRequest(userId: string, input: unknown, q
   if (normalizedReferences.some((reference) => reference.role === "end-frame") && !normalizedReferences.some((reference) => reference.role === "start-frame")) {
     return Response.json({ error: "Connect a start frame before an end frame" }, { status: 400 });
   }
-  try { normalizedReferences = await prepareNewKieReferences(model.id, normalizedReferences); }
-  catch { return Response.json({error:"Could not measure the reference files"}, {status:400}); }
+  try { await prepareReferenceAnalyses(userId,parsed.data.projectId,normalizedReferences,options.mediaExecutionVersion===1); normalizedReferences = await prepareNewKieReferences(model.id, normalizedReferences,options.mediaExecutionVersion); }
+  catch(error) { if(error instanceof MediaPending)return mediaResponse(error.job,true); return Response.json({error:"Could not measure the reference files"}, {status:400}); }
   const exactError = newKieInputError(model.id, {...parsed.data, references:normalizedReferences});
   if (exactError) return Response.json({error:exactError}, {status:400});
   const inputVideoDurationSeconds = normalizedReferences
@@ -236,6 +239,7 @@ export async function executeGenerationRequest(userId: string, input: unknown, q
   const creditCost = generationCreditCost(model.id, resolution, duration, normalizedReferences.length, {generateAudio:parsed.data.generateAudio, hasVideoInput, inputVideoDurationSeconds});
   if (quoteOnly) return Response.json({creditCost, pricingVersion:"2026-10-08", modelId:model.id, inputVideoDurationSeconds});
   const result = await admitGeneration({
+    ...options,
     personaId:parsed.data.personaId, requestKey:parsed.data.requestKey, expectedCredits:parsed.data.expectedCredits,
     background:parsed.data.background, seed:parsed.data.seed, outputFormat:parsed.data.outputFormat, returnLastFrame:parsed.data.returnLastFrame, webSearch:parsed.data.webSearch, originalAudioAssetId:parsed.data.originalAudioAssetId,
     userId,

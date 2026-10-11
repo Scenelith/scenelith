@@ -109,8 +109,8 @@ test("self-hosted compose selects the BYOK profile and contains no hosted worker
 test("shared local storage mounts disable Docker copy-up races", () => {
   const override = source("deploy/selfhost/runtime.override.yaml");
   assert.doesNotMatch(override, /- scenelith-data:\/app\/data/);
-  assert.equal((override.match(/source: scenelith-data/g) || []).length, 4);
-  assert.equal((override.match(/nocopy: true/g) || []).length, 4);
+  assert.equal((override.match(/source: scenelith-data/g) || []).length, 5);
+  assert.equal((override.match(/nocopy: true/g) || []).length, 5);
 });
 
 test("release users receive a source-free bundle backed by the canonical Compose model", () => {

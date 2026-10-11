@@ -1,5 +1,7 @@
 "use client";
 
+import { runMediaOperation, fetchAfterMediaPreparation } from "@/lib/media-client";
+
 import { detachAssetReferences } from "@/lib/detach-asset-references";
 
 import { getTextOverlay, saveTextOverlay } from "@/lib/text-overlay/client";
@@ -2071,7 +2073,7 @@ function CanvasWorkspace({ initialProject, projects: initialProjects, initialWor
     if (!sourceUrl.trim()) return;
     setImporting(true);
     setNotice("");
-    const response = await fetch("/api/import/tiktok", {
+    const response = await fetchAfterMediaPreparation("/api/import/tiktok", {
       method: "POST",
       headers: { "content-type": "application/json" },
       body: JSON.stringify({ projectId: project.id, url: sourceUrl.trim() }),
@@ -2892,14 +2894,8 @@ function CanvasWorkspace({ initialProject, projects: initialProjects, initialWor
     if (!sourceAssetId) throw new Error("Source video is not ready yet");
 
     const job = (async () => {
-      const response = await fetch("/api/assets/segment", {
-        method: "POST",
-        headers: { "content-type": "application/json" },
-        body: JSON.stringify({ projectId: project.id, assetId: sourceAssetId, start: segment.start, end: segment.end, segmentId }),
-      });
-      const body = (await response.json().catch(() => ({}))) as { asset?: { id: string; url: string; durationSeconds: number }; error?: string };
-      if (!response.ok || !body.asset) throw new Error(body.error || "Could not prepare this video segment");
-      const asset = body.asset;
+      const result = await runMediaOperation(project.id,{operation:"segment",range:{id:sourceAssetId,start:segment.start,end:segment.end}});
+      const asset = {...result.asset,durationSeconds:result.plan?.duration ?? result.metadata?.duration ?? segment.end-segment.start};
       setNodes((current) => {
         const next = current.map((node) => {
           if (node.id === sourceNodeId) return {
@@ -2970,14 +2966,8 @@ function CanvasWorkspace({ initialProject, projects: initialProjects, initialWor
     const sourceAssetId = sourceNode.data.assetId || sourceNode.data.videoSourceAssetId;
     if (!sourceAssetId) throw new Error("Source video is not ready yet");
     const end = Math.min(segment.end, segment.start + Math.max(.1, requestedDuration));
-    const response = await fetch("/api/assets/segment", {
-      method: "POST",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify({ projectId: project.id, assetId: sourceAssetId, start: segment.start, end, segmentId }),
-    });
-    const body = (await response.json().catch(() => ({}))) as { asset?: { id: string; url: string; durationSeconds: number }; error?: string };
-    if (!response.ok || !body.asset) throw new Error(body.error || "Could not trim the source scene for generation");
-    return body.asset;
+    const result = await runMediaOperation(project.id,{operation:"segment",range:{id:sourceAssetId,start:segment.start,end}});
+    return {...result.asset,durationSeconds:result.plan?.duration ?? result.metadata?.duration ?? end-segment.start};
   }
 
   async function downloadMasterMedia(nodeId: string, lane: VideoMasterDownloadLane, scope: "scene" | "video", audioMode: VideoMasterExportAudioMode = "selected") {
@@ -3029,23 +3019,15 @@ function CanvasWorkspace({ initialProject, projects: initialProjects, initialWor
       }));
 
       const filename = scope === "scene" ? assets[0].name : `video-master-${lane}.mp4`;
-      const response = await fetch("/api/assets/export", {
-        method: "POST",
-        headers: { "content-type": "application/json" },
-        body: JSON.stringify({ projectId: project.id, filename, audioMode, assets: assets.map(({ id, start, end, audio }) => ({ id, start, end, audio })) }),
-      });
-      if (!response.ok) {
-        const body = (await response.json().catch(() => ({}))) as { error?: string };
-        throw new Error(body.error || "Could not render the video export");
-      }
-      const exportUrl = URL.createObjectURL(await response.blob());
+      const result = await runMediaOperation(project.id,{operation:"export",audioMode,assets:assets.map(({id,start,end,audio})=>({id,start,end,audio}))},
+        stage=>setNotice(stage==="queued"?"Export queued…":stage==="uploading"?"Saving export…":"Preparing export…"));
+      const exportUrl = result.asset.downloadUrl;
       const anchor = document.createElement("a");
       anchor.href = exportUrl;
       anchor.download = filename;
       document.body.appendChild(anchor);
       anchor.click();
       anchor.remove();
-      window.setTimeout(() => URL.revokeObjectURL(exportUrl), 1_000);
       setNotice(scope === "video" ? `Full ${lane.toUpperCase()} video exported` : `${lane.toUpperCase()} scene downloaded`);
       return true;
     } catch (error) {
@@ -3108,16 +3090,8 @@ function CanvasWorkspace({ initialProject, projects: initialProjects, initialWor
     }
     setNotice("Capturing frame…");
     try {
-      const response = await fetch("/api/assets/frame", {
-        method: "POST",
-        headers: { "content-type": "application/json" },
-        body: JSON.stringify({ projectId: project.id, assetId: sourceAssetId, time }),
-      });
-      const body = (await response.json().catch(() => ({}))) as {
-        error?: string;
-        asset?: { id: string; url: string; time: number; mimeType: "image/png" };
-      };
-      if (!response.ok || !body.asset) throw new Error(body.error || "Could not capture this video frame");
+      const result=await runMediaOperation(project.id,{operation:"frame",assetId:sourceAssetId,time});
+      const body={asset:{...result.asset,time,mimeType:"image/png" as const}};
 
       const ratio = Math.max(.2, Number(sourceNode.data.videoAspectRatio || 9 / 16));
       const nodeWidth = ratio >= 1 ? 320 : 260;
@@ -3411,7 +3385,7 @@ function CanvasWorkspace({ initialProject, projects: initialProjects, initialWor
     const selectedModel = models.find((model) => model.id === generatorNode?.data.modelId);
     await ensureGeneratorSegmentReferences(nodeId);
     const references = generationReferenceEntries(nodeId);
-    const response = await fetch("/api/prompts/compose", {
+    const response = await fetchAfterMediaPreparation("/api/prompts/compose", {
       method: "POST",
       headers: { "content-type": "application/json" },
       body: JSON.stringify({
@@ -3460,7 +3434,7 @@ function CanvasWorkspace({ initialProject, projects: initialProjects, initialWor
       ? clip.aspectRatio
       : nearestVideoMasterRatio(sourceRatio, supportedRatios);
     const sourceRatioLabel = nearestVideoMasterRatio(sourceRatio, ["1:1", "4:3", "3:4", "16:9", "9:16", "21:9", "9:21"]);
-    const response = await fetch("/api/prompts/compose", {
+    const response = await fetchAfterMediaPreparation("/api/prompts/compose", {
       method: "POST",
       headers: { "content-type": "application/json" },
       body: JSON.stringify({
@@ -3522,7 +3496,7 @@ function CanvasWorkspace({ initialProject, projects: initialProjects, initialWor
   async function composeImageEditPrompt(node: FrameNode, brief: string, options: ImageEditOptions, additionalReferences: ImageEditReference[]) {
     if (!node.data.assetId) throw new Error("This image is not available as an editable asset yet");
     const editReferences = imageEditReferenceEntries(additionalReferences);
-    const response = await fetch("/api/prompts/compose", {
+    const response = await fetchAfterMediaPreparation("/api/prompts/compose", {
       method: "POST",
       headers: { "content-type": "application/json" },
       body: JSON.stringify({

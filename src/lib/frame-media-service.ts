@@ -1,3 +1,4 @@
+import { queuedFrame } from "@/lib/media/compatibility";
 import { spawn } from "node:child_process";
 import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -92,6 +93,7 @@ async function createFrame(source: AssetRow, projectId: string, workspaceId: str
 }
 
 export async function captureVideoFrame(userId:string,input:unknown) {
+  if(process.env.SCENELITH_MEDIA_QUEUE_ENABLED === "true")return queuedFrame(userId,input);
   const parsed = requestSchema.safeParse(input);
   if (!parsed.success) return Response.json({ error: "Choose a valid video frame" }, { status: 400 });
   const { projectId, assetId } = parsed.data;

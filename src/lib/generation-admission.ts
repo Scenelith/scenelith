@@ -1,3 +1,5 @@
+import { prepareReferenceAnalyses } from "./media/reference-preparation";
+import { MediaPending } from "./media/compatibility";
 import { prepareNewKieReferences } from "./kie-reference-validation";
 import { newKieInputError, newKieModel, newKiePrompt } from "./kie-new-models";
 import { createHash, randomUUID } from "node:crypto";
@@ -22,6 +24,7 @@ export type GenerationAdmissionReference = {
 };
 
 export type GenerationAdmissionInput = import("./kie-new-models").GenerationModelOptions & {
+  mediaExecutionVersion?: 0 | 1;
   requestKey?: string;
   expectedCredits?: number;
   personaId?: string;
@@ -44,6 +47,7 @@ export type GenerationAdmissionInput = import("./kie-new-models").GenerationMode
   hasVideoInput: boolean;
   inputVideoDurationSeconds: number;
   beforeAdmit?: () => Promise<void>;
+  afterAdmit?: (result: Extract<GenerationAdmissionResult,{ok:true}>) => Promise<void>;
   targetClipId?: string;
   targetSourceAssetId?: string;
 };
@@ -54,6 +58,7 @@ export type GenerationAdmissionResult =
 
 export function generationDispatchPayload(input: GenerationAdmissionInput): GenerationDispatchPayload {
   return {
+    ...((input.mediaExecutionVersion ?? (process.env.SCENELITH_MEDIA_QUEUE_ENABLED === "true" ? 1 : 0)) === 1 ? {mediaExecutionVersion:1} : {}),
     ...(input.background !== undefined ? {background:input.background}:{}),
     ...(input.seed !== undefined ? {seed:input.seed}:{}),
     ...(input.outputFormat !== undefined ? {outputFormat:input.outputFormat}:{}),
@@ -80,8 +85,10 @@ export function generationDispatchPayload(input: GenerationAdmissionInput): Gene
  */
 export async function admitGeneration(input: GenerationAdmissionInput): Promise<GenerationAdmissionResult> {
   try {
-    input = { ...input, references: await prepareNewKieReferences(input.model.id, input.references) };
-  } catch {
+    await prepareReferenceAnalyses(input.userId,input.projectId,input.references,input.mediaExecutionVersion===1);
+    input = { ...input, references: await prepareNewKieReferences(input.model.id, input.references,input.mediaExecutionVersion) };
+  } catch(error) {
+    if(error instanceof MediaPending)throw error;
     return { ok: false, status: 400, code: "INVALID_REFERENCE_MEDIA", error: "Could not read reference media; upload a valid file before generating" };
   }
   if (newKieModel(input.model.id)) {
@@ -102,10 +109,14 @@ export async function admitGeneration(input: GenerationAdmissionInput): Promise<
       const existing = await db.prepare("SELECT id, credit_cost, request_fingerprint FROM generations WHERE requested_by_user_id = ? AND project_id = ? AND request_key = ?").get(input.userId, input.projectId, input.requestKey) as {id:string;credit_cost:number;request_fingerprint:string} | undefined;
       if (existing) {
         if (existing.request_fingerprint !== fingerprint) return { ok:false, status:409, code:"REQUEST_KEY_CONFLICT", error:"This request key belongs to different settings" };
-        return {ok:true, generationId:existing.id, status:"queued", queuePosition:await queuedGenerationPosition(existing.id), creditCost:Number(existing.credit_cost)};
+        const result={ok:true as const, generationId:existing.id, status:"queued" as const, queuePosition:await queuedGenerationPosition(existing.id), creditCost:Number(existing.credit_cost)};
+        await input.afterAdmit?.(result);
+        return result;
       }
     }
-    return admitGenerationOnce(input);
+    const result=await admitGenerationOnce(input);
+    if(result.ok)await input.afterAdmit?.(result);
+    return result;
   })();
 }
 
@@ -141,8 +152,8 @@ async function admitGenerationOnce(input: GenerationAdmissionInput): Promise<Gen
         AND output_url IS NULL AND output_asset_id IS NULL LIMIT 1`).get(input.projectId, input.nodeId) as { id: string } | undefined;
       if (existing) return { existingGenerationId: existing.id };
     }
-    await input.beforeAdmit?.();
     if (await activeGenerationCount(workspaceId) >= concurrency) return false;
+    await input.beforeAdmit?.();
     await db.prepare(
       `INSERT INTO generations (id, project_id, usage_workspace_id, requested_by_user_id, node_id, prompt, status, model_id, media_type, provider_path, operation, aspect_ratio, resolution, credit_cost, reference_count, created_at, updated_at)
        VALUES (?, ?, ?, ?, ?, ?, 'queued', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
@@ -214,6 +225,7 @@ async function admitGenerationOnce(input: GenerationAdmissionInput): Promise<Gen
 
   try {
     const payload = generationDispatchPayload(input);
+    await db.prepare("UPDATE generations SET media_execution_version=? WHERE id=?").run(input.mediaExecutionVersion ?? (process.env.SCENELITH_MEDIA_QUEUE_ENABLED === "true" ? 1 : 0), generationId);
     await db.prepare(
       `INSERT INTO generation_dispatch_jobs
        (generation_id, payload_json, status, attempts, available_at, created_at, updated_at)

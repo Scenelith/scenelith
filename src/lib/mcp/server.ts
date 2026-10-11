@@ -1,3 +1,6 @@
+import { MediaPending } from "@/lib/media/compatibility";
+import { jobView } from "@/lib/media/contracts";
+import { getMcpMediaJob } from "./service";
 import {editionMcpServer} from "@/editions/current/mcp-server";
 import { McpServer, type CallToolResult } from "@modelcontextprotocol/server";
 import { z } from "zod";
@@ -180,7 +183,7 @@ function toolError(error: unknown): CallToolResult {
 }
 
 function safeTool<T>(callback: () => Promise<T>, wrap: (value: T) => Record<string, unknown>) {
-  return callback().then((value) => toolResult(wrap(value))).catch(toolError);
+  return callback().then((value) => toolResult(wrap(value))).catch(error=>error instanceof MediaPending?toolResult({...jobView(error.job),nextAction:error.message}):toolError(error));
 }
 
 export function createScenelithMcpServer(principal: McpPrincipal, origin: string) {
@@ -727,7 +730,7 @@ export function createScenelithMcpServer(principal: McpPrincipal, origin: string
 
       server.registerTool("export_video_master_media", {
         title: "Export Video Master media",
-        description: "Render one scene or the full ordered Video Master sequence from OUTPUT or ORIGINAL, save the MP4 into the approved canvas Library, and return its asset ID.",
+        description: "Export one scene or the full Video Master sequence. May return a durable job ID: use get_media_job until completed, then read result.asset. Repeating the same settings reuses the operation.",
         inputSchema: z.object({ canvas_id: z.string().min(1), node_id: z.string().min(1), lane: z.enum(["output", "original"]), scope: z.enum(["scene", "video"]), clip_id: z.string().min(1).optional() }).strict(),
         annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: false },
       }, ({ canvas_id, node_id, lane, scope, clip_id }) => safeTool(
@@ -933,9 +936,15 @@ export function createScenelithMcpServer(principal: McpPrincipal, origin: string
       (result) => result,
     ));
 
+      server.registerTool("get_media_job", {
+        title:"Read media processing status",
+        description:"Read a queued trim/export job. Poll until completed; result.asset contains the saved file. This does not submit AI generation or charge credits.",
+        inputSchema:z.object({job_id:z.string().uuid()}).strict(),
+        annotations:{readOnlyHint:true,destructiveHint:false,idempotentHint:true,openWorldHint:false},
+      },({job_id})=>safeTool(()=>getMcpMediaJob(principal,job_id),result=>result));
     server.registerTool("capture_canvas_video_frame", {
       title: "Capture video frame",
-      description: "Capture an exact still frame from an accessible canvas video, store it in the same canvas Library, and add the resulting image node below the source just like the Canvas editor.",
+      description: "May return a pending media job; read get_media_job and repeat with the current canvas revision to attach the result. Capture an exact still frame from an accessible canvas video, store it in the same canvas Library, and add the resulting image node below the source just like the Canvas editor.",
       inputSchema: z.object({ canvas_id: z.string().min(1), expected_revision: z.number().int().nonnegative(), source_node_id: z.string().min(1), time_seconds: z.number().finite().min(0).max(21_600) }).strict(),
       annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: false },
     }, ({ canvas_id, expected_revision, source_node_id, time_seconds }) => safeTool(
@@ -945,7 +954,7 @@ export function createScenelithMcpServer(principal: McpPrincipal, origin: string
 
     server.registerTool("materialize_canvas_video_segment", {
       title: "Prepare video segment",
-      description: "Materialize one detected or edited source scene as an exact zero-based MP4, then update every related canvas node, edge and Video Master scene without losing concurrent unrelated edits.",
+      description: "May return a pending media job; read get_media_job and repeat with the current canvas revision to attach the result. Materialize one detected or edited source scene as an exact zero-based MP4, then update every related canvas node, edge and Video Master scene without losing concurrent unrelated edits.",
       inputSchema: z.object({ canvas_id: z.string().min(1), expected_revision: z.number().int().nonnegative(), source_node_id: z.string().min(1), segment_id: z.string().min(1).max(180) }).strict(),
       annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: false },
     }, ({ canvas_id, expected_revision, source_node_id, segment_id }) => safeTool(

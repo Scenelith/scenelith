@@ -20,6 +20,8 @@ async function ffmpeg(args:string[]) {
   });
 }
 export async function processGenerationExtras(id:string) {
+  const version=await db.prepare("SELECT media_execution_version FROM generations WHERE id=?").get(id) as {media_execution_version:number}|undefined;
+  if(version?.media_execution_version===1){const {reconcileMediaExtras}=await import("./media/generation-extras");return reconcileMediaExtras(id);}
   const written:string[]=[];
   await db.transaction(async()=>{
     const locked=await db.prepare('SELECT pg_try_advisory_xact_lock(hashtextextended(?,0)) AS locked').get(`generation-extras:${id}`) as {locked:boolean};

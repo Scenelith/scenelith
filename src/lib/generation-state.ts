@@ -1,4 +1,6 @@
 import sharp from "sharp";
+import { storeProviderVideo } from "./media/provider-output";
+import { enqueueMediaAnalysis } from "./media/ingestion";
 import { processGenerationExtras } from "./generation-extras";
 import { generationAttemptTime } from "./generator-task-state";
 import { db, mutateProjectGraphSnapshot } from "./postgres-db";
@@ -35,6 +37,7 @@ export type GenerationStateRow = {
   model_id: string;
   media_type: string;
   operation: string;
+  media_execution_version?: number;
   credit_cost: number;
   created_at: string;
   updated_at: string;
@@ -222,30 +225,32 @@ export async function persistGenerationOutput(id: string, outputUrl: string) {
     return generation.output_asset_id;
   }
 
-  let bytes: Buffer;
-  let contentType = generation.media_type === "video" ? "video/mp4" : "image/png";
-  if (/^https?:\/\//i.test(outputUrl) || outputUrl.startsWith("data:")) {
-    const response = await fetch(outputUrl, { signal: AbortSignal.timeout(120_000) });
-    if (!response.ok) throw new Error(`Could not save generated output (${response.status})`);
-    contentType = response.headers.get("content-type")?.split(";")[0] || contentType;
-    bytes = Buffer.from(await response.arrayBuffer());
-  } else {
-    bytes = Buffer.from(outputUrl, "base64");
-  }
-
-  const extension = safeExtension(/^https?:\/\//i.test(outputUrl) || outputUrl.startsWith("data:") ? new URL(outputUrl).pathname : "generated", contentType);
-  if (generation.media_type === "video" && extension === ".mp4") {
-    bytes = await optimizeMp4ForStreaming(bytes);
-    contentType = "video/mp4";
-  }
-  const physicalVideoMetadata: VideoMetadata = generation.media_type === "video"
-    ? await probeVideoMetadata(bytes, extension).catch(() => ({}))
-    : {};
-  const assetId = crypto.randomUUID();
-  const filename = `scenelith-${generation.media_type}-${id.slice(0, 8)}${extension}`;
   const project = await db.prepare("SELECT workspace_id FROM projects WHERE id = ?").get(generation.project_id) as { workspace_id: string } | undefined;
   if (!project?.workspace_id) throw new Error("Generation project has no workspace");
-  const stored = await putStorageObject(bytes, `workspaces/${project.workspace_id}/projects/${generation.project_id}/generations/${id}${extension}`, { contentType });
+  const assetId = crypto.randomUUID();
+  let bytes: Buffer = Buffer.alloc(0);
+  let contentType = generation.media_type === "video" ? "video/mp4" : "image/png";
+  let extension: string;
+  let stored: Awaited<ReturnType<typeof putStorageObject>>;
+  let physicalVideoMetadata: VideoMetadata = {};
+  if (generation.media_type === "video" && generation.media_execution_version === 1) {
+    ({stored,extension,contentType}=await storeProviderVideo(outputUrl,`workspaces/${project.workspace_id}/projects/${generation.project_id}/generations/${id}-${assetId}`,assetId));
+  } else {
+    if (/^https?:\/\//i.test(outputUrl) || outputUrl.startsWith("data:")) {
+      const response = await fetch(outputUrl, { signal: AbortSignal.timeout(120_000) });
+      if (!response.ok) throw new Error(`Could not save generated output (${response.status})`);
+      contentType = response.headers.get("content-type")?.split(";")[0] || contentType;
+      bytes = Buffer.from(await response.arrayBuffer());
+    } else bytes = Buffer.from(outputUrl, "base64");
+    extension = safeExtension(/^https?:\/\//i.test(outputUrl) || outputUrl.startsWith("data:") ? new URL(outputUrl).pathname : "generated", contentType);
+    if (generation.media_type === "video" && extension === ".mp4") {
+      bytes = await optimizeMp4ForStreaming(bytes);
+      contentType = "video/mp4";
+    }
+    physicalVideoMetadata = generation.media_type === "video" ? await probeVideoMetadata(bytes, extension).catch(() => ({})) : {};
+    stored = await putStorageObject(bytes, `workspaces/${project.workspace_id}/projects/${generation.project_id}/generations/${id}${extension}`, { contentType });
+  }
+  const filename = `scenelith-${generation.media_type}-${id.slice(0, 8)}${extension}`;
   const dispatchJob = await db.prepare("SELECT payload_json FROM generation_dispatch_jobs WHERE generation_id = ?").get(id) as { payload_json: string } | undefined;
   let generationMetadata: Record<string, unknown> = {};
   try {
@@ -266,9 +271,8 @@ export async function persistGenerationOutput(id: string, outputUrl: string) {
     };
   } catch {}
 
-  const generationEventOwner = !generation.node_id.startsWith("automation-")
-    ? await db.prepare("SELECT requested_by_user_id FROM generations WHERE id = ?").get(id) as { requested_by_user_id: string } | undefined
-    : undefined;
+  const generationOwner = await db.prepare("SELECT requested_by_user_id FROM generations WHERE id = ?").get(id) as { requested_by_user_id: string } | undefined;
+  const generationEventOwner = !generation.node_id.startsWith("automation-") ? generationOwner : undefined;
   const now = new Date().toISOString();
   const persisted = await db.transaction(async () => {
     const current = await db.prepare("SELECT output_asset_id FROM generations WHERE id = ? FOR UPDATE").get(id) as { output_asset_id: string | null } | undefined;
@@ -291,6 +295,10 @@ export async function persistGenerationOutput(id: string, outputUrl: string) {
         JSON.stringify({ generationId: id, sourceUrl: outputUrl, ...generationMetadata }),
         now,
       );
+    if (generation.media_execution_version === 1 && generation.media_type === 'video') await db.prepare('UPDATE media_job_objects SET retained=true WHERE job_id=? AND fence=0').run(assetId);
+    if (generation.media_execution_version === 1 && generationOwner?.requested_by_user_id) {
+      await enqueueMediaAnalysis(generationOwner.requested_by_user_id,{id:assetId,projectId:generation.project_id,workspaceId:project.workspace_id,mimeType:contentType},true);
+    }
     if (typeof generationMetadata.personaId === "string") await db.prepare("UPDATE assets SET persona_id=? WHERE id=? AND EXISTS(SELECT 1 FROM personas WHERE id=? AND workspace_id=?)").run(generationMetadata.personaId,assetId,generationMetadata.personaId,project.workspace_id);
     await db.prepare("UPDATE generations SET output_asset_id = ?, output_url = ?, updated_at = ? WHERE id = ? AND output_asset_id IS NULL")
       .run(assetId, outputUrl, now, id);
@@ -307,6 +315,10 @@ export async function persistGenerationOutput(id: string, outputUrl: string) {
     return { assetId, inserted: true };
   })();
 
+  if (!persisted.inserted && generation.media_execution_version === 1 && generation.media_type === "video") {
+    const { deleteStorageObject } = await import("./storage");
+    await deleteStorageObject(stored.reference);
+  }
   if (persisted.inserted && contentType.startsWith("image/")) {
     try {
       const thumbnail = await createAssetThumbnail(bytes, {
