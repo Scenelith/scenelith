@@ -15,7 +15,11 @@ let measuring=true,controlError;const controls=(async()=>{while(measuring){const
 try{
  const batch=crypto.randomUUID();
  const admissions=await Promise.allSettled(Array.from({length:100},async(_,i)=>{
-  const spec=i%2?{operation:'frame',assetId,time:.011*i,maxWidth:640}:{operation:'segment',range:{id:assetId,start:.011*i,end:.011*i+1.5}};
+  // Synthetic provider outputs exercise both preparation and final assembly.
+  const start=.011*i;
+  const spec=i%2?{operation:'frame',assetId,time:start,maxWidth:640}:i%4===0
+   ?{operation:'export',assets:[{id:assetId,start,end:start+.75},{id:assetId,start:start+1,end:start+1.75}],audioMode:'selected'}
+   :{operation:'segment',range:{id:assetId,start,end:start+1.5}};
   const r=await request('/api/media/jobs',{method:'POST',body:JSON.stringify({projectId,requestKey:`load:${batch}:${i}`,spec})});
   if(!r.response.ok)throw new Error(`Admission failed: ${r.response.status}`);
   const job={id:r.data.id,admissionMs:r.ms,status:r.data.status,stage:r.data.stage,resource:i%2?'light':'transcode'};report.jobs.push(job);
