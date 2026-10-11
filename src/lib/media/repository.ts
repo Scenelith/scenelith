@@ -64,8 +64,10 @@ export async function createMediaJob(userId: string, raw: unknown): Promise<Medi
   }
   const hash = fingerprint({ version: MEDIA_VERSION, projectId:projectId||null, spec, dependencies, inputs: inputs.map(i=>[i.id,i.identity]) });
   const job = await db.transaction(async()=> {
-    // Serialize only admission for this user/project, never processing or storage I/O.
-    await db.prepare('SELECT pg_advisory_xact_lock(hashtextextended(?,0))').get(`media:${userId}:${project.workspace_id}`);
+    // Only competing retries serialize. Unrelated orders in one workspace can
+    // be admitted concurrently. Always acquire request before operation locks.
+    await db.prepare('SELECT pg_advisory_xact_lock(hashtextextended(?,0))').get(`media-request:${userId}:${scopeKey}:${requestKey}`);
+    await db.prepare('SELECT pg_advisory_xact_lock(hashtextextended(?,0))').get(`media-operation:${userId}:${project.workspace_id}:${hash}`);
     const previous = await db.prepare('SELECT fingerprint,job_id FROM media_job_requests WHERE user_id=? AND scope_key=? AND request_key=?').get(userId,scopeKey,requestKey) as {fingerprint: string;job_id: string}|undefined;
     if (previous && previous.fingerprint!==hash) throw new MediaError('IDEMPOTENCY_CONFLICT',409);
     let row = await db.prepare('SELECT * FROM media_jobs WHERE user_id=? AND workspace_id=? AND fingerprint=?').get(userId,project.workspace_id,hash) as MediaJob|undefined;

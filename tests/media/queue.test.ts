@@ -25,6 +25,13 @@ test('concurrent request delivery deduplicates; changed settings with same key c
  assert.equal(new Set(jobs.map(j=>j.id)).size,1);
  await assert.rejects(createMediaJob(user,request('double-click',.2,1)),(e:unknown)=>e instanceof MediaError&&e.status===409);
  const alias=await createMediaJob(user,request('other-key'));assert.equal(alias.id,jobs[0].id);
+ const aliases=await Promise.all(Array.from({length:12},(_,i)=>createMediaJob(user,request(`parallel-alias-${i}`))));
+ assert.ok(aliases.every(job=>job.id===jobs[0].id));
+ const conflict=await Promise.allSettled([createMediaJob(user,request('parallel-conflict')),createMediaJob(user,request('parallel-conflict',.2,1))]);
+ assert.equal(conflict.filter(result=>result.status==='fulfilled').length,1);
+ assert.ok(conflict.some(result=>result.status==='rejected'&&result.reason instanceof MediaError&&result.reason.status===409));
+ // Remove the competing range if it won so subsequent lease tests retain their fixture.
+ for(const result of conflict)if(result.status==='fulfilled'&&result.value.id!==jobs[0].id)await cancelMediaJob(user,result.value.id);
  await assert.rejects(getMediaJob(crypto.randomUUID(),jobs[0].id));
 });
 test('expired owner cannot renew or publish; reclaimed job completes once',async()=>{
