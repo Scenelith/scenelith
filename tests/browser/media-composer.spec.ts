@@ -4,7 +4,7 @@ import path from 'node:path';
 import {test,expect} from '@playwright/test';
 test('editing shares the input, keeps the full source above a growing composer, and applies reference picks immediately',async({page})=>{
  const errors:string[]=[];page.on('pageerror',e=>errors.push(e.message));
- const bundle=await build({entryPoints:['tests/browser/fixtures/media-composer.tsx'],bundle:true,write:false,outdir:'/tmp/media-composer-fixture',platform:'browser',jsx:'automatic',tsconfig:path.resolve('tsconfig.json'),define:{'process.env.NODE_ENV':'"production"','process.env':'{}'}});
+ const bundle=await build({entryPoints:['tests/browser/fixtures/media-composer.tsx'],bundle:true,write:false,outdir:'/tmp/media-composer-fixture',platform:'browser',jsx:'automatic',tsconfig:path.resolve('tsconfig.json'),define:{'process.env.NODE_ENV':'"production"'}});
  const css=(readFileSync('src/app/globals.css','utf8')+readFileSync('src/app/theme.css','utf8')).replace(/@import[^;]+;/g,'');
  await page.route('https://edit.test/',route=>route.fulfill({contentType:'text/html',body:`<style>${css}</style><div id="root"></div>`}));
  await page.route('**/api/assets/**',route=>route.fulfill({contentType:'image/svg+xml',body:'<svg xmlns="http://www.w3.org/2000/svg" width="400" height="800"><rect width="400" height="800" fill="#93aaa0"/></svg>'}));
