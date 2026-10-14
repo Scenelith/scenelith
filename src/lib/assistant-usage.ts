@@ -1,6 +1,7 @@
 import { randomUUID } from "node:crypto";
 import { usageAuthority } from "@/modules/usage";
 import { assistantRequestReserveCredits, providerCostToUsageUnits } from "./automation-pricing";
+import {liveAssistantCatalog} from "./assistant-catalog-server";
 import { getAssistantModel } from "./assistant-models";
 import { createOpenRouterUsageTracker, summarizeOpenRouterUsage, withOpenRouterModel, withOpenRouterSignal, withOpenRouterUsage, withOpenRouterOutputLimit, openRouterUsagePending } from "./openrouter";
 import { db } from "./postgres-db";
@@ -31,12 +32,14 @@ export async function runAssistantUsage<T>(input: {
   };
   run: () => Promise<T>;
 }) {
-  const selected = getAssistantModel(input.modelId);
+  const catalog = await liveAssistantCatalog();
+  const selected = catalog.models.find(model=>model.id===input.modelId&&model.available!==false);
+  if(!selected)throw new Error("Assistant model is unavailable at the current price. Choose another assistant model.");
   const tracker = createOpenRouterUsageTracker();
   const metered = editionEconomics.assistantUsagePolicy(selected.id).metered;
   const authority = await usageAuthority();
   const reservationId = randomUUID();
-  const reserveCredits = assistantRequestReserveCredits(input);
+  const reserveCredits = assistantRequestReserveCredits(input,selected);
   const budgetReservationId = metered ? await input.budget?.reserve(reserveCredits) ?? null : null;
   const metadata = { modelId: selected.id, nodeRunId: input.nodeRunId, budgetReservationId, accountingVersion: 1 };
   if (metered) {
@@ -92,7 +95,7 @@ export async function runAssistantUsage<T>(input: {
   };
   let result: T;
   try {
-    result = await withOpenRouterUsage(tracker, () => withOpenRouterModel(selected.id, () =>
+    result = await withOpenRouterUsage(tracker, () => withOpenRouterModel(selected, () =>
       withOpenRouterOutputLimit(input.maxOutputTokens || 4_096, () => withOpenRouterSignal(input.signal, input.run))));
   } catch (error) {
     const failure = error instanceof Error ? error : new Error(String(error));

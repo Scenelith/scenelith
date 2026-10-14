@@ -13,7 +13,9 @@ test("model switching changes real generator inputs, quality and duration contro
   await card.hover();
   await expect(card.getByRole("button", { name: "IMAGE MODELS", exact: true })).toBeVisible();
   await card.getByRole("button", { name: "QUALITY", exact: true }).click();
-  await page.getByRole("button", { name: "4K", exact: true }).click();
+  await page.keyboard.press("End");
+  await page.keyboard.press("Enter");
+  await expect(card.getByRole("button", { name: "QUALITY", exact: true })).toBeFocused();
   await card.getByRole("button", { name: "RATIO", exact: true }).click();
   await expect(page.getByRole("button", { name: "27:16", exact: true })).toHaveCount(0);
   await page.getByRole("button", { name: "1:1", exact: true }).click();

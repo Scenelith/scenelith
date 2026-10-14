@@ -2,6 +2,9 @@
 
 /* eslint-disable @next/next/no-img-element */
 
+import PromptAssistant from "./PromptAssistant";
+import {defaultPromptAssistantPreferences,type PromptAssistantPreferences} from "@/lib/prompt-assistant";
+import {imagePromptSystemInstruction} from "@/lib/generation-prompt-system";
 import { useCallback, useEffect, useRef, useState, type CSSProperties } from "react";
 import { ArrowLeft, Download, Pause, Play, Sparkles, Trash2, Volume2, VolumeX, WandSparkles, X } from "lucide-react";
 import type { FrameNode } from "@/lib/types";
@@ -18,6 +21,7 @@ import type { PersonaRecord } from "@/lib/types";
 type PreviewReference = { id: string; url: string; title: string; personaId?: string; variant?: "reference" | "before" | "after" };
 
 export type ImageEditOptions = {
+  assistant?: PromptAssistantPreferences;
   modelId: string;
   resolution: string;
   aspectRatio: string;
@@ -115,6 +119,7 @@ export function MediaViewer({
   onDelete,
   onCreateEdit,
   onRefineEdit,
+  assistantStorageKey,
   onUploadEditReferences,
   onEditReferencesChange,
   onAddToIdentity,
@@ -146,6 +151,7 @@ export function MediaViewer({
     references: ImageEditReference[],
     onPhase: (phase: "preparing" | "queued" | "generating") => void,
   ) => Promise<{ url: string; assetId?: string; mediaType: "image"; modelId?: string }>;
+  assistantStorageKey?:string;
   onRefineEdit: (brief: string, options: ImageEditOptions, references: ImageEditReference[]) => Promise<string>;
   onUploadEditReferences: (files: File[]) => Promise<ImageEditReference[]>;
   onEditReferencesChange: (references: ImageEditReference[]) => void;
@@ -158,6 +164,10 @@ export function MediaViewer({
   const hasTextEditor = Boolean(projectId && onApplyTextOverlay && node.data.assetId && node.data.mediaType !== "video");
   const [editRequest, setEditRequest] = useState(() => initialEditReferences.map((reference) => editReferenceMentionToken(reference.title, reference.assetId)).join(" "));
   const [refining, setRefining] = useState(false);
+  const [assistantOpen,setAssistantOpen]=useState(false),[assistantPreferences,setAssistantPreferences]=useState(defaultPromptAssistantPreferences);
+  const assistantKey=assistantStorageKey||`scenelith.edit-assistant.${projectId}.${node.data.assetId||node.id}`;
+  useEffect(()=>{try{const saved=JSON.parse(localStorage.getItem(assistantKey)||'null');setAssistantPreferences(saved||defaultPromptAssistantPreferences());}catch{setAssistantPreferences(defaultPromptAssistantPreferences());}},[assistantKey]);
+  const saveAssistant=(value:PromptAssistantPreferences)=>{setAssistantPreferences(value);try{localStorage.setItem(assistantKey,JSON.stringify(value));}catch{}};
   const [submitting, setSubmitting] = useState(false);
   const [editPhase, setEditPhase] = useState<"preparing" | "queued" | "generating" | "loading" | null>(null);
   const isVideo = node.data.mediaType === "video" || node.data.kind === "videoMaster";
@@ -518,6 +528,7 @@ export function MediaViewer({
                 if (editSize !== "original" && !nextRatios.includes(editSize)) setEditSize("original");
               }} />
             </div>
+            {assistantOpen&&<PromptAssistant className="media-edit-assistant" preferences={assistantPreferences} onPreferencesChange={saveAssistant} initialBrief={editRequest} references={[{assetId:node.data.assetId,url,title:'Current image',token:'@EditSource',role:'reference-image',kind:'image'},...editReferences.map(reference=>({...reference,token:editReferenceMentionToken(reference.title,reference.assetId),role:'reference-image',kind:'image' as const}))]} defaultSystemPrompt={imagePromptSystemInstruction({modelId:editModelId,aspectRatio:editOptions.aspectRatio,resolution:editResolution,editMode:true})} onCompose={(brief,assistant)=>onRefineEdit(brief,{...editOptions,assistant},editReferences)} onApply={prompt=>{setEditRequest(prompt);setAssistantOpen(false);}} onClose={()=>setAssistantOpen(false)} disabled={submitting||textDirty}/>}
             <div className="media-edit-actions">
               <ImageEditReferencePicker
                 source={{ url: assetThumbnailUrl(url), title: node.data.title, personaId: persona?.id, personaName: persona?.name, personaVariant: persona?.variant }}
@@ -529,7 +540,7 @@ export function MediaViewer({
                 onChange={changeEditReferences}
                 onUpload={onUploadEditReferences}
               />
-              <button type="button" className="media-edit-helper" title="Improve this edit request with Assistant" aria-label="Improve with assistant" disabled={!editRequest.trim() || refining || submitting || textDirty} onPointerDown={() => void refine()}>{refining ? <span className="generator-spinner" /> : <Sparkles size={14} />}</button>
+              <button type="button" className="media-edit-helper" title="Improve this edit request with Assistant" aria-label="Improve with assistant" aria-expanded={assistantOpen} disabled={submitting || textDirty} onPointerDown={()=>setAssistantOpen(!assistantOpen)}>{refining ? <span className="generator-spinner" /> : <Sparkles size={14} />}</button>
               <div className="media-edit-run">
                 <span id={`media-edit-cost-${node.id}`} role="tooltip" className="generator-credit-tooltip">Run {editCredits} credits</span>
                 <button type="button" className="media-edit-submit" aria-label={`Create edited version · ${editCredits} credits`} aria-describedby={`media-edit-cost-${node.id}`} disabled={!editRequest.trim() || refining || submitting || textDirty} onPointerDown={() => void submit()}>{submitting ? <span className="generator-spinner" /> : <Play size={14} fill="currentColor" />}</button>

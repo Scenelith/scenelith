@@ -20,7 +20,7 @@ test("assistant catalogue exposes the exact requested OpenRouter slugs", () => {
 
 test("text-only GLM is excluded from visual planning capability", () => {
   assert.equal(getAssistantModel("z-ai/glm-5.2").supportsVision, false);
-  assert.equal(getAssistantModel("qwen/qwen3.8-max").supportsVision, true);
+  assert.throws(()=>getAssistantModel("qwen/qwen3.8-max"), /not available/);
   assert.equal(getAssistantModel("qwen/qwen3.7-flash").supportsVision, true);
   assert.equal(getAssistantModel("google/gemini-3.7-flash").supportsVision, true);
 });

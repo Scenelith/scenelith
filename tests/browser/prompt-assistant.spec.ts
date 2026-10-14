@@ -1,0 +1,31 @@
+import {readFileSync,mkdirSync} from 'node:fs';
+import {build} from 'esbuild';
+import {test,expect,type Page} from '@playwright/test';
+import path from 'node:path';
+async function fixture(page:Page,query=''){
+ const errors:string[]=[];page.on('pageerror',e=>errors.push(e.message));let calls:Record<string,unknown>[]=[];let failure=false;
+ await page.route('https://assistant.test/compose',route=>{calls.push(route.request().postDataJSON());return route.fulfill(failure?{status:502,json:{error:'No endpoints found that satisfy the max price for this request'}}:{json:{prompt:'Use the portrait identity and the outfit reference.'}});});
+ const bundle=await build({entryPoints:['tests/browser/fixtures/prompt-assistant.tsx'],bundle:true,write:false,outdir:'/tmp/assistant-fixture',platform:'browser',jsx:'automatic',tsconfig:path.resolve('tsconfig.json'),define:{'process.env.NODE_ENV':'"production"','process.env':'{}'}});
+ const css=(readFileSync('src/app/globals.css','utf8')+readFileSync('src/app/theme.css','utf8')+(bundle.outputFiles.find(f=>f.path.endsWith('.css'))?.text||'')).replace(/@import[^;]+;/g,'');
+ await page.route('https://assistant.test/?'+query,route=>route.fulfill({contentType:'text/html',body:`<style>${css}</style><div id="root"></div>`}));await page.setViewportSize({width:1000,height:800});await page.goto('https://assistant.test/?'+query);await page.addScriptTag({content:bundle.outputFiles.find(f=>f.path.endsWith('.js'))!.text});
+ return {calls,errors,fail:()=>{failure=true;}};
+}
+test('references insert stable mentions, settings reach compose and applying remains explicit',async({page})=>{
+ const state=await fixture(page),refs=page.getByLabel('Connected references',{exact:true}),input=page.getByRole('textbox',{name:'Assistant request'});
+ await expect(refs.locator('img')).toHaveCount(2);expect(await refs.innerText()).toBe('');
+ const buttons=refs.getByRole('button'),second=await buttons.nth(1).getAttribute('aria-label');
+ await input.fill('Take identity from ');await buttons.first().click();await expect(input).toHaveValue(/@Portrait_/);
+ await input.press('End');await input.type(' outfit @');await expect(page.getByRole('listbox',{name:'Reference mentions'})).toBeVisible();await input.press('ArrowDown');await input.press('Enter');await expect(input).toHaveValue(/@Outfit_/);
+ await page.getByRole('button',{name:'System prompt settings'}).click();await page.getByRole('tab',{name:'Custom',exact:true}).click();await page.getByRole('textbox',{name:'Custom system prompt'}).fill('Prefer warm natural light.');await page.getByRole('button',{name:'Save settings'}).click();
+ await page.getByRole('button',{name:'Assistant model',exact:true}).click();const popup=page.locator('[data-floating-menu]');await expect(popup).toBeVisible();const box=(await popup.boundingBox())!;expect(box.y).toBeGreaterThanOrEqual(0);expect(box.y+box.height).toBeLessThanOrEqual(800);
+ await expect(page.getByRole('button',{name:/Qwen 3.8 Max/})).toBeDisabled();await expect(page.getByRole('button',{name:/GLM 5.2/})).toBeDisabled();await page.getByRole('button',{name:/Qwen 3.7 Flash/}).click();
+ await page.getByRole('button',{name:'Suggest',exact:true}).click();await expect(page.getByRole('textbox',{name:'Suggested prompt'})).toBeVisible();expect(state.calls).toHaveLength(1);expect(state.calls[0].preferences).toEqual({modelId:'qwen/qwen3.7-flash',systemPrompt:'Prefer warm natural light.'});await expect(page.getByLabel('Applied prompt')).toHaveText('');await page.getByRole('button',{name:'Use prompt'}).click();await expect(page.getByLabel('Applied prompt')).toContainText('portrait identity');
+ await page.getByRole('button',{name:'Try another'}).click();await page.getByRole('button',{name:'Remove first'}).click();await expect(refs.getByRole('button').first()).toHaveAttribute('aria-label',second!);await page.getByRole('button',{name:'Suggest'}).click();await expect(page.getByRole('alert')).toContainText('no longer attached');expect(state.calls).toHaveLength(1);expect(state.errors).toEqual([]);
+ mkdirSync('test-results/assistant-review',{recursive:true});await page.screenshot({path:'test-results/assistant-review/public-desktop.png'});
+});
+for(const query of ['scale=0.65','scale=1.5','dialog=1'])test('floating menus remain reachable '+query,async({page})=>{
+ const state=await fixture(page,query);await page.getByRole('button',{name:'Assistant model',exact:true}).click();const popup=page.locator('[data-floating-menu]');await expect(popup).toBeVisible();let box=(await popup.boundingBox())!;expect(box.x).toBeGreaterThanOrEqual(0);expect(box.y).toBeGreaterThanOrEqual(0);expect(box.x+box.width).toBeLessThanOrEqual(1000);expect(box.y+box.height).toBeLessThanOrEqual(800);
+ if(query==='dialog=1')expect(await popup.evaluate(node=>!!node.closest('dialog[open]'))).toBe(true);
+ await page.keyboard.press('Escape');await expect(popup).toHaveCount(0);await expect(page.getByRole('button',{name:'Assistant model',exact:true})).toBeFocused();
+ state.fail();await page.getByRole('textbox',{name:'Assistant request'}).fill('Create a portrait');await page.getByRole('button',{name:'Suggest',exact:true}).click();await expect(page.getByRole('alert')).toContainText('Choose another assistant model');expect(state.calls).toHaveLength(1);await page.waitForTimeout(200);expect(state.calls).toHaveLength(1);expect(state.errors).toEqual([]);
+});
