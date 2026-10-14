@@ -3,7 +3,11 @@ import {useLayoutEffect,useState,type CSSProperties,type ComponentProps,type Ref
 import {X} from 'lucide-react';
 
 /** One viewport footprint for preview, editing and character creation. */
-export function MediaDialogBackdrop({className='',...props}:ComponentProps<'div'>){return <div className={`media-dialog-backdrop ${className}`} {...props}/>;}
+export function MediaDialogBackdrop({className='',style,...props}:ComponentProps<'div'>){
+ const [viewport,setViewport]=useState<{height:number;top:number}|null>(null);
+ useLayoutEffect(()=>{const visible=window.visualViewport;const fit=()=>setViewport({height:visible?.height||innerHeight,top:visible?.offsetTop||0});fit();visible?.addEventListener('resize',fit);visible?.addEventListener('scroll',fit);window.addEventListener('resize',fit);return()=>{visible?.removeEventListener('resize',fit);visible?.removeEventListener('scroll',fit);window.removeEventListener('resize',fit);};},[]);
+ return <div className={`media-dialog-backdrop ${className}`} style={{...style,...(viewport?{top:viewport.top,height:viewport.height,bottom:'auto'}:{})}} {...props}/>;
+}
 export function MediaDialogSurface({className='',style,...props}:ComponentProps<'div'>){
  const [visibleHeight,setVisibleHeight]=useState(0);
  useLayoutEffect(()=>{const viewport=window.visualViewport;const fit=()=>setVisibleHeight(viewport?.height||innerHeight);fit();viewport?.addEventListener('resize',fit);window.addEventListener('resize',fit);return()=>{viewport?.removeEventListener('resize',fit);window.removeEventListener('resize',fit);};},[]);
