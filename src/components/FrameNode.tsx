@@ -1318,14 +1318,15 @@ export function GeneratorSelect({ menuKey, openMenu, setOpenMenu, value, options
   const selected = options.find((option) => option.value === value) || options[0];
   const showsRatioGlyph = menuKey === "ratio" || menuKey.startsWith("master-ratio-");
   return <div className={`generator-select ${open ? "is-open" : ""} ${className} nodrag nopan`} onPointerDown={(event) => event.stopPropagation()}>
-    <button type="button" ref={triggerRef} className="generator-select-trigger" aria-label={label} aria-expanded={open} onPointerDown={(event) => { event.stopPropagation(); setOpenMenu(open ? null : menuKey); }}><span className="generator-select-value">{showsRatioGlyph && <RatioGlyph value={selected?.glyphValue || selected?.value || value} />}<strong>{selected?.label || value}</strong></span><ChevronDown size={13} /></button>
+    <button type="button" ref={triggerRef} className="generator-select-trigger" aria-label={label} aria-expanded={open} onPointerDown={event=>event.stopPropagation()} onClick={event=>{event.stopPropagation();setOpenMenu(open ? null : menuKey);}}><span className="generator-select-value">{showsRatioGlyph && <RatioGlyph value={selected?.glyphValue || selected?.value || value} />}<strong>{selected?.label || value}</strong></span><ChevronDown size={13} /></button>
     {open && <FloatingMenu anchor={triggerRef} onClose={()=>setOpenMenu(null)} className={`generator-floating-select generator-select-menu ${className}`} width={options.some(o=>o.description)?288:132} label={label}>
       <div className="generator-select-label">{label}</div>
       <div className="generator-select-scroll nowheel" onWheelCapture={(event) => event.stopPropagation()}>
-        {options.map((option) => <button key={option.value} type="button" disabled={option.disabled} className={option.value === value ? "is-selected" : ""} onPointerDown={(event) => {
+        {options.map((option) => <button key={option.value} type="button" disabled={option.disabled} className={option.value === value ? "is-selected" : ""} onPointerDown={event=>{event.preventDefault();event.stopPropagation();}} onClick={(event) => {
           event.stopPropagation();
           onChange(option.value);
           setOpenMenu(null);
+          triggerRef.current?.focus();
         }}>
           <span className="generator-option-main">{showsRatioGlyph && <RatioGlyph value={option.glyphValue || option.value} />}<span>{option.label}{option.description && <small>{option.description}</small>}</span></span>
           {option.value === value && <Check size={13} />}

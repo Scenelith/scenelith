@@ -17,7 +17,7 @@ export default function FloatingMenu({anchor,onClose,children,className='',width
    setPlacement({host,left:Math.max(minX,Math.min(box.left,maxX-size)),top:above?Math.max(minY,box.top-gap-measured):box.bottom+gap,width:size,height,font:`${Math.max(12,parseFloat(computed.fontSize)*scale)}px ${computed.fontFamily}`});
   };
   const outside=(event:PointerEvent)=>{if(!trigger.contains(event.target as Node)&&!menu.current?.contains(event.target as Node))onClose();};
-  const keyboard=(event:KeyboardEvent)=>{if(event.key==='Escape'){event.preventDefault();event.stopPropagation();onClose();trigger.focus();}};
+  const keyboard=(event:KeyboardEvent)=>{if(event.key==='Escape'){event.preventDefault();event.stopPropagation();onClose();trigger.focus();return;}if(trigger.contains(document.activeElement)&&['ArrowDown','ArrowUp','Home','End'].includes(event.key)){const items=Array.from(menu.current?.querySelectorAll<HTMLButtonElement>('button:not(:disabled)')||[]);if(items.length){event.preventDefault();event.stopPropagation();items[event.key==='End'||event.key==='ArrowUp'?items.length-1:0].focus();}}};
   position();const observer=new ResizeObserver(position);observer.observe(trigger);
   window.addEventListener('resize',position);window.addEventListener('scroll',position,true);window.visualViewport?.addEventListener('resize',position);window.visualViewport?.addEventListener('scroll',position);
   document.addEventListener('pointerdown',outside,true);document.addEventListener('keydown',keyboard,true);
@@ -25,6 +25,6 @@ export default function FloatingMenu({anchor,onClose,children,className='',width
  },[anchor,onClose,width]);
  if(!placement)return null;
  return createPortal(<div ref={menu} data-floating-menu className={className} aria-label={label} style={{position:'fixed',zIndex:10000,left:placement.left,top:placement.top,width:placement.width,maxHeight:placement.height,overflowY:'auto',overscrollBehavior:'contain',font:placement.font,boxSizing:'border-box'}} onPointerDown={event=>event.stopPropagation()} onWheel={event=>event.stopPropagation()} onKeyDown={event=>{
-  if(!['ArrowDown','ArrowUp','Home','End'].includes(event.key))return;event.preventDefault();event.stopPropagation();const items=Array.from(event.currentTarget.querySelectorAll<HTMLButtonElement>('button:not(:disabled)'));if(!items.length)return;const current=items.indexOf(document.activeElement as HTMLButtonElement);const next=event.key==='Home'?0:event.key==='End'?items.length-1:event.key==='ArrowDown'?(current+1)%items.length:(current-1+items.length)%items.length;items[next].focus();
+  if(!['ArrowDown','ArrowUp','Home','End'].includes(event.key))return;event.preventDefault();event.stopPropagation();const items=Array.from(event.currentTarget.querySelectorAll<HTMLButtonElement>('button:not(:disabled)'));if(!items.length)return;const current=items.indexOf(document.activeElement as HTMLButtonElement);const next=event.key==='Home'?0:event.key==='End'?items.length-1:event.key==='ArrowDown'?(current+1)%items.length:(current<0?items.length-1:(current-1+items.length)%items.length);items[next].focus();
  }}>{children}</div>,placement.host);
 }

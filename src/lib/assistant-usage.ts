@@ -39,7 +39,7 @@ export async function runAssistantUsage<T>(input: {
   const metered = editionEconomics.assistantUsagePolicy(selected.id).metered;
   const authority = await usageAuthority();
   const reservationId = randomUUID();
-  const reserveCredits = assistantRequestReserveCredits(input);
+  const reserveCredits = assistantRequestReserveCredits(input,selected);
   const budgetReservationId = metered ? await input.budget?.reserve(reserveCredits) ?? null : null;
   const metadata = { modelId: selected.id, nodeRunId: input.nodeRunId, budgetReservationId, accountingVersion: 1 };
   if (metered) {

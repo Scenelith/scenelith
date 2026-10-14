@@ -1,4 +1,4 @@
-import { DEFAULT_ASSISTANT_MODEL_ID, getAssistantModel } from "./assistant-models";
+import { DEFAULT_ASSISTANT_MODEL_ID, getAssistantModel,type AssistantModelOption } from "./assistant-models";
 import { editionEconomics } from "@/editions/current/economics";
 
 export const providerCostToUsageUnits = editionEconomics.providerCostToUsageUnits;
@@ -27,8 +27,8 @@ export function assistantRequestReserveCredits(input: {
   inputCharacters: number;
   imageCount: number;
   maxOutputTokens?: number;
-}) {
-  const selected = getAssistantModel(input.modelId);
+}, pricing?:AssistantModelOption) {
+  const selected = pricing||getAssistantModel(input.modelId);
   if (!editionEconomics.assistantUsagePolicy(selected.id).metered) return 0;
   const estimatedInputTokens = Math.ceil(Math.max(0, input.inputCharacters)) + Math.max(0, input.imageCount) * 4_096;
   const outputTokens = Math.max(256, input.maxOutputTokens || 4_096);
