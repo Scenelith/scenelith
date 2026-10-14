@@ -2,7 +2,7 @@ import { readStorageObject, signedStorageReadUrl } from "./storage";
 import { imageGenerationPromptJsonSchema } from "./generation-prompt-contract";
 import { AsyncLocalStorage } from "node:async_hooks";
 import { requireInstanceSecret } from "@/platform/secrets";
-import { DEFAULT_ASSISTANT_MODEL_ID, getAssistantModel } from "./assistant-models";
+import { DEFAULT_ASSISTANT_MODEL_ID, getAssistantModel,type AssistantModelOption } from "./assistant-models";
 import { extractPromptStoryboard } from "./video-storyboard";
 import { generationPromptSystemInstruction, videoReferenceRoleNames } from "./generation-prompt-system";
 
@@ -32,7 +32,7 @@ export type OpenRouterUsageTracker = {
 };
 type OpenRouterUsageStore = { tracker: OpenRouterUsageTracker; stage: string };
 const openRouterUsageStorage = new AsyncLocalStorage<OpenRouterUsageStore>();
-const openRouterModelStorage = new AsyncLocalStorage<string>();
+const openRouterModelStorage = new AsyncLocalStorage<AssistantModelOption>();
 const openRouterOutputLimitStorage = new AsyncLocalStorage<number>();
 const openRouterSignalStorage = new AsyncLocalStorage<AbortSignal>();
 
@@ -49,8 +49,8 @@ export function withOpenRouterUsageStage<T>(stage: string, callback: () => Promi
   return current ? openRouterUsageStorage.run({ tracker: current.tracker, stage }, callback) : callback();
 }
 
-export function withOpenRouterModel<T>(modelId: string | undefined, callback: () => Promise<T>) {
-  return openRouterModelStorage.run(getAssistantModel(modelId).id, callback);
+export function withOpenRouterModel<T>(modelId: string | AssistantModelOption | undefined, callback: () => Promise<T>) {
+  return openRouterModelStorage.run(typeof modelId === "object" ? modelId : getAssistantModel(modelId), callback);
 }
 
 export function withOpenRouterOutputLimit<T>(limit: number, callback: () => Promise<T>) {
@@ -60,7 +60,7 @@ export function withOpenRouterOutputLimit<T>(limit: number, callback: () => Prom
 function boundedRequestBody(body: Record<string, unknown>, requestModel: string, temperature: number) {
   const limit = openRouterOutputLimitStorage.getStore();
   const requested = Number(body.max_tokens ?? limit);
-  const selected = getAssistantModel(requestModel);
+  const selected = openRouterModelStorage.getStore()?.id === requestModel ? openRouterModelStorage.getStore()! : getAssistantModel(requestModel);
   const provider = body.provider && typeof body.provider === "object" ? body.provider as Record<string, unknown> : {};
   const price = provider.max_price && typeof provider.max_price === "object" ? provider.max_price as Record<string, unknown> : {};
   const ceiling = (value: unknown, maximum: number) => typeof value === "number" && Number.isFinite(value) && value >= 0 ? Math.min(value, maximum) : maximum;
@@ -102,7 +102,7 @@ function openRouterRequestSignal() {
 }
 
 function selectedOpenRouterModel(body: Record<string, unknown>) {
-  const requested = typeof body.model === "string" ? body.model : openRouterModelStorage.getStore() || model;
+  const requested = typeof body.model === "string" ? body.model : openRouterModelStorage.getStore()?.id || model;
   return getAssistantModel(requested).id;
 }
 

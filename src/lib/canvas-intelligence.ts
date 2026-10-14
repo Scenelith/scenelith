@@ -4,6 +4,7 @@ import { intelligenceProvider } from "@/platform/providers/registry";
 import { usageSummary } from "@/modules/usage";
 import { editionServer } from "@/editions/current/server";
 import { AssistantCreditError, runAssistantUsage } from "@/lib/assistant-usage";
+import {liveAssistantCatalog} from "@/lib/assistant-catalog-server";
 import { DEFAULT_ASSISTANT_MODEL_ID, getAssistantModel } from "@/lib/assistant-models";
 import { videoMasterTargetAcceptsAsset } from "@/lib/video-master-validation";
 
@@ -38,6 +39,7 @@ export async function runCanvasAssistant(input: {
   if (connectedText.length > 20_000 || systemPrompt.length > 10_000 || imageAssetIds.length > 14) throw serviceError("Assistant input is too large", 400);
   const workspaceId = await assistantWorkspace(input.userId, input.projectId, "assistant");
   try {
+    await liveAssistantCatalog();
     const selectedModel = getAssistantModel(input.assistantModelId || DEFAULT_ASSISTANT_MODEL_ID);
     if (imageAssetIds.length && !selectedModel.supportsVision) throw serviceError(`${selectedModel.label} supports text only. Disconnect image references or choose a vision model.`, 400);
     const images = await Promise.all(imageAssetIds.map(async (assetId) => {
@@ -101,6 +103,7 @@ export async function composeCanvasGenerationPrompt(input: {
   if (brief.length < 2 || brief.length > 5_000 || references.length > 50) throw serviceError("Describe what you want to create", 400);
   const workspaceId = await assistantWorkspace(input.userId, input.projectId, "prompt");
   try {
+    await liveAssistantCatalog();
     const selectedAssistantModel = getAssistantModel(input.assistantModelId || DEFAULT_ASSISTANT_MODEL_ID);
     if (references.length && !selectedAssistantModel.supportsVision) throw serviceError(`${selectedAssistantModel.label} supports text only. Remove visual references or choose a vision model.`, 400);
     const loadedReferences = await Promise.all(references.map(async (reference) => {

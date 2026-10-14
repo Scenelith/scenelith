@@ -24,7 +24,7 @@ export type AssistantModelOption = {
  * up-front reserve and UI estimate. Final accounting starts from usage.cost on
  * the completed provider response.
  */
-export const assistantModels = [
+export const assistantModels:AssistantModelOption[] = [
   { id: DEFAULT_ASSISTANT_MODEL_ID, label: "Gemini 3.7 Flash", provider: "Google", promptUsdPerToken: 0.00000075, completionUsdPerToken: 0.00000375, supportsVision: true },
   { id: "qwen/qwen3.8-max", label: "Qwen 3.8 Max", provider: "Qwen", available:false, promptUsdPerToken: 0.000002, completionUsdPerToken: 0.000006, supportsVision: true },
   { id: "qwen/qwen3.7-flash", label: "Qwen 3.7 Flash", provider: "Qwen", promptUsdPerToken: 0.00000003, completionUsdPerToken: 0.00000013, supportsVision: true },
@@ -36,7 +36,7 @@ export const assistantModels = [
   { id: "x-ai/grok-4.5", label: "Grok 4.5", provider: "xAI", promptUsdPerToken: 0.000002, completionUsdPerToken: 0.000006, supportsVision: true },
   { id: "anthropic/claude-sonnet-5", label: "Claude Sonnet 5", provider: "Anthropic", promptUsdPerToken: 0.000002, completionUsdPerToken: 0.00001, supportsVision: true },
   { id: "z-ai/glm-5.2", label: "GLM 5.2", provider: "Z.ai", promptUsdPerToken: 0.00000005, completionUsdPerToken: 0.000007, supportsVision: false },
-] satisfies AssistantModelOption[];
+];
 
 export const tiktokAutomationPlanningModels = assistantModels.filter((model) => (
   model.supportsVision && model.id.startsWith("google/gemini-3")

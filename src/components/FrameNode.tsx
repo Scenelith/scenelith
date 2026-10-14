@@ -1,6 +1,7 @@
 "use client";
 import FloatingMenu from "./FloatingMenu";
 import PromptAssistant from "./PromptAssistant";
+import {useAssistantModels} from "./useAssistantModels";
 import {stableReferenceToken,type PromptAssistantPreferences} from "@/lib/prompt-assistant";
 import { PreparedMediaImage } from "./PreparedMediaImage";
 
@@ -1381,6 +1382,7 @@ export function VideoMasterGenerationControls({ clipId, openMenu, setOpenMenu, m
 }
 
 function FrameNodeCardComponent({ id, data, selected }: NodeProps<FrameNode>) {
+  const assistantModels=useAssistantModels();
   const generator = useContext(GeneratorNodeContext);
   const previewOwnsPlayback = generator?.activePreviewNodeId === id;
   const videoMasterPlaybackOwnerId = `video-master:${id}`;

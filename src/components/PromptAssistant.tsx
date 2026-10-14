@@ -6,9 +6,11 @@ const assetThumbnailUrl=(url:string)=>url.startsWith('/api/assets/')?url.split('
 import {assistantModels,assistantModelCreditDescription,normalizeAssistantModelId} from '@/lib/assistant-models';
 import {assistantFailureMessage,missingReferenceMention,type PromptAssistantPreferences,type PromptAssistantReference} from '@/lib/prompt-assistant';
 import FloatingMenu from './FloatingMenu';
-import styles from './PromptAssistant.module.css';
+import {useAssistantModels} from './useAssistantModels';
+const styles={"apply": "prompt-assistant-apply", "compose": "prompt-assistant-compose", "error": "prompt-assistant-error", "hint": "prompt-assistant-hint", "mentions": "prompt-assistant-mentions", "model": "prompt-assistant-model", "modelMenu": "prompt-assistant-model-menu", "modes": "prompt-assistant-modes", "panel": "prompt-assistant-panel", "references": "prompt-assistant-references", "system": "prompt-assistant-system"};
 type Props={references:PromptAssistantReference[];preferences:PromptAssistantPreferences;onPreferencesChange:(value:PromptAssistantPreferences)=>void;defaultSystemPrompt:string;onCompose:(brief:string,preferences:PromptAssistantPreferences)=>Promise<string>;onApply:(prompt:string)=>void;onClose:()=>void;initialBrief?:string;brief?:string;onBriefChange?:(brief:string)=>void;className?:string;disabled?:boolean;title?:string};
 export default function PromptAssistant({references,preferences,onPreferencesChange,defaultSystemPrompt,onCompose,onApply,onClose,initialBrief='',brief:controlledBrief,onBriefChange,className='',disabled=false,title='Prompt assistant'}:Props){
+ const assistantModels=useAssistantModels();
  const [localBrief,setBrief]=useState(initialBrief),[proposal,setProposal]=useState(''),[busy,setBusy]=useState(false),[error,setError]=useState(''),[settings,setSettings]=useState(false),[custom,setCustom]=useState(preferences.systemPrompt),[mode,setMode]=useState<'default'|'custom'>(preferences.systemPrompt?'custom':'default'),[modelsOpen,setModelsOpen]=useState(false),[caret,setCaret]=useState(0),[mentionIndex,setMentionIndex]=useState(0);
  const input=useRef<HTMLTextAreaElement>(null),modelButton=useRef<HTMLButtonElement>(null),inFlight=useRef(false),brief=controlledBrief??localBrief;
  const changeBrief=(text:string)=>{setBrief(text);onBriefChange?.(text);setError('');};

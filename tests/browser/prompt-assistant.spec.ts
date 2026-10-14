@@ -6,7 +6,7 @@ async function fixture(page:Page,query=''){
  const errors:string[]=[];page.on('pageerror',e=>errors.push(e.message));let calls:Record<string,unknown>[]=[];let failure=false;
  await page.route('https://assistant.test/compose',route=>{calls.push(route.request().postDataJSON());return route.fulfill(failure?{status:502,json:{error:'No endpoints found that satisfy the max price for this request'}}:{json:{prompt:'Use the portrait identity and the outfit reference.'}});});
  const bundle=await build({entryPoints:['tests/browser/fixtures/prompt-assistant.tsx'],bundle:true,write:false,outdir:'/tmp/assistant-fixture',platform:'browser',jsx:'automatic',tsconfig:path.resolve('tsconfig.json'),define:{'process.env.NODE_ENV':'"production"','process.env':'{}'}});
- const css=(readFileSync('src/app/globals.css','utf8')+readFileSync('src/app/theme.css','utf8')+bundle.outputFiles.find(f=>f.path.endsWith('.css'))!.text).replace(/@import[^;]+;/g,'');
+ const css=(readFileSync('src/app/globals.css','utf8')+readFileSync('src/app/theme.css','utf8')+(bundle.outputFiles.find(f=>f.path.endsWith('.css'))?.text||'')).replace(/@import[^;]+;/g,'');
  await page.route('https://assistant.test/?'+query,route=>route.fulfill({contentType:'text/html',body:`<style>${css}</style><div id="root"></div>`}));await page.setViewportSize({width:1000,height:800});await page.goto('https://assistant.test/?'+query);await page.addScriptTag({content:bundle.outputFiles.find(f=>f.path.endsWith('.js'))!.text});
  return {calls,errors,fail:()=>{failure=true;}};
 }

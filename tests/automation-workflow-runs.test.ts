@@ -941,7 +941,8 @@ test("AI receipts survive failed runs, previews and paid retries in run history"
       ];
       await repository.saveAutomationWorkflowDraft({ userId: owner.userId, workflowId: workflow!.workflow.id, baseDraftVersionId: workflow!.draft!.id, graph });
       requests = 0;
-      globalThis.fetch = async () => {
+      globalThis.fetch = async (url) => {
+        if(String(url).endsWith("/api/v1/models"))return new Response(JSON.stringify({data:[{id:"google/gemini-3.7-flash",pricing:{prompt:"0.00000075",completion:"0.00000375"},architecture:{input_modalities:["text","image"]}}]}));
         requests++;
         if (scenario === "pending") throw new Error("connection reset after dispatch");
         return new Response(JSON.stringify({ id: `test-${scenario}-${requests}`, model: "google/gemini-3.7-flash",
