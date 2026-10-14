@@ -19,6 +19,14 @@ test("model switching changes real generator inputs, quality and duration contro
   await card.getByRole("button", { name: "RATIO", exact: true }).click();
   await expect(page.getByRole("button", { name: "27:16", exact: true })).toHaveCount(0);
   await page.getByRole("button", { name: "1:1", exact: true }).click();
+  await card.locator('.generator-assistant-trigger').click();
+  await expect(page.getByRole('dialog',{name:'Prompt assistant',exact:true})).toBeVisible();
+  await expect(card.locator('.generator-node-controls')).toHaveCSS('visibility','hidden');
+  await page.getByRole('button',{name:'Assistant model',exact:true}).click();
+  await page.getByRole('button',{name:/Qwen 3.7 Flash/}).click();
+  await expect(page.getByRole('dialog',{name:'Prompt assistant',exact:true})).toBeVisible();
+  await expect(page.getByRole('button',{name:'Assistant model',exact:true})).toHaveText(/Qwen 3.7 Flash/);
+  await page.getByRole('button',{name:'Close assistant',exact:true}).click();
   await page.getByRole("button", { name: "PixVerse", exact: true }).click();
   await card.hover();
   await expect(card.getByRole("button", { name: "DURATION", exact: true })).toBeVisible();

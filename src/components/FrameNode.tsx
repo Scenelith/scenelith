@@ -1676,7 +1676,7 @@ function FrameNodeCardComponent({ id, data, selected }: NodeProps<FrameNode>) {
     if (!assistantOpen) return;
     const closeAssistantOutside = (event: PointerEvent) => {
       const target = event.target as HTMLElement | null;
-      if (target?.closest(".generator-prompt-assistant, .generator-assistant-trigger")) return;
+      if (target?.closest(".generator-prompt-assistant, .generator-assistant-trigger, [data-floating-menu]")) return;
       // Dismiss only. Letting this pointer event continue would also click the
       // full-stage playback control behind the assistant.
       event.preventDefault();
