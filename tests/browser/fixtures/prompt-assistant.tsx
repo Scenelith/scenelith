@@ -1,0 +1,13 @@
+import {useRef,useState,useEffect} from 'react';
+import {createRoot} from 'react-dom/client';
+import PromptAssistant from '../../../src/components/PromptAssistant';
+import {GeneratorSelect} from '../../../src/components/FrameNode';
+import {defaultPromptAssistantPreferences,stableReferenceToken} from '../../../src/lib/prompt-assistant';
+const art=(w:number,h:number,color:string)=>'data:image/svg+xml;base64,'+btoa(`<svg xmlns="http://www.w3.org/2000/svg" width="${w}" height="${h}"><rect width="${w}" height="${h}" fill="${color}"/></svg>`);
+function Fixture(){const [preferences,setPreferences]=useState(defaultPromptAssistantPreferences),[first,setFirst]=useState(true),[applied,setApplied]=useState(''),[menu,setMenu]=useState<string|null>(null),[format,setFormat]=useState('1:1');const dialog=useRef<HTMLDialogElement>(null);const params=new URLSearchParams(location.search);
+ useEffect(()=>{if(params.has('dialog'))dialog.current?.showModal();},[]);
+ const references=[{assetId:'one',url:art(600,900,'#5d756c'),title:'Portrait',role:'reference-image',kind:'image' as const},{assetId:'two',url:art(1200,600,'#6a7389'),title:'Outfit',role:'reference-image',kind:'image' as const}].filter((_,index)=>first||index>0).map(r=>({...r,token:stableReferenceToken(r)}));
+ const content=<div style={{position:'absolute',right:10,bottom:10,width:430,height:410,overflow:'hidden',transform:`scale(${params.get('scale')||1})`,transformOrigin:'bottom right'}}><PromptAssistant references={references} preferences={preferences} onPreferencesChange={setPreferences} defaultSystemPrompt="Required reference rules" onClose={()=>{}} onCompose={async(brief,value)=>{const response=await fetch('/compose',{method:'POST',body:JSON.stringify({brief,preferences:value,references})});const result=await response.json();if(!response.ok)throw new Error(result.error);return result.prompt;}} onApply={setApplied}/><button onClick={()=>setFirst(false)}>Remove first</button><output aria-label="Applied prompt">{applied}</output><GeneratorSelect label="Format" menuKey="ratio" openMenu={menu} setOpenMenu={setMenu} value={format} options={Array.from({length:20},(_,i)=>({value:String(i),label:'Format '+i}))} onChange={setFormat}/></div>;
+ return params.has('dialog')?<dialog ref={dialog} style={{width:'90vw',height:'90vh',padding:0}}>{content}</dialog>:content;
+}
+createRoot(document.getElementById('root')!).render(<Fixture/>);

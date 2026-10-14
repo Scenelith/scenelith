@@ -63,10 +63,10 @@ test("unbilled rejection does not create a paid request", async () => {
 test("preauthorized output cap applies to the actual request and selected model", async () => {
   const tracker = createOpenRouterUsageTracker(); let body: Record<string, unknown> = {};
   globalThis.fetch = async (_url, init) => { body = JSON.parse(String(init?.body)); return response({ usage: { cost: 0 }, choices: [{ message: { content: "ok" } }] }); };
-  await withOpenRouterUsage(tracker, () => withOpenRouterModel("qwen/qwen3.8-max", () => withOpenRouterOutputLimit(500, () => requestOpenRouterText({ max_tokens: 9000, stream: true }))));
+  await withOpenRouterUsage(tracker, () => withOpenRouterModel("x-ai/grok-4.5", () => withOpenRouterOutputLimit(500, () => requestOpenRouterText({ max_tokens: 9000, stream: true }))));
   assert.deepEqual((body.provider as Record<string, unknown>).max_price, { prompt: 2, completion: 6 });
-  assert.equal(body.max_tokens, 500); assert.equal(body.stream, false); assert.equal(body.model, "qwen/qwen3.8-max");
-  assert.equal(tracker.entries[0].model, "qwen/qwen3.8-max");
+  assert.equal(body.max_tokens, 500); assert.equal(body.stream, false); assert.equal(body.model, "x-ai/grok-4.5");
+  assert.equal(tracker.entries[0].model, "x-ai/grok-4.5");
 });
 
 

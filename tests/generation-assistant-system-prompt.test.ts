@@ -50,10 +50,12 @@ test("prompt compose requests accept bounded per-node custom instructions", () =
 test("generation-node settings expose default, custom, save, and one-click reset controls", () => {
   const frameNode = readFileSync(new URL("../src/components/FrameNode.tsx", import.meta.url), "utf8");
   const canvasApp = readFileSync(new URL("../src/components/CanvasApp.tsx", import.meta.url), "utf8");
-  assert.match(frameNode, /System prompt settings/);
-  assert.match(frameNode, /Scenelith default/);
-  assert.match(frameNode, /Save custom/);
-  assert.match(frameNode, /Reset to default/);
-  assert.match(canvasApp, /systemPrompt: String\(generatorNode\?\.data\.systemPrompt \|\| ""\)/);
-  assert.match(canvasApp, /systemPrompt: String\(master\.data\.systemPrompt \|\| ""\)/);
+  const panel=readFileSync(new URL("../src/components/PromptAssistant.tsx",import.meta.url),"utf8");
+  assert.match(frameNode, /<PromptAssistant/);
+  assert.match(panel, /System prompt settings/);
+  assert.match(panel, /Default system prompt/);
+  assert.match(panel, /Save settings/);
+  assert.match(panel, /Reset to default/);
+  assert.match(canvasApp, /systemPrompt: options\?\.assistant\?\.systemPrompt \?\? String\(generatorNode\?\.data\.systemPrompt \|\| ""\)/);
+  assert.match(canvasApp, /systemPrompt: options\?\.assistant\?\.systemPrompt \?\? String\(master\.data\.systemPrompt \|\| ""\)/);
 });

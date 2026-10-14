@@ -1962,3 +1962,14 @@ select.panel-input { color-scheme: dark; }
 .task-download { position:absolute; bottom:10px; left:13px; display:inline-flex; align-items:center; gap:6px; color:var(--color-mint); font-size:11px; font-weight:650; text-decoration:none; }
 .task-download:hover { text-decoration:underline; }
 .task-download:focus-visible { outline:2px solid var(--color-mint); outline-offset:3px; }
+
+/* Portaled select menus use screen coordinates and independent scrolling. */
+.generator-floating-select{bottom:auto;overflow-y:auto;animation:none;max-width:calc(100vw - 24px)}
+.generator-floating-select .generator-select-scroll{max-height:none;overflow:visible}
+.generator-floating-select .generator-select-scroll button{font-size:inherit;line-height:1.45;padding:10px 12px}
+.generator-floating-select .generator-select-scroll button small{font-size:.8em;line-height:1.4}
+.generator-floating-select .generator-select-label{font-size:.7em;padding:8px 12px}
+.generator-floating-select button:disabled{opacity:.4;cursor:default}
+.generator-prompt-assistant{width:auto!important;max-height:calc(100% - 78px);overflow:auto}
+.media-edit-assistant{position:absolute;bottom:calc(100% + 12px);left:0;right:0;z-index:100}
+@media(max-width:700px){.media-edit-assistant{position:relative;bottom:auto;margin-bottom:12px}}

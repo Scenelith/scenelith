@@ -84,6 +84,7 @@ import { editionClient, type ProductPanelKind } from "@/editions/current/client"
 import { TaskCenter } from "./TaskCenter";
 import BrandLogo from "./BrandLogo";
 import type { BackgroundTaskRecord, FrameEdge, FrameNode, GeneratorInputRole, HookRecord, LibraryMediaAsset, PersonaRecord, ProjectRecord, UserRecord, VideoMasterClip, VideoSceneSegment, WorkspaceRecord } from "@/lib/types";
+import {stableReferenceToken,type PromptAssistantPreferences} from "@/lib/prompt-assistant";
 import { editReferenceMentionToken, referenceMentionToken } from "@/lib/reference-mentions";
 import { MAX_GENERATION_BATCH, GenerationCapacityQueue, canRestoreForegroundTask } from "@/lib/generation-queue";
 import { submitGenerationWhenAvailable } from "@/lib/generation-submission";
@@ -3361,7 +3362,7 @@ function CanvasWorkspace({ initialProject, projects: initialProjects, initialWor
     const attached = masterAttached.map((reference) => ({ assetId: reference.assetId, title: reference.title, role: canonicalGeneratorRole(masterClipId ? undefined : generatorNode.data.modelId, reference.role || "reference-image"), durationSeconds: reference.durationSeconds, isSceneSource: false }));
     return [...connected, ...attached]
       .filter((entry, index, entries) => entries.findIndex((candidate) => candidate.assetId === entry.assetId && candidate.role === entry.role) === index)
-      .map((entry, index) => ({ ...entry, token: referenceMentionToken(entry.title, index) }));
+      .map((entry, index) => ({ ...entry, token: stableReferenceToken({assetId:entry.assetId,url:"/api/assets/"+entry.assetId,title:entry.title,role:entry.role}) }));
   }
 
   async function ensureGeneratorSegmentReferences(nodeId: string, explicitMasterClipId?: string) {
@@ -3380,7 +3381,7 @@ function CanvasWorkspace({ initialProject, projects: initialProjects, initialWor
     }));
   }
 
-  async function composeGeneratorPrompt(nodeId: string, brief: string) {
+  async function composeGeneratorPrompt(nodeId: string, brief: string, options?:{apply?:boolean;assistant?:PromptAssistantPreferences}) {
     const generatorNode = nodesRef.current.find((node) => node.id === nodeId);
     const selectedModel = models.find((model) => model.id === generatorNode?.data.modelId);
     await ensureGeneratorSegmentReferences(nodeId);
@@ -3391,8 +3392,8 @@ function CanvasWorkspace({ initialProject, projects: initialProjects, initialWor
       body: JSON.stringify({
         projectId: project.id,
         brief,
-        assistantModelId: String(generatorNode?.data.textModelId || DEFAULT_ASSISTANT_MODEL_ID),
-        systemPrompt: String(generatorNode?.data.systemPrompt || ""),
+        assistantModelId: options?.assistant?.modelId || String(generatorNode?.data.textModelId || DEFAULT_ASSISTANT_MODEL_ID),
+        systemPrompt: options?.assistant?.systemPrompt ?? String(generatorNode?.data.systemPrompt || ""),
         references,
         mediaType: generatorNode?.data.mediaType || selectedModel?.mediaType || "image",
         modelId: selectedModel?.id || generatorNode?.data.modelId,
@@ -3405,12 +3406,11 @@ function CanvasWorkspace({ initialProject, projects: initialProjects, initialWor
     if (response.status === 402) setAccountView("access");
     if (!response.ok || !body.prompt) throw new Error(body.error || "Prompt assistant failed");
     if (body.chargedCredits) void refreshUsage();
-    updateNode(nodeId, { prompt: body.prompt, status: "ready" });
-    setNotice("Structured prompt inserted");
+    if(options?.apply!==false){updateNode(nodeId, { prompt: body.prompt, status: "ready" });setNotice("Structured prompt inserted");}
     return body.prompt;
   }
 
-  async function composeMasterPrompt(nodeId: string, clipId: string, brief: string) {
+  async function composeMasterPrompt(nodeId: string, clipId: string, brief: string, options?:{apply?:boolean;assistant?:PromptAssistantPreferences}) {
     let master = nodesRef.current.find((node) => node.id === nodeId && node.data.kind === "videoMaster");
     let clip = master?.data.videoMasterClips?.find((item) => item.id === clipId);
     if (!master || !clip) throw new Error("This Video Master scene is no longer available");
@@ -3422,7 +3422,7 @@ function CanvasWorkspace({ initialProject, projects: initialProjects, initialWor
     const connectedSceneSourceReference = sceneSourceTarget?.sourceAssetId
       ? references.find((reference) => reference.assetId === sceneSourceTarget.sourceAssetId && reference.role === "reference-video")
       : undefined;
-    const sceneSourceToken = connectedSceneSourceReference?.token || referenceMentionToken(clip.title, references.length);
+    const sceneSourceToken = connectedSceneSourceReference?.token || stableReferenceToken({assetId:sceneSourceTarget?.sourceAssetId,url:"/api/assets/"+sceneSourceTarget?.sourceAssetId,title:clip.title,role:"reference-video"});
     const sceneReferences = nodeReferencePreviews(nodeId, clipId);
     const availableModels = videoMasterModelsForScene(models, clip, sceneReferences);
     const selectedModel = availableModels.find((model) => model.id === clip.modelId) || availableModels[0];
@@ -3440,8 +3440,8 @@ function CanvasWorkspace({ initialProject, projects: initialProjects, initialWor
       body: JSON.stringify({
         projectId: project.id,
         brief,
-        assistantModelId: String(master.data.textModelId || DEFAULT_ASSISTANT_MODEL_ID),
-        systemPrompt: String(master.data.systemPrompt || ""),
+        assistantModelId: options?.assistant?.modelId || String(master.data.textModelId || DEFAULT_ASSISTANT_MODEL_ID),
+        systemPrompt: options?.assistant?.systemPrompt ?? String(master.data.systemPrompt || ""),
         references,
         mediaType: "video",
         modelId: selectedModel.id,
@@ -3476,7 +3476,7 @@ function CanvasWorkspace({ initialProject, projects: initialProjects, initialWor
     if (!response.ok || !body.prompt) throw new Error(body.error || "Prompt assistant failed");
     const composedPrompt = body.prompt;
     if (body.chargedCredits) void refreshUsage();
-    updateNode(nodeId, {
+    if(options?.apply!==false){updateNode(nodeId, {
       prompt: composedPrompt,
       textModelId: String(master.data.textModelId || DEFAULT_ASSISTANT_MODEL_ID),
       videoMasterClips: (master.data.videoMasterClips || []).map((item) => item.id === clipId ? {
@@ -3489,7 +3489,7 @@ function CanvasWorkspace({ initialProject, projects: initialProjects, initialWor
       } : item),
       status: "ready",
     });
-    setNotice("Scene prompt inserted");
+    setNotice("Scene prompt inserted");}
     return composedPrompt;
   }
 
@@ -3521,7 +3521,8 @@ function CanvasWorkspace({ initialProject, projects: initialProjects, initialWor
         sourceAspectRatio: options.sourceAspectRatio,
         sourceDimensions: options.sourceWidth && options.sourceHeight ? `${options.sourceWidth}x${options.sourceHeight}` : undefined,
         outputSizeChanged: options.sizeMode === "custom",
-        assistantModelId: DEFAULT_ASSISTANT_MODEL_ID,
+        assistantModelId: options.assistant?.modelId || DEFAULT_ASSISTANT_MODEL_ID,
+        systemPrompt: options.assistant?.systemPrompt || "",
         references: [
           { assetId: node.data.assetId, token: "@EditSource", title: "Current image", role: "reference-image", purpose: "edit-source" },
           ...editReferences.map((reference) => ({ assetId: reference.assetId, token: reference.token, title: reference.title, role: "reference-image", purpose: reference.purpose })),

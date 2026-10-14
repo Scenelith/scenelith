@@ -372,7 +372,7 @@ test("canvas video stages pause and resume from a direct click", () => {
 test("Video Master assistant and generation overlays cannot leak clicks into playback", () => {
   assert.match(frameNode, /closeAssistantOutside[\s\S]*?event\.preventDefault\(\);[\s\S]*?event\.stopPropagation\(\);[\s\S]*?setAssistantOpen\(false\)/);
   assert.match(frameNode, /target\.closest\("button, input, textarea, select, \[role='slider'\], \.generator-prompt-assistant, \.generator-overlay, \.generator-generation-progress, \.video-master-generation-error"\)/);
-  assert.match(frameNode, /<span>SCENE PROMPT ASSISTANT<\/span>/);
+  assert.match(frameNode, /title="Scene prompt assistant"/);
   assert.doesNotMatch(frameNode, /SCENE PROMPT ASSISTANT · \{selectedClip\.title/);
   assert.match(frameNode, /video-master-generation-progress[\s\S]*?Preparing source video…[\s\S]*?Submitting generation…[\s\S]*?Generation submitted\. Waiting for provider…[\s\S]*?Creating video\. This may take a moment\./);
   assert.match(frameNode, /generator-generation-preview video-master-generation-preview" aria-hidden="true" \/>/);
@@ -388,9 +388,9 @@ test("Video Master assistant and generation overlays cannot leak clicks into pla
   assert.match(canvasApp, /model\?\.durationSource === "reference-video" \? \{\} : \{ duration: generatorNode\.data\.duration \|\| "5" \}/);
   assert.match(canvasApp, /generationClipAssetId: generationSourceAsset\?\.id \|\| sourceSegment\.clipAssetId/);
   assert.match(generateRoute, /duration: z\.string\(\)\.regex\(\/\^\\d\+\(\?:\\\.\\d\+\)\?\$\//);
-  assert.match(frameNode, /SCENE SOURCE/);
-  assert.match(frameNode, /masterOriginalAssistantReference && <button type="button"/);
-  assert.match(frameNode, /insertMasterAssistantMention\(masterOriginalAssistantReference\)/);
+  assert.match(frameNode, /references=\{\[\.\.\.\(masterOriginalAssistantReference/);
+  assert.match(frameNode, /kind:"video" as const/);
+  assert.match(frameNode, /thumbnailUrl:masterOriginalConnectedReference/);
 });
 
 test("Video Master keeps a persistent lazy media pool with exactly one active decoder", () => {
@@ -549,11 +549,11 @@ test("Video Master assistant reuses the selected timeline thumbnail in a compact
   assert.match(canvasApp, /thumbnailUrl: timelineThumbnailUrl/);
   assert.doesNotMatch(canvasApp, /representativeTime/);
   assert.match(assetRoute, /videoAssetThumbnailAtTime\(row, requestedThumbnailTime\)/);
-  assert.match(frameNode, /generator-assistant-reference-strip is-compact/);
+  assert.match(frameNode, /thumbnailUrl:masterOriginalConnectedReference\?\.thumbnailUrl\|\|videoMasterClipThumbnail\(selectedClip,"original"\)/);
   assert.match(frameNode, /loading="eager"/);
   assert.match(frameNode, /document\.addEventListener\("keydown", closeAssistantWithEscape\)/);
   assert.match(frameNode, /document\.addEventListener\("pointerdown", closeAssistantOutside, true\)/);
-  assert.match(frameNode, /<GeneratorReferencePreview reference=\{reference\} compact \/>/);
+  assert.match(frameNode, /<PromptAssistant[^\n]+masterOtherAssistantReferences/);
   assert.match(frameNode, /style=\{\{ aspectRatio: ratio \} as CSSProperties\}/);
   const compactPreview = frameNode.slice(frameNode.indexOf("if (compact)"), frameNode.indexOf("if (reference.role === \"reference-video\""));
   assert.doesNotMatch(compactPreview, /<Video/);
