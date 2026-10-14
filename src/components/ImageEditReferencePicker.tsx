@@ -3,6 +3,8 @@
 /* eslint-disable @next/next/no-img-element */
 
 import { useEffect, useRef, useState } from "react";
+import FloatingMenu from "./FloatingMenu";
+import {GenerationReferenceButton} from "./GenerationComposer";
 import { Check, Images, LockKeyhole, Paperclip, Upload, UserRound, X } from "lucide-react";
 
 export type ImageEditReference = {
@@ -72,18 +74,10 @@ export function ImageEditReferencePicker({
   const [uploading, setUploading] = useState(false);
   const [error, setError] = useState("");
   const rootRef = useRef<HTMLDivElement>(null);
+  const anchor=useRef<HTMLButtonElement>(null);
   const inputRef = useRef<HTMLInputElement>(null);
   const selectedIds = new Set(selected.map((reference) => reference.assetId));
   const remaining = Math.max(0, maxAdditional - selected.length);
-
-  useEffect(() => {
-    if (!open) return;
-    const close = (event: PointerEvent) => {
-      if (!rootRef.current?.contains(event.target as Node)) setOpen(false);
-    };
-    window.addEventListener("pointerdown", close);
-    return () => window.removeEventListener("pointerdown", close);
-  }, [open]);
 
   useEffect(() => {
     const restoredUploads = selected.filter((reference) => reference.origin === "upload");
@@ -137,21 +131,8 @@ export function ImageEditReferencePicker({
   const orderedPersonas = [...personas].sort((left, right) => Number(right.id === source.personaId) - Number(left.id === source.personaId));
 
   return <div ref={rootRef} className={`media-edit-reference-picker ${open ? "is-open" : ""}`}>
-    <button
-      type="button"
-      className="media-edit-reference-trigger"
-      aria-expanded={open}
-      aria-label={`Edit references · ${selected.length} attached`}
-      disabled={disabled}
-      onPointerDown={(event) => { event.stopPropagation(); setOpen((value) => !value); setError(""); }}
-    >
-      <Paperclip size={13} />
-      <span>References</span>
-      <b>{selected.length}</b>
-    </button>
-
-    {open && <><div className="media-edit-reference-scrim" aria-hidden="true" onPointerDown={() => setOpen(false)} />
-    <section className="media-edit-reference-menu" aria-label="Edit references" onWheel={(event) => event.stopPropagation()}>
+    <GenerationReferenceButton ref={anchor} aria-expanded={open} aria-label={`Edit references · ${selected.length} attached`} disabled={disabled} onClick={()=>{setOpen(value=>!value);setError("");}}/>
+    {open && <FloatingMenu anchor={anchor} onClose={()=>setOpen(false)} width={600} maxHeight={560} preferAbove matchAnchorWidth={false} className="image-reference-popover" label="Edit references panel"><section className="media-edit-reference-menu" aria-label="Edit references" onWheel={event=>event.stopPropagation()}>
       <header>
         <span><strong>Edit references</strong><small>Choose only the evidence this edit needs</small></span>
         <span className="media-edit-reference-limit">{selected.length + 1}/{maxAdditional + 1}</span>
@@ -206,8 +187,8 @@ export function ImageEditReferencePicker({
       <footer>
         <span>{remaining ? `${remaining} additional slot${remaining === 1 ? "" : "s"} available` : "Reference limit reached"}</span>
         {error && <em>{error}</em>}
-        <button type="button" onPointerDown={() => setOpen(false)}>Done</button>
+
       </footer>
-    </section></>}
+    </section></FloatingMenu>}
   </div>;
 }
