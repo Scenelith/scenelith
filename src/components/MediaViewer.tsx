@@ -2,11 +2,13 @@
 
 /* eslint-disable @next/next/no-img-element */
 
+import {MediaDialogBackdrop,MediaDialogSurface,MediaDialogClose,useElementHeight} from "./MediaDialog";
+import GenerationComposer,{GenerationComposerInput,GenerationComposerTools,GenerationSubmit,GenerationReferenceStrip} from "./GenerationComposer";
 import PromptAssistant from "./PromptAssistant";
 import {defaultPromptAssistantPreferences,type PromptAssistantPreferences} from "@/lib/prompt-assistant";
 import {imagePromptSystemInstruction} from "@/lib/generation-prompt-system";
 import { useCallback, useEffect, useRef, useState, type CSSProperties } from "react";
-import { ArrowLeft, Download, Pause, Play, Sparkles, Trash2, Volume2, VolumeX, WandSparkles, X } from "lucide-react";
+import { ArrowLeft, Download, Pause, Play, Trash2, Volume2, VolumeX, WandSparkles } from "lucide-react";
 import type { FrameNode } from "@/lib/types";
 import { assetDirectUrl, assetDownloadUrl, assetThumbnailUrl, GeneratorSelect, generatorModelCreditDescription, generatorRatiosFor, nearestSupportedRatio, type GeneratorModelOption } from "./FrameNode";
 import { ImageGeneration } from "./ui/ai-chat-image-generation-1";
@@ -169,6 +171,8 @@ export function MediaViewer({
   useEffect(()=>{try{const saved=JSON.parse(localStorage.getItem(assistantKey)||'null');setAssistantPreferences(saved||defaultPromptAssistantPreferences());}catch{setAssistantPreferences(defaultPromptAssistantPreferences());}},[assistantKey]);
   const saveAssistant=(value:PromptAssistantPreferences)=>{setAssistantPreferences(value);try{localStorage.setItem(assistantKey,JSON.stringify(value));}catch{}};
   const [submitting, setSubmitting] = useState(false);
+  const [uploadingReferences,setUploadingReferences]=useState(false);
+  const [uploadPreviews,setUploadPreviews]=useState<{url:string;name:string}[]>([]);
   const [editPhase, setEditPhase] = useState<"preparing" | "queued" | "generating" | "loading" | null>(null);
   const isVideo = node.data.mediaType === "video" || node.data.kind === "videoMaster";
   const [displayUrl, setDisplayUrl] = useState(isVideo ? assetDirectUrl(url) : assetThumbnailUrl(url));
@@ -194,6 +198,8 @@ export function MediaViewer({
   const videoRef = useRef<HTMLVideoElement>(null);
   const videoBackgroundRef = useRef<HTMLVideoElement>(null);
   const editRequestRef = useRef<HTMLTextAreaElement>(null);
+  const composerRef=useRef<HTMLElement>(null),assistantTrigger=useRef<HTMLButtonElement>(null);
+  const composerHeight=useElementHeight(composerRef,mode==="edit");
   const blockedDisplayUrlRef = useRef<string | null>(null);
   const displaySourceUrlRef = useRef(url);
   const editable = node.data.mediaType !== "video" && Boolean(node.data.assetId);
@@ -255,16 +261,17 @@ export function MediaViewer({
     });
   };
 
-  const mentionEditReference = (reference: ImageEditReference) => {
-    setEditRequest((current) => appendEditReferenceMention(current, reference.title, reference.assetId));
-    window.requestAnimationFrame(() => {
-      const textarea = editRequestRef.current;
-      if (!textarea) return;
-      textarea.focus();
-      textarea.setSelectionRange(textarea.value.length, textarea.value.length);
-    });
+  const importEditFiles=async(files:File[])=>{
+    if(submitting||uploadingReferences)return;
+    const accepted=files.filter(file=>file.type.startsWith('image/'));
+    if(!accepted.length){setError('Choose an image file');return;}
+    if(accepted.length>maxAdditionalReferences-editReferences.length){setError('Remove a reference to add another.');return;}
+    const previews=accepted.map(file=>({url:URL.createObjectURL(file),name:file.name}));setUploadPreviews(previews);setUploadingReferences(true);setError('');
+    try{const added=await onUploadEditReferences(accepted);const items=[...editReferences,...added].filter((item,index,all)=>all.findIndex(other=>other.url===item.url)===index);changeEditReferences(items.slice(0,maxAdditionalReferences));}
+    catch(reason){setError(reason instanceof Error?reason.message:'Could not upload references');}
+    finally{previews.forEach(item=>URL.revokeObjectURL(item.url));setUploadPreviews([]);setUploadingReferences(false);}
   };
-
+  const acceptsEditDrop=(transfer:DataTransfer)=>transfer.types.includes('Files')||transfer.types.includes('application/x-scenelith-reference')||transfer.types.includes('application/x-scenelith-studio-image');
   const syncVideoBackground = useCallback(() => {
     const video = videoRef.current;
     const background = videoBackgroundRef.current;
@@ -391,13 +398,13 @@ export function MediaViewer({
       ? { starting: "Preparing image edit…", generating: "Creating edited image. This may take a moment." }
       : { starting: "Preparing image edit…", generating: "Preparing image edit…" };
 
-  return <div className="media-viewer-backdrop nodrag nopan" role="presentation" onPointerDown={(event) => { if (event.target === event.currentTarget && !textDirty) onClose(); }}>
-    <div className={`media-viewer ${mode === "edit" ? "is-editing" : "is-viewing"} ${hasTextEditor ? "has-text-editor" : ""}`} role="dialog" aria-modal="true" aria-label={`${mediaTitle || node.data.title} preview`}>
+  return <MediaDialogBackdrop className="media-viewer-backdrop nodrag nopan" role="presentation" onPointerDown={(event) => { if (event.target === event.currentTarget && !textDirty) onClose(); }}>
+    <MediaDialogSurface style={{"--edit-composer-height":composerHeight+28+"px"} as CSSProperties} className={`media-viewer ${mode === "edit" ? "is-editing" : "is-viewing"} ${hasTextEditor ? "has-text-editor" : ""}`} role="dialog" aria-modal="true" aria-label={`${mediaTitle || node.data.title} preview`}>
       <header className="media-viewer-topbar">
         <button type="button" disabled={textDirty} aria-label={mode === "edit" ? "Back to preview" : "Back to canvas"} onPointerDown={() => { if (mode === "edit") setMode("view"); else onClose(); }}><ArrowLeft size={17} /></button>
         <div className="media-viewer-top-actions">
           {mode === "view" && editable && <button type="button" className="media-viewer-edit-mobile" aria-label="Edit image" onPointerDown={() => setMode("edit")}><WandSparkles size={15} /></button>}
-          <button type="button" className="media-viewer-close" disabled={textDirty} aria-label="Close preview" onPointerDown={onClose}><X size={17} /></button>
+          <MediaDialogClose disabled={textDirty} aria-label="Close preview" onClick={onClose}/>
         </div>
       </header>
 
@@ -469,42 +476,14 @@ export function MediaViewer({
                 </div>}
               </div>}
           </div>
-          {mode === "edit" && <div className="media-edit-composer">
-            {editReferences.length > 0 && <div className="media-edit-selected-references" aria-label="Selected edit references">
-              {editReferences.map((reference) => <div className="media-edit-selected-reference" key={reference.assetId}>
-                <button
-                  type="button"
-                  className="media-edit-selected-reference-mention"
-                  title={`Insert ${reference.title} into request`}
-                  aria-label={`Insert ${reference.title} into request`}
-                  disabled={submitting}
-                  onPointerDown={(event) => {
-                    event.preventDefault();
-                    event.stopPropagation();
-                    mentionEditReference(reference);
-                  }}
-                >
-                  <img src={reference.thumbnailUrl || reference.url} alt="" />
-                </button>
-                <button
-                  type="button"
-                  className="media-edit-selected-reference-remove"
-                  title={`Remove ${reference.title}`}
-                  aria-label={`Remove ${reference.title}`}
-                  disabled={submitting}
-                  onPointerDown={(event) => {
-                    event.preventDefault();
-                    event.stopPropagation();
-                    changeEditReferences(editReferences.filter((item) => item.assetId !== reference.assetId));
-                  }}
-                ><X size={9} /></button>
-              </div>)}
-            </div>}
-            <textarea ref={editRequestRef} aria-label="Image edit request" autoFocus disabled={submitting} value={editRequest} onChange={(event) => setEditRequest(event.target.value)} placeholder="What do you want to change?" onKeyDown={(event) => { if ((event.metaKey || event.ctrlKey) && event.key === "Enter") void submit(); }} />
-            {textDirty && <p className="media-edit-error">Apply or reset your text changes before editing the image.</p>}
-            {error && <p className="media-edit-error">{error}</p>}
-            <div className="media-edit-settings">
-              <GeneratorSelect menuKey="edit-model" openMenu={openEditMenu} setOpenMenu={setOpenEditMenu} className="generator-model-control media-edit-model" value={editModel?.id || editModelId} label="EDIT MODEL" options={editableModels.map((item) => ({
+          {mode === "edit" && <GenerationComposer ref={composerRef} className="media-edit-composer" aria-label="Image edit composer"
+            onPaste={event=>{const files=Array.from(event.clipboardData.files).filter(file=>file.type.startsWith('image/'));if(files.length){event.preventDefault();void importEditFiles(files);}}}
+            onDragOver={event=>{if(acceptsEditDrop(event.dataTransfer)){event.preventDefault();event.dataTransfer.dropEffect='copy';}}}
+            onDrop={event=>{if(!acceptsEditDrop(event.dataTransfer))return;event.preventDefault();event.stopPropagation();if(submitting||uploadingReferences)return;if(event.dataTransfer.files.length){void importEditFiles(Array.from(event.dataTransfer.files));return;}try{const item=JSON.parse(event.dataTransfer.getData('application/x-scenelith-reference')||event.dataTransfer.getData('application/x-scenelith-studio-image'));const assetId=String(item.url||'').match(/^\/api\/assets\/([0-9a-f-]{36})(?:\?|$)/i)?.[1];if(!assetId)throw Error('Choose an image from your library');if(item.url===url||editReferences.some(reference=>reference.url===item.url))return;if(editReferences.length>=maxAdditionalReferences)throw Error('Remove a reference to add another.');changeEditReferences([...editReferences,{assetId,url:item.url,title:String(item.label||item.name||'Reference'),origin:'canvas',detail:'Reference image'}]);}catch(reason){setError(reason instanceof Error?reason.message:'Could not add the reference');}}}>
+            <GenerationComposerInput inputRef={editRequestRef} label="Image edit request" placeholder="What do you want to change?" prompt={editRequest} onPromptChange={setEditRequest} disabled={submitting||uploadingReferences}
+              references={<GenerationReferenceStrip items={editReferences.map(reference=>({id:reference.assetId,url:reference.thumbnailUrl||reference.url,title:reference.title,onRemove:()=>changeEditReferences(editReferences.filter(item=>item.assetId!==reference.assetId))}))} uploads={uploadPreviews} disabled={submitting||uploadingReferences}/>}
+              onKeyDown={event=>{if((event.metaKey||event.ctrlKey)&&event.key==='Enter')void submit();}}
+              controls={<><GeneratorSelect menuKey="edit-model" openMenu={openEditMenu} setOpenMenu={setOpenEditMenu} className="generator-model-control media-edit-model" value={editModel?.id || editModelId} label="EDIT MODEL" options={editableModels.map((item) => ({
                 value: item.id,
                 label: item.label,
                 description: generatorModelCreditDescription(item, {
@@ -518,35 +497,31 @@ export function MediaViewer({
                 setEditResolution(nextResolution);
                 setEditSize("original");
               }} />
-              <GeneratorSelect menuKey="ratio" openMenu={openEditMenu} setOpenMenu={setOpenEditMenu} className="media-edit-ratio" value={editSize} label="OUTPUT SIZE" options={[
-                { value: "original", label: `Original · ${sourceRatioLabel}`, description: "Keep the source framing" },
-                ...editRatios.filter((ratio) => /^\d+:\d+$/.test(ratio)).map((ratio) => ({ value: ratio, label: ratio, description: ratio === sourceRatio ? "Matches source shape" : "Reframe edited output" })),
-              ]} onChange={(value) => setEditSize(value)} />
               <GeneratorSelect menuKey="edit-quality" openMenu={openEditMenu} setOpenMenu={setOpenEditMenu} className="media-edit-quality" value={editResolution} label="QUALITY" options={(editModel?.resolutions || ["1K"]).map((resolution) => ({ value: resolution, label: resolution }))} onChange={(value) => {
                 setEditResolution(value);
                 const nextRatios = generatorRatiosFor(editModel, value, true);
                 if (editSize !== "original" && !nextRatios.includes(editSize)) setEditSize("original");
               }} />
-            </div>
-            {assistantOpen&&<PromptAssistant anchor={editRequestRef} preferences={assistantPreferences} onPreferencesChange={saveAssistant} initialBrief={editRequest} references={[{assetId:node.data.assetId,url,title:'Current image',token:'@EditSource',role:'reference-image',kind:'image'},...editReferences.map(reference=>({...reference,token:editReferenceMentionToken(reference.title,reference.assetId),role:'reference-image',kind:'image' as const}))]} defaultSystemPrompt={imagePromptSystemInstruction({modelId:editModelId,aspectRatio:editOptions.aspectRatio,resolution:editResolution,editMode:true})} onCompose={(brief,assistant)=>onRefineEdit(brief,{...editOptions,assistant},editReferences)} onApply={prompt=>{setEditRequest(prompt);setAssistantOpen(false);}} onClose={()=>setAssistantOpen(false)} disabled={submitting||textDirty}/>}
-            <div className="media-edit-actions">
-              <ImageEditReferencePicker
+              <GeneratorSelect menuKey="ratio" openMenu={openEditMenu} setOpenMenu={setOpenEditMenu} className="media-edit-ratio" value={editSize} displayValue={editSize==="original"?sourceRatioLabel:undefined} label="OUTPUT SIZE" options={[
+                { value: "original", label: `Original · ${sourceRatioLabel}`, description: "Keep the source framing" },
+                ...editRatios.filter((ratio) => /^\d+:\d+$/.test(ratio)).map((ratio) => ({ value: ratio, label: ratio, description: ratio === sourceRatio ? "Matches source shape" : "Reframe edited output" })),
+              ]} onChange={(value) => setEditSize(value)} />
+</>}
+              actions={<><GenerationComposerTools references={              <ImageEditReferencePicker
                 source={{ url: assetThumbnailUrl(url), title: node.data.title, personaId: persona?.id, personaName: persona?.name, personaVariant: persona?.variant }}
                 canvasReferences={editCanvasReferences}
                 personas={editPersonas}
                 selected={editReferences}
                 maxAdditional={maxAdditionalReferences}
-                disabled={submitting}
+                disabled={submitting||uploadingReferences}
                 onChange={changeEditReferences}
                 onUpload={onUploadEditReferences}
               />
-              <button type="button" className="media-edit-helper" title="Improve this edit request with Assistant" aria-label="Improve with assistant" aria-expanded={assistantOpen} disabled={submitting || textDirty} onPointerDown={()=>setAssistantOpen(!assistantOpen)}>{refining ? <span className="generator-spinner" /> : <Sparkles size={14} />}</button>
-              <div className="media-edit-run">
-                <span id={`media-edit-cost-${node.id}`} role="tooltip" className="generator-credit-tooltip">Run {editCredits} credits</span>
-                <button type="button" className="media-edit-submit" aria-label={`Create edited version · ${editCredits} credits`} aria-describedby={`media-edit-cost-${node.id}`} disabled={!editRequest.trim() || refining || submitting || textDirty} onPointerDown={() => void submit()}>{submitting ? <span className="generator-spinner" /> : <Play size={14} fill="currentColor" />}</button>
-              </div>
-            </div>
-          </div>}
+} assistantActive={assistantOpen} assistantRef={assistantTrigger} assistantDisabled={submitting||uploadingReferences||textDirty} onAssistant={()=>setAssistantOpen(!assistantOpen)}/><GenerationSubmit label="Create edited version" credits={editCredits} busy={submitting?'Creating…':undefined} disabled={!editRequest.trim()||refining||submitting||uploadingReferences||textDirty} onClick={()=>void submit()}/></>}/>
+            {textDirty&&<p role="alert" className="media-edit-error">Apply or reset your text changes before editing the image.</p>}
+            {error&&<p role="alert" className="media-edit-error">{error}</p>}
+            {assistantOpen&&<PromptAssistant anchor={composerRef} preferences={assistantPreferences} onPreferencesChange={saveAssistant} initialBrief={editRequest} references={[{assetId:node.data.assetId,url,title:'Current image',token:'@EditSource',role:'reference-image',kind:'image'},...editReferences.map(reference=>({...reference,token:editReferenceMentionToken(reference.title,reference.assetId),role:'reference-image',kind:'image' as const}))]} defaultSystemPrompt={imagePromptSystemInstruction({modelId:editModelId,aspectRatio:editOptions.aspectRatio,resolution:editResolution,editMode:true})} onCompose={(brief,assistant)=>onRefineEdit(brief,{...editOptions,assistant},editReferences)} onApply={prompt=>{setEditRequest(prompt);setAssistantOpen(false);}} onClose={()=>{setAssistantOpen(false);assistantTrigger.current?.focus({preventScroll:true});}} disabled={submitting||textDirty}/>}
+          </GenerationComposer>}
         </section>
 
         {(mode === "view" || hasTextEditor) && <aside className="media-viewer-details">
@@ -569,6 +544,6 @@ export function MediaViewer({
         </aside>}
 
       </div>
-    </div>
-  </div>;
+    </MediaDialogSurface>
+  </MediaDialogBackdrop>;
 }

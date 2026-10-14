@@ -1312,13 +1312,13 @@ function outputImageUrlForAttempt(url: string, attempt: number) {
   return `${thumbnailUrl}${thumbnailUrl.includes("?") ? "&" : "?"}scenelithLoadRetry=${attempt}`;
 }
 
-export function GeneratorSelect({ menuKey, openMenu, setOpenMenu, value, options, label, className = "", onChange }: { menuKey: string; openMenu: string | null; setOpenMenu: Dispatch<SetStateAction<string | null>>; value: string; options: SelectOption[]; label: string; className?: string; onChange: (value: string) => void }) {
+export function GeneratorSelect({ menuKey, openMenu, setOpenMenu, value, options, label, className = "", displayValue, onChange }: { menuKey: string; openMenu: string | null; setOpenMenu: Dispatch<SetStateAction<string | null>>; value: string; options: SelectOption[]; label: string; className?: string; displayValue?: string; onChange: (value: string) => void }) {
   const triggerRef=useRef<HTMLButtonElement>(null);
   const open = openMenu === menuKey;
   const selected = options.find((option) => option.value === value) || options[0];
   const showsRatioGlyph = menuKey === "ratio" || menuKey.startsWith("master-ratio-");
   return <div className={`generator-select ${open ? "is-open" : ""} ${className} nodrag nopan`} onPointerDown={(event) => event.stopPropagation()}>
-    <button type="button" ref={triggerRef} className="generator-select-trigger" aria-label={label} aria-expanded={open} onPointerDown={event=>event.stopPropagation()} onClick={event=>{event.stopPropagation();setOpenMenu(open ? null : menuKey);}}><span className="generator-select-value">{showsRatioGlyph && <RatioGlyph value={selected?.glyphValue || selected?.value || value} />}<strong>{selected?.label || value}</strong></span><ChevronDown size={13} /></button>
+    <button type="button" ref={triggerRef} className="generator-select-trigger" aria-label={label} aria-expanded={open} onPointerDown={event=>event.stopPropagation()} onClick={event=>{event.stopPropagation();setOpenMenu(open ? null : menuKey);}}><span className="generator-select-value">{showsRatioGlyph && <RatioGlyph value={selected?.glyphValue || selected?.value || value} />}<strong>{displayValue || selected?.label || value}</strong></span><ChevronDown size={13} /></button>
     {open && <FloatingMenu anchor={triggerRef} onClose={()=>setOpenMenu(null)} className={`generator-floating-select generator-select-menu ${className}`} width={options.some(o=>o.description)?288:132} label={label}>
       <div className="generator-select-label">{label}</div>
       <div className="generator-select-scroll nowheel" onWheelCapture={(event) => event.stopPropagation()}>
