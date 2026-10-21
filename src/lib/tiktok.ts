@@ -182,11 +182,11 @@ async function extractScenes(videoPath: string, projectId: string, importGroup: 
   return { assets: imported, timelineAsset, duration };
 }
 
-export async function importTikTok(url: string, projectId: string, userId?: string) {
+export async function importTikTok(url: string, projectId: string, userId?: string, options: {retryFailed?:boolean} = {}) {
   if(process.env.SCENELITH_MEDIA_QUEUE_ENABLED === "true"){
     if(!userId)throw new Error("Media import requires an authorized user");
     const {queuedTikTokImport}=await import("./media/import-adapter");
-    return queuedTikTokImport(userId,projectId,url);
+    return queuedTikTokImport(userId,projectId,url,options.retryFailed);
   }
   const data = await resolveTikTok(url);
   const images = data.images || [];

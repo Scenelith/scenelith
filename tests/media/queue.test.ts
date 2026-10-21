@@ -213,3 +213,20 @@ test('provider crash cleanup removes expired private directories and preserves l
   await cleanupProviderTemp(root);await assert.rejects(stat(old));await stat(live);await stat(other);await stat(join(root,'scenelith-provider-link'));
  }finally{await rm(root,{recursive:true,force:true});}
 });
+
+test('TikTok admission snapshots resolver data once and only explicit retry refreshes it',async(t)=>{
+ const url='https://www.tiktok.com/@fixture/video/123';let calls=0;
+ const mock=t.mock.method(globalThis,'fetch',async()=>{calls++;return Response.json({code:0,data:{id:'123',title:'Fixture',play:`https://cdn.example.test/video-${calls}.mp4`}});});
+ const job=await createMediaJob(user,{projectId:project,requestKey:'import-snapshot',spec:{operation:'import',url}});
+ assert.equal(calls,1);assert.equal(JSON.parse(job.spec_json).resolvedTikTok.play,'https://cdn.example.test/video-1.mp4');
+ const repeat=await createMediaJob(user,{projectId:project,requestKey:'import-repeat',spec:{operation:'import',url}});
+ assert.equal(repeat.id,job.id);assert.equal(calls,1);
+ await db.prepare("UPDATE media_jobs SET status='failed',attempts=3,error_code='MEDIA_EXECUTION_FAILED' WHERE id=?").run(job.id);
+ assert.equal((await createMediaJob(user,{projectId:project,requestKey:'import-failed',spec:{operation:'import',url}})).status,'failed');
+ assert.equal(calls,1);
+ const retry=await retryMediaJob(user,job.id);
+ assert.equal(retry.id,job.id);assert.equal(retry.fingerprint,job.fingerprint);assert.equal(retry.status,'queued');assert.equal(calls,2);
+ assert.equal(JSON.parse(retry.spec_json).resolvedTikTok.play,'https://cdn.example.test/video-2.mp4');
+ await assert.rejects(createMediaJob(user,{projectId:project,requestKey:'untrusted-import',spec:{operation:'import',url,resolvedTikTok:{play:'https://untrusted.example/file'}}}),/INVALID_MEDIA_REQUEST/);
+ assert.equal(calls,2);await cancelMediaJob(user,job.id);mock.mock.restore();
+});

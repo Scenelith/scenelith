@@ -1,4 +1,5 @@
 import { planProcessing } from './planner';
+import { resolveTikTok } from '../tiktok-resolver';
 import type { MediaMetadata } from './probe';
 import { db, userCanAccessAsset, userCanAccessProject, userCanAccessWorkspace } from '../postgres-db';
 import { MEDIA_VERSION, MediaError, fingerprint, inputIds, mediaJobRequestSchema, type MediaInput, type MediaJob, type MediaSpec } from './contracts';
@@ -63,6 +64,13 @@ export async function createMediaJob(userId: string, raw: unknown): Promise<Medi
     }
   }
   const hash = fingerprint({ version: MEDIA_VERSION, projectId:projectId||null, spec, dependencies, inputs: inputs.map(i=>[i.id,i.identity]) });
+  // Resolve on the admission host. Isolated media workers only download/process
+  // the saved result and do not depend on resolver access from their own IP.
+  // Keep signed CDN links out of the logical fingerprint so repeats reuse the job.
+  const resolvedTikTok = spec.operation === 'import' && !await db.prepare(
+    'SELECT id FROM media_jobs WHERE user_id=? AND workspace_id=? AND fingerprint=?',
+  ).get(userId,project.workspace_id,hash) ? await resolveTikTok(spec.url) : undefined;
+  const storedSpec = resolvedTikTok ? {...spec,resolvedTikTok} : spec;
   const job = await db.transaction(async()=> {
     // Only competing retries serialize. Unrelated orders in one workspace can
     // be admitted concurrently. Always acquire request before operation locks.
@@ -74,7 +82,7 @@ export async function createMediaJob(userId: string, raw: unknown): Promise<Medi
     if (!row) {
       const id = crypto.randomUUID();
       await db.prepare(`INSERT INTO media_jobs(id,user_id,workspace_id,project_id,operation,operation_version,fingerprint,spec_json,inputs_json,resource_class)
-        VALUES(?,?,?,?,?,?,?,?,?,?)`).run(id,userId,project.workspace_id,projectId||null,spec.operation,MEDIA_VERSION,hash,JSON.stringify(spec),JSON.stringify(inputs),resource);
+        VALUES(?,?,?,?,?,?,?,?,?,?)`).run(id,userId,project.workspace_id,projectId||null,spec.operation,MEDIA_VERSION,hash,JSON.stringify(storedSpec),JSON.stringify(inputs),resource);
       for (const input of inputs) await db.prepare('INSERT INTO media_job_inputs(job_id,asset_id) VALUES(?,?)').run(id,input.id);
       for(const dependency of dependencies)await db.prepare("INSERT INTO media_job_dependencies(job_id,dependency_id) VALUES(?,?)").run(id,dependency);
       if(dependencies.length)await db.prepare("UPDATE media_jobs SET stage='waiting_dependencies' WHERE id=?").run(id);
@@ -149,13 +157,17 @@ export async function failMediaJob(job: MediaJob,error: MediaError) {
 
 /** Explicit user retry only; automatic delivery cannot reset the three-attempt limit. */
 export async function retryMediaJob(userId:string,id:string) {
-  await getMediaJob(userId,id);
+  const current = await getMediaJob(userId,id);
+  const spec = JSON.parse(current.spec_json) as MediaSpec;
+  const refreshedSpec = ['failed','cancelled'].includes(current.status) && spec.operation === 'import'
+    ? {...spec,resolvedTikTok:await resolveTikTok(spec.url)} : null;
   await db.transaction(async()=>{
     const job=await db.prepare('SELECT * FROM media_jobs WHERE id=? AND user_id=? FOR UPDATE').get(id,userId) as MediaJob;
     if(!['failed','cancelled'].includes(job.status))return;
     await assertJobAccess(job,userId);
     const failedDependency=await db.prepare("SELECT d.dependency_id FROM media_job_dependencies d JOIN media_jobs p ON p.id=d.dependency_id WHERE d.job_id=? AND p.status IN ('failed','cancelled') LIMIT 1").get(id);
     if(failedDependency)throw new MediaError('RETRY_DEPENDENCY_FIRST',409);
+    if(refreshedSpec)await db.prepare('UPDATE media_jobs SET spec_json=? WHERE id=?').run(JSON.stringify(refreshedSpec),id);
     await db.prepare('DELETE FROM media_storage_reservations WHERE job_id=?').run(id);
     await db.prepare("UPDATE media_jobs SET status='queued',stage='queued',attempts=0,fence=fence+1,worker_id=NULL,lease_until=NULL,error_code=NULL,available_at=now(),updated_at=now(),completed_at=NULL WHERE id=?").run(id);
   })();

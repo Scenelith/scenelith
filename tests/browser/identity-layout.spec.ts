@@ -12,3 +12,24 @@ for (const width of [1440, 1000, 600]) test(`identity reference panels stay insi
   }
   expect(await page.locator('.identity-page-body').evaluate((el) => el.scrollHeight > el.clientHeight)).toBe(true);
 });
+
+for (const zoom of [.75,1,2]) test(`Canvas identity type cards contain their labels at zoom ${zoom}`,async({page})=>{
+  const {build}=await import('esbuild');
+  const bundle=await build({entryPoints:['tests/browser/fixtures/add-to-identity.tsx'],bundle:true,write:false,platform:'browser',jsx:'automatic',define:{'process.env.NODE_ENV':'"production"'}});
+  const css=readFileSync('src/app/globals.css','utf8')+readFileSync('src/app/theme.css','utf8');
+  await page.setViewportSize({width:1440,height:1100});
+  await page.setContent(`<style>${css}</style><div id="root" style="transform:scale(${zoom});transform-origin:top left"></div><output id="result"></output>`);
+  await page.addScriptTag({content:bundle.outputFiles[0].text});
+  await page.getByRole('button',{name:'Add generated image to identity'}).click();
+  const types=page.getByRole('radiogroup',{name:'Identity type'});
+  const boxes=await types.getByRole('radio').evaluateAll(nodes=>nodes.map(node=>({box:node.getBoundingClientRect().toJSON(),text:node.querySelector('span')!.getBoundingClientRect().toJSON()})));
+  expect(boxes).toHaveLength(2);
+  for(const {box,text} of boxes){expect(box.width).toBeGreaterThan(100*zoom);expect(text.left).toBeGreaterThanOrEqual(box.left);expect(text.right).toBeLessThanOrEqual(box.right);expect(text.bottom).toBeLessThanOrEqual(box.bottom);}
+  expect(boxes[0].box.right).toBeLessThanOrEqual(boxes[1].box.left);
+  await types.getByRole('radio',{name:/Before \/ After/}).click();
+  await expect(types.getByRole('radio',{name:/Before \/ After/})).toHaveAttribute('aria-checked','true');
+  await page.getByRole('textbox',{name:'Identity name'}).fill('Canvas identity');
+  await page.getByRole('radiogroup',{name:'Reference group'}).getByRole('radio',{name:'After',exact:true}).click();
+  await page.getByRole('button',{name:'Create & add to After'}).click();
+  await expect(page.locator('#result')).toHaveText('Canvas identity:after');
+});

@@ -1,6 +1,6 @@
 import { join } from 'node:path';
 import sharp from 'sharp';
-import { postDetails,resolveTikTok } from '../tiktok-resolver';
+import { postDetails,resolveTikTok,type TikwmData } from '../tiktok-resolver';
 import { downloadExternalMedia } from './external-download';
 import { mediaConfig } from './config';
 import { MediaError } from './contracts';
@@ -9,8 +9,8 @@ import { extractSceneFiles } from './scenes';
 import type { MediaFileOutcome } from './executor';
 import { mediaTransfer } from './transfer';
 
-export async function importMedia(url:string,dir:string,signal:AbortSignal,timings:Record<string,number>) {
-  const data=await resolveTikTok(url),images=data.images||[],config=mediaConfig();
+export async function importMedia(url:string,dir:string,signal:AbortSignal,timings:Record<string,number>,resolvedTikTok?:TikwmData) {
+  const data=resolvedTikTok ?? await resolveTikTok(url),images=data.images||[],config=mediaConfig();
   if(images.length>100)throw new MediaError('IMPORT_FILE_LIMIT');
   const files:MediaFileOutcome[]=[];let totalBytes=0;
   const download=async(url:string,path:string,maxBytes=config.maxFileBytes)=>{

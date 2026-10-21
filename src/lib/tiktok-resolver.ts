@@ -1,4 +1,6 @@
-type TikwmData = {
+import { MediaError } from "./media/contracts";
+
+export type TikwmData = {
   id?: string;
   title?: string;
   duration?: number;
@@ -20,9 +22,12 @@ export async function resolveTikTok(url: string) {
     headers: { "user-agent": "Mozilla/5.0 Frameflow/1.0" },
     signal: AbortSignal.timeout(45_000),
   });
-  if (!response.ok) throw new Error(`TikTok resolver returned ${response.status}`);
+  if (!response.ok) throw new MediaError(
+    response.status === 403 ? "TIKTOK_RESOLVER_BLOCKED" : "TIKTOK_RESOLVER_UNAVAILABLE",
+    502, response.status === 429 || response.status >= 500,
+  );
   const payload = (await response.json()) as { code?: number; msg?: string; data?: TikwmData };
-  if (payload.code !== 0 || !payload.data) throw new Error(payload.msg || "Could not resolve this TikTok post");
+  if (payload.code !== 0 || !payload.data) throw new MediaError("TIKTOK_POST_UNAVAILABLE", 422);
   return payload.data;
 }
 
