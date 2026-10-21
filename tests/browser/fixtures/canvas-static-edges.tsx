@@ -1,7 +1,6 @@
 import { useState } from "react";
 import { createRoot } from "react-dom/client";
 import { BaseEdge, ReactFlow, getBezierPath, useReactFlow, type EdgeProps } from "@xyflow/react";
-import { CanvasEdgeLayer } from "../../../src/components/CanvasEdgeLayer";
 
 function Edge(props: EdgeProps) {
   return <><BaseEdge path={getBezierPath(props)[0]} /><foreignObject x="100" y="20" width="30" height="30"><button aria-label="Disconnect">✂</button></foreignObject></>;
@@ -21,7 +20,7 @@ function Fixture() {
     <button onClick={() => setMoved(!moved)}>Move node</button>
     <div style={{ width: 1100, height: 700, background: "#111" }}>
       <ReactFlow nodes={[{ id: "a", position: { x: 50, y: 50 }, data: { label: "a" } }, { id: "b", position: { x: 800, y: moved ? 200 : 500 }, data: { label: "b" } }]} edges={shown ? [{ id: "e", source: "a", target: "b", type: "disconnectable", animated: true, className: selected ? "is-selected-path" : "" }] : []} edgeTypes={edgeTypes}>
-        <CanvasEdgeLayer /><Camera />
+        <Camera />
       </ReactFlow>
     </div>
   </>;
