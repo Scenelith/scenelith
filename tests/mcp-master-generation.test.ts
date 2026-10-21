@@ -379,3 +379,25 @@ test("Omni MCP admission keeps the complete scene reference and reserves its fix
   assert.equal(current.graph.nodes[1].data.videoMasterClips![0].sourceUrl, graph.nodes[1].data.videoMasterClips![0].sourceUrl);
   assert.deepEqual(current.graph.nodes[1].data.videoMasterClips![1], graph.nodes[1].data.videoMasterClips![1]);
 });
+
+async function generatorRequest() {
+  const base=await getMcpCanvas(principal,"scene-canvas");
+  const created=await patchMcpCanvas(principal,{projectId:base.id,expectedRevision:base.revision,operations:[{type:"add_node",id:"image-generator",position:{x:1500,y:0},data:{kind:"prompt",mediaType:"image",title:"Image",modelId:"nano-banana-2",prompt:"Natural editorial portrait",resolution:"1K",aspectRatio:"4:5"}}]});
+  return {projectId:base.id,nodeId:"image-generator",expectedRevision:created.revision,readSet:created.readSet};
+}
+
+test("ordinary MCP generators ignore other nodes and layout but simultaneous retries reserve only once",async()=>{
+  const input=await generatorRequest();
+  await patchMcpCanvas(principal,{projectId:input.projectId,expectedRevision:input.expectedRevision,operations:[{type:"update_node",nodeId:"unrelated",data:{noteText:"Human is working"}},{type:"update_node",nodeId:input.nodeId,position:{x:1600,y:100}}]});
+  const results=await Promise.allSettled([runMcpCanvasGeneration(principal,{...input}),runMcpCanvasGeneration(principal,{...input})]);
+  const success=results.find(r=>r.status==="fulfilled");assert.ok(success?.status==="fulfilled" && "generationId" in success.value);
+  const failure=results.find(r=>r.status==="rejected");assert.ok(failure?.status==="rejected");assert.equal(failure.reason.code,"GENERATION_ALREADY_RUNNING");assert.equal(failure.reason.generationId,success.value.generationId);
+  assert.equal(reserve.mock.callCount(),1);
+  const latest=await getMcpCanvas(principal,input.projectId);assert.equal(latest.graph.nodes.find(n=>n.id==="unrelated")!.data.noteText,"Human is working");assert.deepEqual(latest.graph.nodes.find(n=>n.id===input.nodeId)!.position,{x:1600,y:100});
+});
+
+test("ordinary generator inputs are checked again before any reservation",async()=>{
+  const input=await generatorRequest();const usage=await usageAuthority();const summary=await usage.summary("scene-space");
+  mock.method(usage,"summary",async()=>{const live=await getMcpCanvas(principal,input.projectId);await patchMcpCanvas(principal,{projectId:input.projectId,expectedRevision:live.revision,operations:[{type:"update_node",nodeId:input.nodeId,data:{prompt:"Human changed the instruction"}}]});return summary;});
+  await assert.rejects(runMcpCanvasGeneration(principal,input),(error:unknown)=>(error as {code:string}).code==="CANVAS_REVISION_CONFLICT");assert.equal(reserve.mock.callCount(),0);assert.equal((await db.prepare("SELECT count(*) AS count FROM generations").get() as {count:number}).count,0);
+});

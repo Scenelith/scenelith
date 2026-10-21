@@ -48,6 +48,7 @@ export type GenerationAdmissionInput = import("./kie-new-models").GenerationMode
   hasVideoInput: boolean;
   inputVideoDurationSeconds: number;
   beforeAdmit?: () => Promise<void>;
+  exclusiveNode?: boolean;
   afterAdmit?: (result: Extract<GenerationAdmissionResult,{ok:true}>) => Promise<void>;
   targetClipId?: string;
   targetSourceAssetId?: string;
@@ -146,9 +147,9 @@ async function admitGenerationOnce(input: GenerationAdmissionInput): Promise<Gen
   const concurrency = (await usage.summary(workspaceId)).generationConcurrency;
   const admitted = await db.transaction(async () => {
     await db.prepare("SELECT pg_advisory_xact_lock(hashtextextended(?, 0))").get(`generation-admission:${workspaceId}`);
-    // One active request per Master prevents retries (and simultaneous UI/MCP
-    // launches) from reserving credits twice or racing the Master's output state.
-    if (input.targetClipId) {
+    // Masters and exclusive MCP nodes admit one active request, preventing
+    // concurrent retries from reserving credits twice or racing output state.
+    if (input.targetClipId || input.exclusiveNode) {
       const existing = await db.prepare(`SELECT id FROM generations WHERE project_id = ? AND node_id = ?
         AND lower(status) NOT IN ('failed','fail','error','cancelled','canceled','completed','complete','succeeded','success')
         AND output_url IS NULL AND output_asset_id IS NULL LIMIT 1`).get(input.projectId, input.nodeId) as { id: string } | undefined;
@@ -182,7 +183,7 @@ async function admitGenerationOnce(input: GenerationAdmissionInput): Promise<Gen
   })();
 
   if (typeof admitted === "object") return { ok: false, status: 409, code: "GENERATION_ALREADY_RUNNING",
-    error: "This Video Master already has an active generation. Poll generationId instead of starting another one.", generationId: admitted.existingGenerationId };
+    error: "This node already has an active generation. Poll generationId instead of starting another one.", generationId: admitted.existingGenerationId };
 
   if (!admitted) {
     return {
