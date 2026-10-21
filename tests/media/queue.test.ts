@@ -230,3 +230,17 @@ test('TikTok admission snapshots resolver data once and only explicit retry refr
  await assert.rejects(createMediaJob(user,{projectId:project,requestKey:'untrusted-import',spec:{operation:'import',url,resolvedTikTok:{play:'https://untrusted.example/file'}}}),/INVALID_MEDIA_REQUEST/);
  assert.equal(calls,2);await cancelMediaJob(user,job.id);mock.mock.restore();
 });
+
+test('rounded source EOF works in worker trims, cached admission and full original sequence export',async()=>{
+ await db.prepare('DELETE FROM media_asset_analysis WHERE asset_id=?').run(asset);
+ const cold=await createMediaJob(user,request('rounded-eof-cold',0,2.001));
+ const claimed=await claimMediaJob('rounded-eof','transcode');assert.equal(claimed?.id,cold.id);
+ await executeMediaJob(claimed!);
+ const completed=await getMediaJob(user,cold.id);assert.equal(completed.status,'completed',completed.error_code||'');assert.equal(completed.result_asset_id,asset);
+ const warm=await createMediaJob(user,request('rounded-eof-warm',0,2.0005));assert.equal(warm.status,'completed');assert.equal(warm.result_asset_id,asset);
+ await assert.rejects(createMediaJob(user,request('outside-eof',0,2.01)),/RANGE_OUTSIDE_SOURCE/);
+ const sequence=await createMediaJob(user,{projectId:project,requestKey:'rounded-original-export',spec:{operation:'export',audioMode:'selected',assets:[{id:asset,start:0,end:.8},{id:asset,start:.8,end:2.001}]}});
+ const exportJob=await claimMediaJob('rounded-export','transcode');assert.equal(exportJob?.id,sequence.id);
+ await executeMediaJob(exportJob!);
+ const result=await getMediaJob(user,sequence.id);assert.equal(result.status,'completed',result.error_code||'');assert.equal(JSON.parse(result.result_json!).plan.duration,2);
+});

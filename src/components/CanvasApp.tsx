@@ -2977,6 +2977,31 @@ function CanvasWorkspace({ initialProject, projects: initialProjects, initialWor
     return {...result.asset,durationSeconds:result.plan?.duration ?? result.metadata?.duration ?? end-segment.start};
   }
 
+  function downloadMediaFile(url: string, filename: string) {
+    const anchor = document.createElement("a");
+    anchor.href = url;
+    anchor.download = filename;
+    document.body.appendChild(anchor);
+    anchor.click();
+    anchor.remove();
+  }
+
+  async function downloadSourceMedia(nodeId: string) {
+    const source = nodesRef.current.find((node) => node.id === nodeId);
+    if (!source) return;
+    const segment = source.data.videoSegments?.find((item) => item.id === source.data.videoOutputSelection);
+    const title = String(source.data.title || "source-video").replace(/[^a-z0-9_-]+/gi, "-");
+    try {
+      setNotice(segment ? `Preparing ${segment.label}…` : "Downloading full source video…");
+      const media = segment ? await materializeVideoSegment(nodeId, segment.id) : { url: String(source.data.imageUrl || source.data.outputUrl || "") };
+      if (!media.url) throw new Error("Source video is not ready yet");
+      downloadMediaFile(assetDownloadUrl(media.url), `${title}-${segment?.label.replace(/\s+/g, "-") || "full"}.mp4`);
+      setNotice(segment ? `${segment.label} downloaded` : "Full source video downloaded");
+    } catch (error) {
+      setNotice(error instanceof Error ? error.message : "Could not download this video");
+    }
+  }
+
   async function downloadMasterMedia(nodeId: string, lane: VideoMasterDownloadLane, scope: "scene" | "video", audioMode: VideoMasterExportAudioMode = "selected") {
     const master = nodesRef.current.find((node) => node.id === nodeId && node.data.kind === "videoMaster");
     const clips = [...(master?.data.videoMasterClips || [])].sort((left, right) => Number(left.sequenceIndex ?? 0) - Number(right.sequenceIndex ?? 0));
@@ -3029,12 +3054,7 @@ function CanvasWorkspace({ initialProject, projects: initialProjects, initialWor
       const result = await runMediaOperation(project.id,{operation:"export",audioMode,assets:assets.map(({id,start,end,audio})=>({id,start,end,audio}))},
         stage=>setNotice(stage==="queued"?"Export queued…":stage==="uploading"?"Saving export…":"Preparing export…"));
       const exportUrl = result.asset.downloadUrl;
-      const anchor = document.createElement("a");
-      anchor.href = exportUrl;
-      anchor.download = filename;
-      document.body.appendChild(anchor);
-      anchor.click();
-      anchor.remove();
+      downloadMediaFile(exportUrl, filename);
       setNotice(scope === "video" ? `Full ${lane.toUpperCase()} video exported` : `${lane.toUpperCase()} scene downloaded`);
       return true;
     } catch (error) {
@@ -4422,6 +4442,7 @@ function CanvasWorkspace({ initialProject, projects: initialProjects, initialWor
     updateMasterClipModel,
     removeMasterClip,
     uploadMasterClips: (nodeId, files) => void uploadMasterClips(nodeId, files),
+    downloadSourceMedia,
     downloadMasterMedia,
     generatingNodeIds: activeGenerationNodeIds,
     preparingMasterClipIds,
@@ -4483,6 +4504,7 @@ function CanvasWorkspace({ initialProject, projects: initialProjects, initialWor
     captureVideoFrame: (...args) => generatorNodeActionsImplRef.current.captureVideoFrame(...args),
     extractVideoSegment: (...args) => generatorNodeActionsImplRef.current.extractVideoSegment(...args),
     openPreview: (...args) => generatorNodeActionsImplRef.current.openPreview(...args),
+    downloadSourceMedia: (nodeId) => generatorNodeActionsImplRef.current.downloadSourceMedia!(nodeId),
     downloadMasterMedia: (...args) => generatorNodeActionsImplRef.current.downloadMasterMedia(...args),
     openEdit: (...args) => generatorNodeActionsImplRef.current.openEdit(...args),
     addToIdentity: (...args) => generatorNodeActionsImplRef.current.addToIdentity(...args),

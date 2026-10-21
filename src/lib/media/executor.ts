@@ -6,7 +6,7 @@ import { assertWorkspaceStorageCapacity } from '../storage-lifecycle';
 import { mediaConfig } from './config';
 import { MediaError, type MediaJob, type MediaInput, type MediaSpec } from './contracts';
 import { assertJobAccess, renewMediaLease, failMediaJob } from './repository';
-import { displayGeometry, probeFile, frameBoundaries, quantizeRange, type MediaMetadata } from './probe';
+import { displayGeometry, probeFile, frameBoundaries, quantizeRange, normalizeMediaRange, type MediaMetadata } from './probe';
 import { planProcessing, type PlannedClip } from './planner';
 import { mediaProcess } from './process';
 import { importMedia } from './import';
@@ -73,8 +73,7 @@ async function processJob(job:MediaJob,dir:string,signal:AbortSignal,timings:Rec
     [{id:spec.assetId,start:0,end:media.get(spec.assetId)!.metadata.duration,audio:spec.audio}];
   const clips:PlannedClip[]=[];
   for(const request of requested){
-    const source=media.get(request.id)!;let {start,end}=request;
-    if(end>source.metadata.duration+1e-6)throw new MediaError('RANGE_OUTSIDE_SOURCE');
+    const source=media.get(request.id)!;let {start,end}=normalizeMediaRange(request.start,request.end,source.metadata);
     if(start>0 || Math.abs(end-source.metadata.duration)>1e-6){
       ({start,end}=quantizeRange(start,end,await frameBoundaries(source.path,source.metadata,signal)));
     }

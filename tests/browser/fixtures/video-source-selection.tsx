@@ -10,10 +10,10 @@ const initial:ProjectGraph={nodes:[
  {id:'generator',position:{x:700,y:0},data:{kind:'prompt',title:'Video generator',mediaType:'video',modelId:'seedance-2-5'}}
 ],edges:[{id:'ref',source:'source',target:'generator',sourceHandle:'video-output',targetHandle:'reference-video-input',data:{portType:'video',inputRole:'reference-video'}}]};
 function Fixture(){
- const [graph,setGraph]=useState(initial),[mount,setMount]=useState(0);
+ const [graph,setGraph]=useState(initial),[mount,setMount]=useState(0),[download,setDownload]=useState("");
  const update=(data:Record<string,unknown>)=>setGraph(before=>reconcileGeneratorReferenceChanges(before,{...before,nodes:before.nodes.map(n=>n.id==='source'?{...n,data:{...n.data,...data}}:n)}).graph);
  const source=graph.nodes[0];
- return <main style={{width:820,padding:30}}><VideoSceneTimeline key={mount} nodeId="source" title="Imported video" src="https://selection.test/video.mp4" selected segments={source.data.videoSegments!} durationHint={8} outputSelection={String(source.data.videoOutputSelection)} onOutputSelectionChange={videoOutputSelection=>update({videoOutputSelection})} onChange={(videoSegments)=>update({videoSegments})} onOpenPreview={()=>{}} onAspectRatio={()=>{}} onExtractSegment={()=>{}}/>
- <button onClick={()=>setMount(n=>n+1)}>Reopen saved timeline</button><output data-testid="graph">{JSON.stringify(graph)}</output></main>;
+ return <main style={{width:820,padding:30}}><VideoSceneTimeline key={mount} nodeId="source" title="Imported video" src="https://selection.test/video.mp4" selected segments={source.data.videoSegments!} durationHint={8} outputSelection={String(source.data.videoOutputSelection)} onOutputSelectionChange={videoOutputSelection=>update({videoOutputSelection})} onChange={(videoSegments)=>update({videoSegments})} onOpenPreview={()=>{}} onAspectRatio={()=>{}} onExtractSegment={()=>{}} onDownload={async()=>setDownload(String(source.data.videoOutputSelection))}/>
+ <button onClick={()=>setMount(n=>n+1)}>Reopen saved timeline</button><output data-testid="download">{download}</output><output data-testid="graph">{JSON.stringify(graph)}</output></main>;
 }
 createRoot(document.getElementById('root')!).render(<Fixture/>);
