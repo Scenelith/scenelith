@@ -30,6 +30,9 @@ test("moving dashes use one GPU surface, retain visible ink, and follow camera a
   await expect.poll(() => page.evaluate(() => (window as Window & { edgeDraws: number }).edgeDraws)).toBeGreaterThan(2);
   // A transparent/empty GPU layer must not be accepted as a performance fix.
   const before = await sharp(await page.locator(".react-flow").screenshot()).raw().toBuffer();
+  const previousPath = await page.locator(".react-flow__edge-path").getAttribute("d");
+  await page.getByRole("button", { name: "Move node", exact: true }).click();
+  await expect(page.locator(".react-flow__edge-path")).not.toHaveAttribute("d", previousPath!);
   await page.getByRole("button", { name: "Highlight", exact: true }).click();
   await page.getByRole("button", { name: "Move camera", exact: true }).click();
   await page.waitForTimeout(150);

@@ -102,21 +102,28 @@ export function CanvasEdgeLayer() {
       colors.set(value, result); return result;
     };
     let count = 0, frame = 0, dirty = true, animate = false, visible = true, disposed = false;
+    const meshes = new WeakMap<SVGPathElement, { key: string; data: number[] }>();
     let width = root.clientWidth, height = root.clientHeight;
     const reduced = matchMedia("(prefers-reduced-motion: reduce)");
     const rebuild = () => {
       dirty = false; animate = false;
       const data: number[] = [];
       for (const path of edges.querySelectorAll<SVGPathElement>(".react-flow__edge-disconnectable > .react-flow__edge-path")) {
-        const points = sampleCanvasEdge(path.getAttribute("d") || "");
+        const pathData = path.getAttribute("d") || "";
         const style = getComputedStyle(path);
-        if (points.length < 2 || style.stroke === "none") continue;
+        if (style.stroke === "none") continue;
         const group = path.closest(".react-flow__edge")!;
         const dash = style.strokeDasharray.split(/[ ,]+/).map(parseFloat).filter(Number.isFinite);
         const isAnimated = group.classList.contains("animated");
         const duration = parseFloat(style.getPropertyValue("--canvas-edge-duration")) || .5;
         const speed = isAnimated ? 10 / duration : 0;
         animate ||= isAnimated && Boolean(dash.length);
+        const key = [pathData, style.stroke, style.strokeWidth, style.strokeDasharray, style.opacity, style.filter, style.strokeLinecap, style.vectorEffect, speed].join("|");
+        const cached = meshes.get(path);
+        if (cached?.key === key) { for (const value of cached.data) data.push(value); continue; }
+        const points = sampleCanvasEdge(pathData);
+        if (points.length < 2) continue;
+        const mesh: number[] = [];
         const rgba = color(style.stroke).slice(); rgba[3] *= Number(style.opacity);
         const stroke = [parseFloat(style.strokeWidth) / 2, dash[0] || 0, dash[1] || dash[0] || 0, speed];
         const effects = [style.filter !== "none" ? 1 : 0, style.strokeLinecap === "round" ? 1 : 0, style.vectorEffect === "non-scaling-stroke" ? 1 : 0];
@@ -129,9 +136,11 @@ export function CanvasEdgeLayer() {
             const before = points[Math.max(0, pointIndex - 1)], after = points[Math.min(points.length - 1, pointIndex + 1)];
             const tangentLength = Math.hypot(after.x - before.x, after.y - before.y) || 1;
             const nx = -(after.y - before.y) / tangentLength, ny = (after.x - before.x) / tangentLength;
-            data.push(point.x, point.y, nx, ny, point.distance, side, ...stroke, ...rgba, ...effects);
+            mesh.push(point.x, point.y, nx, ny, point.distance, side, ...stroke, ...rgba, ...effects);
           }
         }
+        meshes.set(path, { key, data: mesh });
+        for (const value of mesh) data.push(value);
       }
       gl.bufferData(gl.ARRAY_BUFFER, new Float32Array(data), gl.DYNAMIC_DRAW);
       count = data.length / stride;
