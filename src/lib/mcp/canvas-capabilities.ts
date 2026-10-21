@@ -144,7 +144,7 @@ export function inputRolePortType(role: GeneratorInputRole): FramePortType {
 
 export function canvasCapabilityDocument() {
   return {
-    revisionSafety: "Every mutation requires the exact current canvas revision.",
+    revisionSafety: "Pass read_set from get_canvas or get_canvas_nodes to check only relevant nodes, written fields and connected inputs. Unrelated edits and layout changes merge safely. Conflicts identify fields and refreshNodeIds. Without read_set the exact global revision is required.",
     nodeTypes: [
       { type: "image_generator", createsKind: "prompt", supports: ["prompt", "model", "ratio", "resolution", "batch", "visual references", "generation"] },
       { type: "video_generator", createsKind: "prompt", supports: ["prompt", "model", "ratio", "resolution", "duration", "audio", "typed references", "generation"] },

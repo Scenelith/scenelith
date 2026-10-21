@@ -1,3 +1,4 @@
+import { compactCanvasWriteResult, resolveCanvasReadReceipt, withCanvasReadReceipts } from "./canvas-read-receipts";
 import { MediaPending } from "@/lib/media/compatibility";
 import { jobView } from "@/lib/media/contracts";
 import { getMcpMediaJob } from "./service";
@@ -60,6 +61,7 @@ import {
   listMcpAutomationFixtures,
   listMcpAutomationVersions,
   getMcpCanvas,
+  getMcpCanvasNodes,
   getMcpCanvasCapabilities,
   getMcpCanvasGeneration,
   listMcpAutomationRuns,
@@ -106,6 +108,9 @@ import {
   restoreMcpAutomationVersion,
   type CanvasPatchOperation,
 } from "@/lib/mcp/service";
+
+const canvasReadSetInput = z.string().regex(/^cr1_[a-f0-9-]{36}$/).optional()
+  .describe("Short readSet token from get_canvas or get_canvas_nodes. Reuse while unrelated nodes/layout change; refresh affected nodes only on a scoped conflict or expiry.");
 
 const jsonRecord = z.record(z.string(), z.unknown());
 const automationBindingInput = z.object({
@@ -166,13 +171,14 @@ function previewToolResult(result: { asset: Record<string, unknown>; previewBase
 }
 
 function toolError(error: unknown): CallToolResult {
-  const value = error as { code?: unknown; status?: unknown; scope?: unknown; currentRevision?: unknown; currentDraftVersionId?: unknown; retryAfterMs?: unknown; requiredCredits?: unknown; generationId?: unknown; validation?: unknown };
+  const value = error as { code?: unknown; status?: unknown; scope?: unknown; currentRevision?: unknown; conflicts?: unknown; refreshNodeIds?: unknown; currentDraftVersionId?: unknown; retryAfterMs?: unknown; requiredCredits?: unknown; generationId?: unknown; validation?: unknown };
   const payload = {
     error: error instanceof Error ? error.message : "Scenelith could not complete this action",
     ...(typeof value?.code === "string" ? { code: value.code } : {}),
     ...(typeof value?.status === "number" ? { status: value.status } : {}),
     ...(typeof value?.scope === "string" ? { requiredScope: value.scope } : {}),
     ...(typeof value?.currentRevision === "number" ? { currentRevision: value.currentRevision } : {}),
+    ...(Array.isArray(value?.conflicts) ? { conflicts: value.conflicts, refreshNodeIds: value.refreshNodeIds } : {}),
     ...(typeof value?.currentDraftVersionId === "string" ? { currentDraftVersionId: value.currentDraftVersionId } : {}),
     ...(typeof value?.generationId === "string" ? { generationId: value.generationId } : {}),
     ...(typeof value?.retryAfterMs === "number" ? { retryAfterMs: value.retryAfterMs } : {}),
@@ -182,13 +188,19 @@ function toolError(error: unknown): CallToolResult {
   return { content: [{ type: "text", text: JSON.stringify(payload, null, 2) }], structuredContent: payload, isError: true };
 }
 
-function safeTool<T>(callback: () => Promise<T>, wrap: (value: T) => Record<string, unknown>) {
+function safeToolResult<T>(callback: () => Promise<T>, wrap: (value: T) => Record<string, unknown>) {
   return callback().then((value) => toolResult(wrap(value))).catch(error=>error instanceof MediaPending?toolResult({...jobView(error.job),nextAction:error.message}):toolError(error));
 }
 
 export function createScenelithMcpServer(principal: McpPrincipal, origin: string) {
+  function safeTool<T>(callback: () => Promise<T>, wrap: (value: T) => Record<string, unknown>) {
+    return safeToolResult(async () => withCanvasReadReceipts(principal, wrap(await callback())), value => value);
+  }
+  function scopedTool<T>(token: string | undefined, callback: () => Promise<T>, wrap: (value: T) => Record<string, unknown>) {
+    return safeTool(callback, value => token ? compactCanvasWriteResult(wrap(value)) : wrap(value));
+  }
   const server = new McpServer(
-    { name: "scenelith", title: "Scenelith Creative Platform", version: "0.1.0" },
+    { name: "scenelith", title: "Scenelith Creative Platform", version: "0.2.0" },
     { instructions: [SCENELITH_MCP_INSTRUCTIONS,editionMcpServer.instructions].filter(Boolean).join("\n\n") },
   );
 
@@ -238,10 +250,17 @@ export function createScenelithMcpServer(principal: McpPrincipal, origin: string
 
   server.registerTool("get_canvas", {
     title: "Get canvas",
-    description: "Get one complete canvas graph. Always call this immediately before patch_canvas and pass its revision as expected_revision.",
+    description: "Read a complete canvas once to discover nodes and readSet. Reuse its readSet as read_set for subsequent writes; unrelated edits and layout changes do not require another full read. Refresh only affected nodes with get_canvas_nodes.",
     inputSchema: z.object({ canvas_id: z.string().min(1) }).strict(),
     annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false },
   }, ({ canvas_id }) => safeTool(() => getMcpCanvas(principal, canvas_id), (canvas) => ({ canvas })));
+
+  server.registerTool("get_canvas_nodes", {
+    title: "Refresh selected canvas nodes",
+    description: "Read only requested nodes, their incoming sources and incident connections, current scene revisions and a scoped readSet. Missing nodes are reported explicitly. Use after a scoped conflict or when those nodes may have changed; use the returned readSet token for these nodes; retain previous tokens for untouched nodes. No whole-canvas reread is needed.",
+    inputSchema: z.object({ canvas_id: z.string().min(1), node_ids: z.array(z.string().min(1)).min(1).max(100) }).strict(),
+    annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false },
+  }, ({ canvas_id, node_ids }) => safeTool(() => getMcpCanvasNodes(principal, canvas_id, node_ids), nodes => ({ ...nodes })));
 
   server.registerTool("download_canvas_node_output", {
     title: "Download original node output",
@@ -491,13 +510,13 @@ export function createScenelithMcpServer(principal: McpPrincipal, origin: string
       description: "Atomically move or remove nodes, remove connections, rename the canvas, or set its viewport. Use the semantic create, configure, place, connect and duplicate tools for content changes so models, assets and ports are validated.",
       inputSchema: z.object({
         canvas_id: z.string().min(1),
-        expected_revision: z.number().int().nonnegative(),
+        expected_revision: z.number().int().nonnegative(), read_set: canvasReadSetInput,
         name: z.string().trim().min(1).max(120).optional(),
         operations: z.array(patchOperation).max(100).default([]),
       }).strict(),
       annotations: { readOnlyHint: false, destructiveHint: true, idempotentHint: false, openWorldHint: false },
-    }, ({ canvas_id, expected_revision, name, operations }) => safeTool(
-      () => patchMcpCanvas(principal, { projectId: canvas_id, expectedRevision: expected_revision, name, operations: operations as CanvasPatchOperation[] }),
+    }, ({ canvas_id, expected_revision, read_set, name, operations }) => scopedTool(read_set,
+      async () => patchMcpCanvas(principal, { projectId: canvas_id, expectedRevision: expected_revision, readSet: await resolveCanvasReadReceipt(principal, read_set), name, operations: operations as CanvasPatchOperation[] }),
       (canvas) => ({ canvas }),
     ));
 
@@ -506,7 +525,7 @@ export function createScenelithMcpServer(principal: McpPrincipal, origin: string
       description: "Create a configured Image Generator, Video Generator, Assistant, or Sticky Note using the same defaults as the Canvas UI. Use place_canvas_asset or place_canvas_identity for media and identity nodes. Position is a preferred anchor; collisions are shifted to free space. Use nodeDirectory bounds and read the returned position.",
       inputSchema: z.object({
         canvas_id: z.string().min(1),
-        expected_revision: z.number().int().nonnegative(),
+        expected_revision: z.number().int().nonnegative(), read_set: canvasReadSetInput,
         type: z.enum(["image_generator", "video_generator", "assistant", "note"]),
         position: point,
         title: z.string().trim().min(1).max(240).optional(),
@@ -519,8 +538,8 @@ export function createScenelithMcpServer(principal: McpPrincipal, origin: string
         note_color: z.enum(["yellow", "blue", "rose", "gray"]).optional(),
       }).strict(),
       annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: false },
-    }, ({ canvas_id, expected_revision, type, position, title, model_id, text_model_id, prompt, instruction, system_prompt, note_text, note_color }) => safeTool(
-      () => createMcpCanvasNode(principal, { projectId: canvas_id, expectedRevision: expected_revision, type, position, title, modelId: model_id, textModelId: text_model_id, prompt, instruction, systemPrompt: system_prompt, noteText: note_text, noteColor: note_color }),
+    }, ({ canvas_id, expected_revision, read_set, type, position, title, model_id, text_model_id, prompt, instruction, system_prompt, note_text, note_color }) => scopedTool(read_set,
+      async () => createMcpCanvasNode(principal, { projectId: canvas_id, expectedRevision: expected_revision, readSet: await resolveCanvasReadReceipt(principal, read_set), type, position, title, modelId: model_id, textModelId: text_model_id, prompt, instruction, systemPrompt: system_prompt, noteText: note_text, noteColor: note_color }),
       (result) => result,
     ));
 
@@ -529,7 +548,7 @@ export function createScenelithMcpServer(principal: McpPrincipal, origin: string
       description: "Configure a node with semantic fields. Generator model, ratio, resolution, duration, audio and batch values are normalized against the live model catalogue; Assistant and note settings are type checked.",
       inputSchema: z.object({
         canvas_id: z.string().min(1),
-        expected_revision: z.number().int().nonnegative(),
+        expected_revision: z.number().int().nonnegative(), read_set: canvasReadSetInput,
         node_id: z.string().min(1),
         title: z.string().trim().min(1).max(240).optional(),
         position: point.optional(),
@@ -549,8 +568,8 @@ export function createScenelithMcpServer(principal: McpPrincipal, origin: string
         node_height: z.number().finite().min(120).max(1_200).optional(),
       }).strict(),
       annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: false },
-    }, ({ canvas_id, expected_revision, node_id, title, position, prompt, model_id, aspect_ratio, resolution, duration, generate_audio, generation_count, instruction, system_prompt, text_model_id, note_text, note_color, node_width, node_height }) => safeTool(
-      () => configureMcpCanvasNode(principal, { projectId: canvas_id, expectedRevision: expected_revision, nodeId: node_id, configuration: { title, position, prompt, modelId: model_id, aspectRatio: aspect_ratio, resolution, duration, generateAudio: generate_audio, generationCount: generation_count, instruction, systemPrompt: system_prompt, textModelId: text_model_id, noteText: note_text, noteColor: note_color, nodeWidth: node_width, nodeHeight: node_height } }),
+    }, ({ canvas_id, expected_revision, read_set, node_id, title, position, prompt, model_id, aspect_ratio, resolution, duration, generate_audio, generation_count, instruction, system_prompt, text_model_id, note_text, note_color, node_width, node_height }) => scopedTool(read_set,
+      async () => configureMcpCanvasNode(principal, { projectId: canvas_id, expectedRevision: expected_revision, readSet: await resolveCanvasReadReceipt(principal, read_set), nodeId: node_id, configuration: { title, position, prompt, modelId: model_id, aspectRatio: aspect_ratio, resolution, duration, generateAudio: generate_audio, generationCount: generation_count, instruction, systemPrompt: system_prompt, textModelId: text_model_id, noteText: note_text, noteColor: note_color, nodeWidth: node_width, nodeHeight: node_height } }),
       (canvas) => ({ canvas }),
     ));
 
@@ -559,7 +578,7 @@ export function createScenelithMcpServer(principal: McpPrincipal, origin: string
       description: "Connect one node output to a typed text, image, video or audio input. The server derives semantic handles, validates media compatibility and model capacity, and replaces only single-value inputs.",
       inputSchema: z.object({
         canvas_id: z.string().min(1),
-        expected_revision: z.number().int().nonnegative(),
+        expected_revision: z.number().int().nonnegative(), read_set: canvasReadSetInput,
         source_node_id: z.string().min(1),
         target_node_id: z.string().min(1),
         target_clip_id: z.string().min(1).max(200).optional(),
@@ -567,18 +586,18 @@ export function createScenelithMcpServer(principal: McpPrincipal, origin: string
         source_segment_id: z.string().min(1).max(180).optional(),
       }).strict(),
       annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: false },
-    }, ({ canvas_id, expected_revision, source_node_id, target_node_id, target_clip_id, input_role, source_segment_id }) => safeTool(
-      () => connectMcpCanvasNodes(principal, { projectId: canvas_id, expectedRevision: expected_revision, sourceNodeId: source_node_id, targetNodeId: target_node_id, targetClipId: target_clip_id, inputRole: input_role, sourceSegmentId: source_segment_id }),
+    }, ({ canvas_id, expected_revision, read_set, source_node_id, target_node_id, target_clip_id, input_role, source_segment_id }) => scopedTool(read_set,
+      async () => connectMcpCanvasNodes(principal, { projectId: canvas_id, expectedRevision: expected_revision, readSet: await resolveCanvasReadReceipt(principal, read_set), sourceNodeId: source_node_id, targetNodeId: target_node_id, targetClipId: target_clip_id, inputRole: input_role, sourceSegmentId: source_segment_id }),
       (canvas) => ({ canvas }),
     ));
 
     if (principal.libraryAccess) server.registerTool("place_canvas_asset", {
       title: "Place Library asset on canvas",
       description: "Place one approved Library image or video on the canvas as a real scene node that can feed generator and Assistant inputs.",
-      inputSchema: z.object({ canvas_id: z.string().min(1), expected_revision: z.number().int().nonnegative(), asset_id: z.string().min(1), position: point, title: z.string().trim().min(1).max(240).optional() }).strict(),
+      inputSchema: z.object({ canvas_id: z.string().min(1), expected_revision: z.number().int().nonnegative(), read_set: canvasReadSetInput, asset_id: z.string().min(1), position: point, title: z.string().trim().min(1).max(240).optional() }).strict(),
       annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: false },
-    }, ({ canvas_id, expected_revision, asset_id, position, title }) => safeTool(
-      () => placeMcpCanvasAsset(principal, { projectId: canvas_id, expectedRevision: expected_revision, assetId: asset_id, position, title }),
+    }, ({ canvas_id, expected_revision, read_set, asset_id, position, title }) => scopedTool(read_set,
+      async () => placeMcpCanvasAsset(principal, { projectId: canvas_id, expectedRevision: expected_revision, readSet: await resolveCanvasReadReceipt(principal, read_set), assetId: asset_id, position, title }),
       (result) => result,
     ));
 
@@ -586,22 +605,22 @@ export function createScenelithMcpServer(principal: McpPrincipal, origin: string
       title: "Attach Library reference",
       description: "Attach one approved Library or identity asset directly to a generator or Assistant input. The server validates MIME type, model port, capacity, Assistant vision support and project grants.",
       inputSchema: z.object({
-        canvas_id: z.string().min(1), expected_revision: z.number().int().nonnegative(), node_id: z.string().min(1), clip_id: z.string().min(1).max(200).optional(), asset_id: z.string().min(1),
+        canvas_id: z.string().min(1), expected_revision: z.number().int().nonnegative(), read_set: canvasReadSetInput, node_id: z.string().min(1), clip_id: z.string().min(1).max(200).optional(), asset_id: z.string().min(1),
         input_role: z.enum(["reference-image", "start-frame", "end-frame", "motion-video", "reference-video", "reference-audio"]),
       }).strict(),
       annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: false },
-    }, ({ canvas_id, expected_revision, node_id, clip_id, asset_id, input_role }) => safeTool(
-      () => attachMcpCanvasReference(principal, { projectId: canvas_id, expectedRevision: expected_revision, nodeId: node_id, clipId: clip_id, assetId: asset_id, role: input_role }),
+    }, ({ canvas_id, expected_revision, read_set, node_id, clip_id, asset_id, input_role }) => scopedTool(read_set,
+      async () => attachMcpCanvasReference(principal, { projectId: canvas_id, expectedRevision: expected_revision, readSet: await resolveCanvasReadReceipt(principal, read_set), nodeId: node_id, clipId: clip_id, assetId: asset_id, role: input_role }),
       (canvas) => ({ canvas }),
     ));
 
     if (principal.libraryAccess) server.registerTool("detach_canvas_reference", {
       title: "Detach Library reference",
       description: "Detach an asset from explicit attachments and matching canvas connections. Pass clip_id to scope the change to one Video Master scene. ORIGINAL media and generated outputs are preserved; disconnected inputs never reconnect automatically.",
-      inputSchema: z.object({ canvas_id: z.string().min(1), expected_revision: z.number().int().nonnegative(), node_id: z.string().min(1), clip_id: z.string().min(1).max(200).optional(), asset_id: z.string().min(1), input_role: z.enum(["reference-image", "start-frame", "end-frame", "motion-video", "reference-video", "reference-audio"]).optional() }).strict(),
+      inputSchema: z.object({ canvas_id: z.string().min(1), expected_revision: z.number().int().nonnegative(), read_set: canvasReadSetInput, node_id: z.string().min(1), clip_id: z.string().min(1).max(200).optional(), asset_id: z.string().min(1), input_role: z.enum(["reference-image", "start-frame", "end-frame", "motion-video", "reference-video", "reference-audio"]).optional() }).strict(),
       annotations: { readOnlyHint: false, destructiveHint: true, idempotentHint: true, openWorldHint: false },
-    }, ({ canvas_id, expected_revision, node_id, clip_id, asset_id, input_role }) => safeTool(
-      () => detachMcpCanvasReference(principal, { projectId: canvas_id, expectedRevision: expected_revision, nodeId: node_id, clipId: clip_id, assetId: asset_id, role: input_role }),
+    }, ({ canvas_id, expected_revision, read_set, node_id, clip_id, asset_id, input_role }) => scopedTool(read_set,
+      async () => detachMcpCanvasReference(principal, { projectId: canvas_id, expectedRevision: expected_revision, readSet: await resolveCanvasReadReceipt(principal, read_set), nodeId: node_id, clipId: clip_id, assetId: asset_id, role: input_role }),
       (canvas) => ({ canvas }),
     ));
 
@@ -609,52 +628,52 @@ export function createScenelithMcpServer(principal: McpPrincipal, origin: string
       title: "Place identity on canvas",
       description: "Place selected Character, Before, or After identity references on the canvas as one persona node. Omit reference_asset_ids to use every asset in the chosen variant.",
       inputSchema: z.object({
-        canvas_id: z.string().min(1), expected_revision: z.number().int().nonnegative(), identity_id: z.string().min(1),
+        canvas_id: z.string().min(1), expected_revision: z.number().int().nonnegative(), read_set: canvasReadSetInput, identity_id: z.string().min(1),
         variant: z.enum(["reference", "before", "after"]), reference_asset_ids: z.array(z.string().min(1)).max(100).optional(), position: point,
       }).strict(),
       annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: false },
-    }, ({ canvas_id, expected_revision, identity_id, variant, reference_asset_ids, position }) => safeTool(
-      () => placeMcpCanvasIdentity(principal, { projectId: canvas_id, expectedRevision: expected_revision, identityId: identity_id, variant, assetIds: reference_asset_ids, position }),
+    }, ({ canvas_id, expected_revision, read_set, identity_id, variant, reference_asset_ids, position }) => scopedTool(read_set,
+      async () => placeMcpCanvasIdentity(principal, { projectId: canvas_id, expectedRevision: expected_revision, readSet: await resolveCanvasReadReceipt(principal, read_set), identityId: identity_id, variant, assetIds: reference_asset_ids, position }),
       (result) => result,
     ));
 
     server.registerTool("duplicate_canvas_node", {
       title: "Copy a canvas node",
       description: "Copy one node with its settings, saved outputs, attached references and all incoming connections. Resolve node_id from get_canvas nodeDirectory. Input sources stay shared, outgoing connections to existing nodes stay unchanged, and no generation runs. Returns the new node and canvas revision; offset is optional and placement avoids overlaps.",
-      inputSchema: z.object({ canvas_id: z.string().min(1), expected_revision: z.number().int().nonnegative(), node_id: z.string().min(1), offset: point.optional() }).strict(),
+      inputSchema: z.object({ canvas_id: z.string().min(1), expected_revision: z.number().int().nonnegative(), read_set: canvasReadSetInput, node_id: z.string().min(1), offset: point.optional() }).strict(),
       annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: false },
-    }, ({ canvas_id, expected_revision, node_id, offset }) => safeTool(
-      () => duplicateMcpCanvasNode(principal, { projectId: canvas_id, expectedRevision: expected_revision, nodeId: node_id, offset }),
+    }, ({ canvas_id, expected_revision, read_set, node_id, offset }) => scopedTool(read_set,
+      async () => duplicateMcpCanvasNode(principal, { projectId: canvas_id, expectedRevision: expected_revision, readSet: await resolveCanvasReadReceipt(principal, read_set), nodeId: node_id, offset }),
       (result) => result,
     ));
 
     server.registerTool("duplicate_canvas_nodes", {
       title: "Duplicate canvas nodes",
       description: "Copy a selection with its incoming connections, settings, saved outputs and attached references. Internal connections link the copies; external input sources stay shared. Outgoing connections to existing nodes stay unchanged. Removes automation lineage and never runs generation. For one node, prefer duplicate_canvas_node.",
-      inputSchema: z.object({ canvas_id: z.string().min(1), expected_revision: z.number().int().nonnegative(), node_ids: z.array(z.string().min(1)).min(1).max(100), offset: point.optional() }).strict(),
+      inputSchema: z.object({ canvas_id: z.string().min(1), expected_revision: z.number().int().nonnegative(), read_set: canvasReadSetInput, node_ids: z.array(z.string().min(1)).min(1).max(100), offset: point.optional() }).strict(),
       annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: false },
-    }, ({ canvas_id, expected_revision, node_ids, offset }) => safeTool(
-      () => duplicateMcpCanvasNodes(principal, { projectId: canvas_id, expectedRevision: expected_revision, nodeIds: node_ids, offset }),
+    }, ({ canvas_id, expected_revision, read_set, node_ids, offset }) => scopedTool(read_set,
+      async () => duplicateMcpCanvasNodes(principal, { projectId: canvas_id, expectedRevision: expected_revision, readSet: await resolveCanvasReadReceipt(principal, read_set), nodeIds: node_ids, offset }),
       (result) => result,
     ));
 
     server.registerTool("select_canvas_output", {
       title: "Select generated output",
       description: "Select one previously generated output as the active media for a generator node or one Video Master scene without deleting output history.",
-      inputSchema: z.object({ canvas_id: z.string().min(1), expected_revision: z.number().int().nonnegative(), node_id: z.string().min(1), output_index: z.number().int().min(0).max(19), clip_id: z.string().min(1).max(200).optional() }).strict(),
+      inputSchema: z.object({ canvas_id: z.string().min(1), expected_revision: z.number().int().nonnegative(), read_set: canvasReadSetInput, node_id: z.string().min(1), output_index: z.number().int().min(0).max(19), clip_id: z.string().min(1).max(200).optional() }).strict(),
       annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: false },
-    }, ({ canvas_id, expected_revision, node_id, output_index, clip_id }) => safeTool(
-      () => selectMcpCanvasOutput(principal, { projectId: canvas_id, expectedRevision: expected_revision, nodeId: node_id, outputIndex: output_index, clipId: clip_id }),
+    }, ({ canvas_id, expected_revision, read_set, node_id, output_index, clip_id }) => scopedTool(read_set,
+      async () => selectMcpCanvasOutput(principal, { projectId: canvas_id, expectedRevision: expected_revision, readSet: await resolveCanvasReadReceipt(principal, read_set), nodeId: node_id, outputIndex: output_index, clipId: clip_id }),
       (canvas) => ({ canvas }),
     ));
 
     server.registerTool("create_video_master", {
       title: "Create Video Master",
       description: "Open a video source with a detected scene map as a complete editable Video Master sequence. Every detected scene is retained and linked to its exact source segment.",
-      inputSchema: z.object({ canvas_id: z.string().min(1), expected_revision: z.number().int().nonnegative(), source_node_id: z.string().min(1), focus_segment_id: z.string().min(1).max(180).optional() }).strict(),
+      inputSchema: z.object({ canvas_id: z.string().min(1), expected_revision: z.number().int().nonnegative(), read_set: canvasReadSetInput, source_node_id: z.string().min(1), focus_segment_id: z.string().min(1).max(180).optional() }).strict(),
       annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: false },
-    }, ({ canvas_id, expected_revision, source_node_id, focus_segment_id }) => safeTool(
-      () => createMcpVideoMaster(principal, { projectId: canvas_id, expectedRevision: expected_revision, sourceNodeId: source_node_id, focusSegmentId: focus_segment_id }),
+    }, ({ canvas_id, expected_revision, read_set, source_node_id, focus_segment_id }) => scopedTool(read_set,
+      async () => createMcpVideoMaster(principal, { projectId: canvas_id, expectedRevision: expected_revision, readSet: await resolveCanvasReadReceipt(principal, read_set), sourceNodeId: source_node_id, focusSegmentId: focus_segment_id }),
       (result) => result,
     ));
 
@@ -662,24 +681,24 @@ export function createScenelithMcpServer(principal: McpPrincipal, origin: string
       title: "Configure Video Master scene",
       description: "Configure one Video Master scene's order, role, prompt, video model, output ratio mode, resolution, generation duration and audio using the live provider catalogue. Incompatible inputs are rejected unless disconnect_incompatible_references is explicitly true; never set it without the user choosing to disconnect. ORIGINAL and generated outputs are preserved.",
       inputSchema: z.object({
-        canvas_id: z.string().min(1), expected_revision: z.number().int().nonnegative(), node_id: z.string().min(1), clip_id: z.string().min(1),
+        canvas_id: z.string().min(1), expected_revision: z.number().int().nonnegative(), read_set: canvasReadSetInput, node_id: z.string().min(1), clip_id: z.string().min(1),
         title: z.string().trim().min(1).max(160).optional(), role: z.enum(["hook", "scene", "cta"]).optional(), prompt: z.string().max(30_000).optional(),
         model_id: z.string().min(1).max(120).optional(), aspect_ratio: z.string().min(1).max(20).optional(), aspect_ratio_mode: z.enum(["original", "custom"]).optional(),
         resolution: z.string().min(1).max(20).optional(), duration: z.number().finite().min(.1).max(30).optional(), generate_audio: z.boolean().optional(), sequence_index: z.number().int().min(0).max(500).optional(), disconnect_incompatible_references: z.boolean().optional(),
       }).strict(),
       annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: false },
-    }, ({ canvas_id, expected_revision, node_id, clip_id, title, role, prompt, model_id, aspect_ratio, aspect_ratio_mode, resolution, duration, generate_audio, sequence_index, disconnect_incompatible_references }) => safeTool(
-      () => configureMcpVideoMasterClip(principal, { projectId: canvas_id, expectedRevision: expected_revision, nodeId: node_id, clipId: clip_id, title, role, prompt, modelId: model_id, aspectRatio: aspect_ratio, aspectRatioMode: aspect_ratio_mode, resolution, duration, generateAudio: generate_audio, sequenceIndex: sequence_index, disconnectIncompatibleReferences: disconnect_incompatible_references }),
+    }, ({ canvas_id, expected_revision, read_set, node_id, clip_id, title, role, prompt, model_id, aspect_ratio, aspect_ratio_mode, resolution, duration, generate_audio, sequence_index, disconnect_incompatible_references }) => scopedTool(read_set,
+      async () => configureMcpVideoMasterClip(principal, { projectId: canvas_id, expectedRevision: expected_revision, readSet: await resolveCanvasReadReceipt(principal, read_set), nodeId: node_id, clipId: clip_id, title, role, prompt, modelId: model_id, aspectRatio: aspect_ratio, aspectRatioMode: aspect_ratio_mode, resolution, duration, generateAudio: generate_audio, sequenceIndex: sequence_index, disconnectIncompatibleReferences: disconnect_incompatible_references }),
       (canvas) => ({ canvas }),
     ));
 
     server.registerTool("create_canvas_segment_node", {
       title: "Add video scene as canvas clip",
       description: "Materialize one detected source scene when needed and place it as a standalone, frame-accurate video node with source lineage.",
-      inputSchema: z.object({ canvas_id: z.string().min(1), expected_revision: z.number().int().nonnegative(), source_node_id: z.string().min(1), segment_id: z.string().min(1).max(180), position: point }).strict(),
+      inputSchema: z.object({ canvas_id: z.string().min(1), expected_revision: z.number().int().nonnegative(), read_set: canvasReadSetInput, source_node_id: z.string().min(1), segment_id: z.string().min(1).max(180), position: point }).strict(),
       annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: false },
-    }, ({ canvas_id, expected_revision, source_node_id, segment_id, position }) => safeTool(
-      () => createMcpCanvasSegmentNode(principal, { projectId: canvas_id, expectedRevision: expected_revision, sourceNodeId: source_node_id, segmentId: segment_id, position }),
+    }, ({ canvas_id, expected_revision, read_set, source_node_id, segment_id, position }) => scopedTool(read_set,
+      async () => createMcpCanvasSegmentNode(principal, { projectId: canvas_id, expectedRevision: expected_revision, readSet: await resolveCanvasReadReceipt(principal, read_set), sourceNodeId: source_node_id, segmentId: segment_id, position }),
       (result) => result,
     ));
 
@@ -687,23 +706,23 @@ export function createScenelithMcpServer(principal: McpPrincipal, origin: string
       title: "Edit source video timeline",
       description: "Set exact source-scene cut times, select the full video or one resulting scene as the active output, or restore the immutable detected cuts. Changed ranges deliberately discard stale materialized clips.",
       inputSchema: z.object({
-        canvas_id: z.string().min(1), expected_revision: z.number().int().nonnegative(), source_node_id: z.string().min(1),
+        canvas_id: z.string().min(1), expected_revision: z.number().int().nonnegative(), read_set: canvasReadSetInput, source_node_id: z.string().min(1),
         cuts_seconds: z.array(z.number().finite().positive()).max(79).optional(), restore_detected: z.boolean().optional(), output_selection: z.string().min(1).max(180).optional(),
       }).strict().refine((value) => value.cuts_seconds !== undefined || value.restore_detected || value.output_selection, "Choose cuts, restore_detected, or output_selection")
         .refine((value) => !(value.cuts_seconds !== undefined && value.restore_detected), "cuts_seconds and restore_detected are mutually exclusive"),
       annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: false },
-    }, ({ canvas_id, expected_revision, source_node_id, cuts_seconds, restore_detected, output_selection }) => safeTool(
-      () => updateMcpCanvasVideoTimeline(principal, { projectId: canvas_id, expectedRevision: expected_revision, sourceNodeId: source_node_id, cuts: cuts_seconds, restoreDetected: restore_detected, outputSelection: output_selection }),
+    }, ({ canvas_id, expected_revision, read_set, source_node_id, cuts_seconds, restore_detected, output_selection }) => scopedTool(read_set,
+      async () => updateMcpCanvasVideoTimeline(principal, { projectId: canvas_id, expectedRevision: expected_revision, readSet: await resolveCanvasReadReceipt(principal, read_set), sourceNodeId: source_node_id, cuts: cuts_seconds, restoreDetected: restore_detected, outputSelection: output_selection }),
       (canvas) => ({ canvas }),
     ));
 
     server.registerTool("create_canvas_remake_branch", {
       title: "Create remake branch",
       description: "Create the same source-aware Image Generator branch as the Canvas 'Create my version' action, with a safe original-content prompt and typed image connection.",
-      inputSchema: z.object({ canvas_id: z.string().min(1), expected_revision: z.number().int().nonnegative(), source_node_id: z.string().min(1), position: point.optional() }).strict(),
+      inputSchema: z.object({ canvas_id: z.string().min(1), expected_revision: z.number().int().nonnegative(), read_set: canvasReadSetInput, source_node_id: z.string().min(1), position: point.optional() }).strict(),
       annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: false },
-    }, ({ canvas_id, expected_revision, source_node_id, position }) => safeTool(
-      () => createMcpCanvasRemakeBranch(principal, { projectId: canvas_id, expectedRevision: expected_revision, sourceNodeId: source_node_id, position }),
+    }, ({ canvas_id, expected_revision, read_set, source_node_id, position }) => scopedTool(read_set,
+      async () => createMcpCanvasRemakeBranch(principal, { projectId: canvas_id, expectedRevision: expected_revision, readSet: await resolveCanvasReadReceipt(principal, read_set), sourceNodeId: source_node_id, position }),
       (result) => result,
     ));
 
@@ -711,20 +730,20 @@ export function createScenelithMcpServer(principal: McpPrincipal, origin: string
       server.registerTool("replace_canvas_video_segment", {
         title: "Replace source video scene",
         description: "Use an approved Library video as the OUTPUT replacement for one detected source segment and synchronize any related Video Master scene.",
-        inputSchema: z.object({ canvas_id: z.string().min(1), expected_revision: z.number().int().nonnegative(), source_node_id: z.string().min(1), segment_id: z.string().min(1).max(180), replacement_asset_id: z.string().min(1) }).strict(),
+        inputSchema: z.object({ canvas_id: z.string().min(1), expected_revision: z.number().int().nonnegative(), read_set: canvasReadSetInput, source_node_id: z.string().min(1), segment_id: z.string().min(1).max(180), replacement_asset_id: z.string().min(1) }).strict(),
         annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: false },
-      }, ({ canvas_id, expected_revision, source_node_id, segment_id, replacement_asset_id }) => safeTool(
-        () => replaceMcpCanvasVideoSegment(principal, { projectId: canvas_id, expectedRevision: expected_revision, sourceNodeId: source_node_id, segmentId: segment_id, replacementAssetId: replacement_asset_id }),
+      }, ({ canvas_id, expected_revision, read_set, source_node_id, segment_id, replacement_asset_id }) => scopedTool(read_set,
+        async () => replaceMcpCanvasVideoSegment(principal, { projectId: canvas_id, expectedRevision: expected_revision, readSet: await resolveCanvasReadReceipt(principal, read_set), sourceNodeId: source_node_id, segmentId: segment_id, replacementAssetId: replacement_asset_id }),
         (canvas) => ({ canvas }),
       ));
 
       server.registerTool("add_video_master_asset", {
         title: "Add Library video to Video Master",
         description: "Append an approved Library video as a standalone Video Master scene using the same model, ratio, duration and ORIGINAL/OUTPUT defaults as a manual upload.",
-        inputSchema: z.object({ canvas_id: z.string().min(1), expected_revision: z.number().int().nonnegative(), node_id: z.string().min(1), asset_id: z.string().min(1) }).strict(),
+        inputSchema: z.object({ canvas_id: z.string().min(1), expected_revision: z.number().int().nonnegative(), read_set: canvasReadSetInput, node_id: z.string().min(1), asset_id: z.string().min(1) }).strict(),
         annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: false },
-      }, ({ canvas_id, expected_revision, node_id, asset_id }) => safeTool(
-        () => addMcpVideoMasterAsset(principal, { projectId: canvas_id, expectedRevision: expected_revision, nodeId: node_id, assetId: asset_id }),
+      }, ({ canvas_id, expected_revision, read_set, node_id, asset_id }) => scopedTool(read_set,
+        async () => addMcpVideoMasterAsset(principal, { projectId: canvas_id, expectedRevision: expected_revision, readSet: await resolveCanvasReadReceipt(principal, read_set), nodeId: node_id, assetId: asset_id }),
         (result) => result,
       ));
 
@@ -742,40 +761,40 @@ export function createScenelithMcpServer(principal: McpPrincipal, origin: string
     server.registerTool("copy_video_master_output", {
       title: "Copy Video Master output",
       description: "Copy one saved generated output from a source Video Master scene into another scene without deleting either scene's output history.",
-      inputSchema: z.object({ canvas_id: z.string().min(1), expected_revision: z.number().int().nonnegative(), node_id: z.string().min(1), source_clip_id: z.string().min(1), output_index: z.number().int().min(0).max(19), target_clip_id: z.string().min(1) }).strict(),
+      inputSchema: z.object({ canvas_id: z.string().min(1), expected_revision: z.number().int().nonnegative(), read_set: canvasReadSetInput, node_id: z.string().min(1), source_clip_id: z.string().min(1), output_index: z.number().int().min(0).max(19), target_clip_id: z.string().min(1) }).strict(),
       annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: false },
-    }, ({ canvas_id, expected_revision, node_id, source_clip_id, output_index, target_clip_id }) => safeTool(
-      () => copyMcpVideoMasterOutput(principal, { projectId: canvas_id, expectedRevision: expected_revision, nodeId: node_id, sourceClipId: source_clip_id, outputIndex: output_index, targetClipId: target_clip_id }),
+    }, ({ canvas_id, expected_revision, read_set, node_id, source_clip_id, output_index, target_clip_id }) => scopedTool(read_set,
+      async () => copyMcpVideoMasterOutput(principal, { projectId: canvas_id, expectedRevision: expected_revision, readSet: await resolveCanvasReadReceipt(principal, read_set), nodeId: node_id, sourceClipId: source_clip_id, outputIndex: output_index, targetClipId: target_clip_id }),
       (canvas) => ({ canvas }),
     ));
 
     server.registerTool("add_video_master_scene", {
       title: "Add blank Video Master scene",
       description: "Append a new generator-only Video Master scene using the selected scene's model and format defaults, ready for a prompt and references.",
-      inputSchema: z.object({ canvas_id: z.string().min(1), expected_revision: z.number().int().nonnegative(), node_id: z.string().min(1) }).strict(),
+      inputSchema: z.object({ canvas_id: z.string().min(1), expected_revision: z.number().int().nonnegative(), read_set: canvasReadSetInput, node_id: z.string().min(1) }).strict(),
       annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: false },
-    }, ({ canvas_id, expected_revision, node_id }) => safeTool(
-      () => addMcpVideoMasterScene(principal, { projectId: canvas_id, expectedRevision: expected_revision, nodeId: node_id }),
+    }, ({ canvas_id, expected_revision, read_set, node_id }) => scopedTool(read_set,
+      async () => addMcpVideoMasterScene(principal, { projectId: canvas_id, expectedRevision: expected_revision, readSet: await resolveCanvasReadReceipt(principal, read_set), nodeId: node_id }),
       (result) => result,
     ));
 
     server.registerTool("move_video_master_asset_lane", {
       title: "Move uploaded Video Master clip lane",
       description: "Move one standalone uploaded Library clip between OUTPUT and ORIGINAL, updating the implicit scene video reference exactly like timeline drag-and-drop.",
-      inputSchema: z.object({ canvas_id: z.string().min(1), expected_revision: z.number().int().nonnegative(), node_id: z.string().min(1), clip_id: z.string().min(1), lane: z.enum(["output", "original"]) }).strict(),
+      inputSchema: z.object({ canvas_id: z.string().min(1), expected_revision: z.number().int().nonnegative(), read_set: canvasReadSetInput, node_id: z.string().min(1), clip_id: z.string().min(1), lane: z.enum(["output", "original"]) }).strict(),
       annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: false },
-    }, ({ canvas_id, expected_revision, node_id, clip_id, lane }) => safeTool(
-      () => moveMcpVideoMasterAssetLane(principal, { projectId: canvas_id, expectedRevision: expected_revision, nodeId: node_id, clipId: clip_id, lane }),
+    }, ({ canvas_id, expected_revision, read_set, node_id, clip_id, lane }) => scopedTool(read_set,
+      async () => moveMcpVideoMasterAssetLane(principal, { projectId: canvas_id, expectedRevision: expected_revision, readSet: await resolveCanvasReadReceipt(principal, read_set), nodeId: node_id, clipId: clip_id, lane }),
       (canvas) => ({ canvas }),
     ));
 
     server.registerTool("remove_video_master_scene", {
       title: "Remove Video Master scene",
       description: "Remove one Video Master scene, its scene-scoped reference edges, normalize the remaining order, and select the nearest surviving scene.",
-      inputSchema: z.object({ canvas_id: z.string().min(1), expected_revision: z.number().int().nonnegative(), node_id: z.string().min(1), clip_id: z.string().min(1) }).strict(),
+      inputSchema: z.object({ canvas_id: z.string().min(1), expected_revision: z.number().int().nonnegative(), read_set: canvasReadSetInput, node_id: z.string().min(1), clip_id: z.string().min(1) }).strict(),
       annotations: { readOnlyHint: false, destructiveHint: true, idempotentHint: false, openWorldHint: false },
-    }, ({ canvas_id, expected_revision, node_id, clip_id }) => safeTool(
-      () => removeMcpVideoMasterScene(principal, { projectId: canvas_id, expectedRevision: expected_revision, nodeId: node_id, clipId: clip_id }),
+    }, ({ canvas_id, expected_revision, read_set, node_id, clip_id }) => scopedTool(read_set,
+      async () => removeMcpVideoMasterScene(principal, { projectId: canvas_id, expectedRevision: expected_revision, readSet: await resolveCanvasReadReceipt(principal, read_set), nodeId: node_id, clipId: clip_id }),
       (canvas) => ({ canvas }),
     ));
   }
@@ -837,12 +856,12 @@ export function createScenelithMcpServer(principal: McpPrincipal, origin: string
       description: "Run an Assistant node with its exact connected text, system prompt, model and visual references. This may consume credits or provider resources. The result is saved only if the node inputs did not change while the model was running.",
       inputSchema: z.object({
         canvas_id: z.string().min(1),
-        expected_revision: z.number().int().nonnegative(),
+        expected_revision: z.number().int().nonnegative(), read_set: canvasReadSetInput,
         node_id: z.string().min(1),
       }).strict(),
       annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: true },
-    }, ({ canvas_id, expected_revision, node_id }) => safeTool(
-      () => runMcpCanvasAssistant(principal, { projectId: canvas_id, expectedRevision: expected_revision, nodeId: node_id }),
+    }, ({ canvas_id, expected_revision, read_set, node_id }) => scopedTool(read_set,
+      async () => runMcpCanvasAssistant(principal, { projectId: canvas_id, expectedRevision: expected_revision, readSet: await resolveCanvasReadReceipt(principal, read_set), nodeId: node_id }),
       (result) => ({ result }),
     ));
 
@@ -851,13 +870,13 @@ export function createScenelithMcpServer(principal: McpPrincipal, origin: string
       description: "Turn a brief into a model-aware Image or Video Generator prompt using the node's exact connected references. This may consume credits or provider resources. The prompt is inserted only if the node inputs did not change during the run.",
       inputSchema: z.object({
         canvas_id: z.string().min(1),
-        expected_revision: z.number().int().nonnegative(),
+        expected_revision: z.number().int().nonnegative(), read_set: canvasReadSetInput,
         node_id: z.string().min(1),
         brief: z.string().trim().min(2).max(5_000),
       }).strict(),
       annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: true },
-    }, ({ canvas_id, expected_revision, node_id, brief }) => safeTool(
-      () => composeMcpCanvasPrompt(principal, { projectId: canvas_id, expectedRevision: expected_revision, nodeId: node_id, brief }),
+    }, ({ canvas_id, expected_revision, read_set, node_id, brief }) => scopedTool(read_set,
+      async () => composeMcpCanvasPrompt(principal, { projectId: canvas_id, expectedRevision: expected_revision, readSet: await resolveCanvasReadReceipt(principal, read_set), nodeId: node_id, brief }),
       (result) => ({ result }),
     ));
   }
@@ -866,10 +885,10 @@ export function createScenelithMcpServer(principal: McpPrincipal, origin: string
     server.registerTool("run_canvas_generation", {
       title: "Run canvas generation",
       description: "Start a Generator or one Video Master scene. For a Master pass clip_id and expected_scene_revision from get_canvas.videoMasterScenes: unrelated canvas edits will not block it. Exact source scene clips are prepared automatically, including duration trims. This consumes credits or provider resources. creditCost is the launch quote, not provider consumption. When present, creditUsage identifies the account unit and reserved/charged/refunded amounts; only chargedCredits is final spend. Poll the returned generation ID; GENERATION_ALREADY_RUNNING also supplies the existing ID.",
-      inputSchema: z.object({ canvas_id: z.string().min(1), expected_revision: z.number().int().nonnegative(), node_id: z.string().min(1), clip_id: z.string().min(1).max(200).optional(), expected_scene_revision: z.string().regex(/^[a-f0-9]{64}$/).optional(), generation_count: z.number().int().min(1).max(8).optional() }).strict(),
+      inputSchema: z.object({ canvas_id: z.string().min(1), expected_revision: z.number().int().nonnegative(), read_set: canvasReadSetInput, node_id: z.string().min(1), clip_id: z.string().min(1).max(200).optional(), expected_scene_revision: z.string().regex(/^[a-f0-9]{64}$/).optional(), generation_count: z.number().int().min(1).max(8).optional() }).strict(),
       annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: true },
-    }, ({ canvas_id, expected_revision, node_id, clip_id, expected_scene_revision, generation_count }) => safeTool(
-      () => runMcpCanvasGeneration(principal, { projectId: canvas_id, expectedRevision: expected_revision, nodeId: node_id, clipId: clip_id, expectedSceneRevision: expected_scene_revision, generationCount: generation_count }),
+    }, ({ canvas_id, expected_revision, read_set, node_id, clip_id, expected_scene_revision, generation_count }) => scopedTool(read_set,
+      async () => runMcpCanvasGeneration(principal, { projectId: canvas_id, expectedRevision: expected_revision, readSet: await resolveCanvasReadReceipt(principal, read_set), nodeId: node_id, clipId: clip_id, expectedSceneRevision: expected_scene_revision, generationCount: generation_count }),
       (result) => ({ result }),
     ));
 
@@ -894,13 +913,13 @@ export function createScenelithMcpServer(principal: McpPrincipal, origin: string
       title: "Edit canvas image in place",
       description: "Edit the active image in one existing canvas node, preserving the base image and output history. Optional approved Library references receive stable prompt tokens. This consumes credits or provider resources.",
       inputSchema: z.object({
-        canvas_id: z.string().min(1), expected_revision: z.number().int().nonnegative(), node_id: z.string().min(1), prompt: z.string().trim().min(2).max(20_000),
+        canvas_id: z.string().min(1), expected_revision: z.number().int().nonnegative(), read_set: canvasReadSetInput, node_id: z.string().min(1), prompt: z.string().trim().min(2).max(20_000),
         model_id: z.string().min(1).max(120).optional(), resolution: z.string().min(1).max(20).optional(), aspect_ratio: z.string().min(1).max(20).optional(), size_mode: z.enum(["original", "custom"]).default("original"),
         references: z.array(z.object({ asset_id: z.string().min(1), title: z.string().trim().min(1).max(160).optional(), detail: z.string().max(500).optional(), origin: z.enum(["canvas", "identity", "upload"]).optional() }).strict()).max(49).default([]),
       }).strict(),
       annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: true },
-    }, ({ canvas_id, expected_revision, node_id, prompt, model_id, resolution, aspect_ratio, size_mode, references }) => safeTool(
-      () => editMcpCanvasImage(principal, { projectId: canvas_id, expectedRevision: expected_revision, nodeId: node_id, prompt, modelId: model_id, resolution, aspectRatio: aspect_ratio, sizeMode: size_mode, references: references.map((reference) => ({ assetId: reference.asset_id, title: reference.title, detail: reference.detail, origin: reference.origin })) }),
+    }, ({ canvas_id, expected_revision, read_set, node_id, prompt, model_id, resolution, aspect_ratio, size_mode, references }) => scopedTool(read_set,
+      async () => editMcpCanvasImage(principal, { projectId: canvas_id, expectedRevision: expected_revision, readSet: await resolveCanvasReadReceipt(principal, read_set), nodeId: node_id, prompt, modelId: model_id, resolution, aspectRatio: aspect_ratio, sizeMode: size_mode, references: references.map((reference) => ({ assetId: reference.asset_id, title: reference.title, detail: reference.detail, origin: reference.origin })) }),
       (result) => result,
     ));
   }
@@ -927,12 +946,12 @@ export function createScenelithMcpServer(principal: McpPrincipal, origin: string
       description: "Import a direct TikTok slideshow or video, persist its media in the approved canvas Library, extract available hook evidence, detect video scenes, and append the same source/scene graph created by the Canvas UI. This fetches external media and may take several minutes.",
       inputSchema: z.object({
         canvas_id: z.string().min(1),
-        expected_revision: z.number().int().nonnegative(),
+        expected_revision: z.number().int().nonnegative(), read_set: canvasReadSetInput,
         url: z.string().url().refine((value) => /tiktok\.com/i.test(value), "TikTok URL required"),
       }).strict(),
       annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: true },
-    }, ({ canvas_id, expected_revision, url }) => safeTool(
-      () => importMcpTikTokToCanvas(principal, { projectId: canvas_id, expectedRevision: expected_revision, url }),
+    }, ({ canvas_id, expected_revision, read_set, url }) => scopedTool(read_set,
+      async () => importMcpTikTokToCanvas(principal, { projectId: canvas_id, expectedRevision: expected_revision, readSet: await resolveCanvasReadReceipt(principal, read_set), url }),
       (result) => result,
     ));
 
@@ -945,30 +964,30 @@ export function createScenelithMcpServer(principal: McpPrincipal, origin: string
     server.registerTool("capture_canvas_video_frame", {
       title: "Capture video frame",
       description: "May return a pending media job; read get_media_job and repeat with the current canvas revision to attach the result. Capture an exact still frame from an accessible canvas video, store it in the same canvas Library, and add the resulting image node below the source just like the Canvas editor.",
-      inputSchema: z.object({ canvas_id: z.string().min(1), expected_revision: z.number().int().nonnegative(), source_node_id: z.string().min(1), time_seconds: z.number().finite().min(0).max(21_600) }).strict(),
+      inputSchema: z.object({ canvas_id: z.string().min(1), expected_revision: z.number().int().nonnegative(), read_set: canvasReadSetInput, source_node_id: z.string().min(1), time_seconds: z.number().finite().min(0).max(21_600) }).strict(),
       annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: false },
-    }, ({ canvas_id, expected_revision, source_node_id, time_seconds }) => safeTool(
-      () => captureMcpCanvasVideoFrame(principal, { projectId: canvas_id, expectedRevision: expected_revision, sourceNodeId: source_node_id, time: time_seconds }),
+    }, ({ canvas_id, expected_revision, read_set, source_node_id, time_seconds }) => scopedTool(read_set,
+      async () => captureMcpCanvasVideoFrame(principal, { projectId: canvas_id, expectedRevision: expected_revision, readSet: await resolveCanvasReadReceipt(principal, read_set), sourceNodeId: source_node_id, time: time_seconds }),
       (result) => result,
     ));
 
     server.registerTool("materialize_canvas_video_segment", {
       title: "Prepare video segment",
       description: "May return a pending media job; read get_media_job and repeat with the current canvas revision to attach the result. Materialize one detected or edited source scene as an exact zero-based MP4, then update every related canvas node, edge and Video Master scene without losing concurrent unrelated edits.",
-      inputSchema: z.object({ canvas_id: z.string().min(1), expected_revision: z.number().int().nonnegative(), source_node_id: z.string().min(1), segment_id: z.string().min(1).max(180) }).strict(),
+      inputSchema: z.object({ canvas_id: z.string().min(1), expected_revision: z.number().int().nonnegative(), read_set: canvasReadSetInput, source_node_id: z.string().min(1), segment_id: z.string().min(1).max(180) }).strict(),
       annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: false },
-    }, ({ canvas_id, expected_revision, source_node_id, segment_id }) => safeTool(
-      () => materializeMcpCanvasVideoSegment(principal, { projectId: canvas_id, expectedRevision: expected_revision, sourceNodeId: source_node_id, segmentId: segment_id }),
+    }, ({ canvas_id, expected_revision, read_set, source_node_id, segment_id }) => scopedTool(read_set,
+      async () => materializeMcpCanvasVideoSegment(principal, { projectId: canvas_id, expectedRevision: expected_revision, readSet: await resolveCanvasReadReceipt(principal, read_set), sourceNodeId: source_node_id, segmentId: segment_id }),
       (result) => result,
     ));
 
     server.registerTool("refresh_tiktok_source", {
       title: "Refresh TikTok source stats",
       description: "Refresh the author, publication time and engagement counters for one imported TikTok source node and update matching original-hook views.",
-      inputSchema: z.object({ canvas_id: z.string().min(1), expected_revision: z.number().int().nonnegative(), source_node_id: z.string().min(1) }).strict(),
+      inputSchema: z.object({ canvas_id: z.string().min(1), expected_revision: z.number().int().nonnegative(), read_set: canvasReadSetInput, source_node_id: z.string().min(1) }).strict(),
       annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: true },
-    }, ({ canvas_id, expected_revision, source_node_id }) => safeTool(
-      () => refreshMcpTikTokSource(principal, { projectId: canvas_id, expectedRevision: expected_revision, sourceNodeId: source_node_id }),
+    }, ({ canvas_id, expected_revision, read_set, source_node_id }) => scopedTool(read_set,
+      async () => refreshMcpTikTokSource(principal, { projectId: canvas_id, expectedRevision: expected_revision, readSet: await resolveCanvasReadReceipt(principal, read_set), sourceNodeId: source_node_id }),
       (result) => result,
     ));
   }
