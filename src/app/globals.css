@@ -670,9 +670,9 @@ button { color: inherit; }
 .video-scene-boundary:active > span,.video-scene-boundary.is-dragging > span { transform:translateY(-50%) scale(.96); }
 .video-scene-playhead { width:1px; position:absolute; z-index:7; top:-16px; bottom:-4px; left:var(--scene-playhead); background:#f5f5f1; pointer-events:none; transform:translateX(-.5px); box-shadow:0 0 0 1px rgba(8,9,9,.3); }
 .video-scene-playhead::before { content:""; width:6px; height:6px; position:absolute; top:-1px; left:-2.5px; border-radius:50%; background:#f5f5f1; }
-.video-scene-actions { min-height:30px; padding-top:9px; display:flex; align-items:center; justify-content:space-between; gap:9px; }
+.video-scene-actions { min-height:30px; padding-top:9px; display:flex; flex-wrap:wrap; align-items:center; justify-content:space-between; gap:9px; }
 .video-scene-actions > span { color:var(--color-text-dim); font:600 6px/1.2 ui-monospace,monospace; white-space:nowrap; }
-.video-scene-actions > div { display:flex; align-items:center; gap:3px; }
+.video-scene-actions > div { margin-left:auto; display:flex; align-items:center; gap:3px; }
 .video-scene-actions button { height:25px; padding:0 7px; display:inline-flex; align-items:center; justify-content:center; gap:4px; border:0; border-radius:7px; background:transparent; color:var(--color-text-muted); font-size:7px; font-weight:680; cursor:pointer; }
 .video-scene-actions button:hover:not(:disabled) { background:transparent; color:var(--color-text); }.video-scene-actions button:active:not(:disabled) { transform:translateY(1px); }.video-scene-actions button:disabled { opacity:.28; cursor:default; }
 .video-scene-actions button.is-primary { padding:0 9px; background:var(--color-text); color:var(--color-ink-0); }.video-scene-actions button.is-primary:hover { background:var(--color-mint-hover); color:var(--color-ink-0); }
