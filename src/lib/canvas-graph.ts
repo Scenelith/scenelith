@@ -47,6 +47,23 @@ export function generatorSourceAssetIds(node: Pick<FrameNode, "data">) {
   return ids.filter((assetId, index) => Boolean(assetId) && ids.indexOf(assetId) === index);
 }
 
+/** Ordinary generator references follow the source's visible range; Master clips stay pinned. */
+export function resolveVideoSourceOutputEdge(edge: FrameEdge, source?: FrameNode, target?: FrameNode): FrameEdge {
+  if (source?.data.kind !== "source" || source.data.mediaType !== "video" || !source.data.videoSegments?.length
+    || source.data.videoOutputSelection === undefined || !["prompt", "assistant"].includes(target?.data.kind || "")
+    || edge.data?.masterClipId) return edge;
+  const segment = source.data.videoSegments.find((item) => item.id === source.data.videoOutputSelection);
+  const sourceHandle = segment ? `segment-output:${segment.id}` : "video-output";
+  const range = {
+    sourceSegmentId: segment?.id, sourceSegmentStart: segment?.start, sourceSegmentEnd: segment?.end,
+    sourceSegmentLabel: segment?.label, sourceSegmentThumbnailUrl: segment?.thumbnailUrl,
+    clipAssetId: segment?.clipAssetId, clipUrl: segment?.clipUrl,
+    generationClipAssetId: undefined, generationClipUrl: undefined, generationClipDuration: undefined,
+  };
+  if (edge.sourceHandle === sourceHandle && Object.entries(range).every(([key, value]) => edge.data?.[key as keyof NonNullable<FrameEdge["data"]>] === value)) return edge;
+  return { ...edge, sourceHandle, data: { ...edge.data, ...range } };
+}
+
 function edgePortType(edge: FrameEdge, sourceNode?: FrameNode): FramePortType {
   if (edge.sourceHandle === "text-output" || edge.targetHandle === "text-input" || edge.data?.portType === "text") return "text";
   if (edge.sourceHandle === "video-output" || edge.data?.portType === "video" || sourceNode?.data.mediaType === "video") return "video";
@@ -203,9 +220,10 @@ export function normalizeEdgePorts(edges: FrameEdge[], graphNodes: FrameNode[]):
       // edge, which no longer has a UI handle and rendered into empty space.
       return !(nodeById.get(edge.target)?.data.kind === "videoMaster" && edge.targetHandle === "video-master-input");
     })
-    .map((edge) => {
-      const sourceNode = nodeById.get(edge.source);
-      const targetNode = nodeById.get(edge.target);
+    .map((savedEdge) => {
+      const sourceNode = nodeById.get(savedEdge.source);
+      const targetNode = nodeById.get(savedEdge.target);
+      const edge = resolveVideoSourceOutputEdge(savedEdge, sourceNode, targetNode);
       const targetKind = targetNode?.data.kind;
       const automationKind = targetNode?.data.automationKind === "tiktok-slideshow" ? "tiktok-slideshow" as const : edge.data?.automationKind;
       const automationSourceNodeId = String(targetNode?.data.automationSourceNodeId || edge.data?.automationSourceNodeId || "") || undefined;

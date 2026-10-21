@@ -1,0 +1,24 @@
+import {readFileSync} from 'node:fs';
+import path from 'node:path';
+import {build} from 'esbuild';
+import {expect,test} from '@playwright/test';
+test('Full and scene choices share the visible range, playback range and existing generator connection',async({page})=>{
+ const errors:string[]=[];page.on('pageerror',error=>errors.push(error.message));
+ const bundle=await build({entryPoints:['tests/browser/fixtures/video-source-selection.tsx'],bundle:true,write:false,platform:'browser',jsx:'automatic',tsconfig:path.resolve('tsconfig.json'),define:{'process.env.NODE_ENV':'"production"'}});
+ const css=readFileSync('src/app/globals.css','utf8')+readFileSync('src/app/theme.css','utf8');
+ await page.route('https://selection.test/',route=>route.fulfill({contentType:'text/html',body:`<style>${css}</style><div id="root"></div>`}));
+ await page.route('https://selection.test/video.mp4',route=>route.fulfill({contentType:'video/mp4',body:readFileSync('tests/browser/fixtures/playback.mp4')}));
+ await page.setViewportSize({width:1100,height:1100});await page.goto('https://selection.test/');await page.addScriptTag({content:bundle.outputFiles[0].text});
+ const track=page.locator('.video-scene-track'),player=page.locator('[data-playback-owner="video-source:source"]');
+ const graph=async()=>JSON.parse((await page.getByTestId('graph').textContent())!);
+ const choose=async(name:string)=>{await page.getByRole('button',{name:'Choose Video Master input'}).click();await page.getByRole('option',{name:new RegExp(name)}).click();};
+ await expect(track).toHaveAttribute('data-output-selection','full');await expect(track).toHaveClass(/is-full-output/);await expect(page.locator('.video-scene-segment-range.is-selected')).toHaveCount(0);await expect(page.locator('.video-scene-readout b')).toHaveText('Full video');await expect(player).toHaveAttribute('data-playback-key','full');
+ await choose('Scene 02');await expect(track).toHaveAttribute('data-output-selection','two');await expect(player).toHaveAttribute('data-playback-key','two');await expect(page.locator('.video-scene-segment-range.is-selected')).toHaveAttribute('data-video-segment-id','two');
+ let ref=(await graph()).edges[0];expect(ref.sourceHandle).toBe('segment-output:two');expect(ref.data.clipAssetId).toBe('clip-two');expect([ref.data.sourceSegmentStart,ref.data.sourceSegmentEnd]).toEqual([3,8]);
+ await page.getByRole('button',{name:'Play',exact:true}).click();await expect.poll(()=>page.locator('video[data-active-deck="true"]').evaluate((v:HTMLVideoElement)=>v.currentTime)).toBeGreaterThan(3);
+ await choose('Full video');await expect(track).toHaveClass(/is-full-output/);await expect(player).toHaveAttribute('data-playback-key','full');ref=(await graph()).edges[0];expect(ref.sourceHandle).toBe('video-output');expect(ref.data.sourceSegmentId).toBeUndefined();expect(ref.data.clipAssetId).toBeUndefined();
+ await page.getByRole('button',{name:'Play',exact:true}).click();await expect.poll(()=>page.locator('video[data-active-deck="true"]').evaluate((v:HTMLVideoElement)=>v.currentTime)).toBeGreaterThan(3.1);
+ await page.getByRole('button',{name:'Pause',exact:true}).click();await expect(page.locator('.video-scene-readout b')).toHaveText('Full video');
+ await choose('Scene 01');await page.getByRole('button',{name:'Reopen saved timeline'}).click();await expect(track).toHaveAttribute('data-output-selection','one');await expect(player).toHaveAttribute('data-playback-key','one');ref=(await graph()).edges[0];expect(ref.data.clipAssetId).toBe('clip-one');
+ await page.screenshot({path:'test-results/video-source-selection.png'});expect(errors).toEqual([]);
+});

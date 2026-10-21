@@ -1,4 +1,5 @@
 import type { FrameEdge, ProjectGraph } from "./types";
+import { resolveVideoSourceOutputEdge } from "./canvas-graph";
 
 /** The last explicitly connected input chooses the provider's reference mode. */
 export function incompatibleReferenceRoles(modelId: string | undefined, role: string | undefined): string[] {
@@ -53,7 +54,8 @@ export function reconcileGeneratorReferenceChanges(previous: ProjectGraph, next:
     additions.sort((left, right) => (order.get(key(left)) ?? -1) - (order.get(key(right)) ?? -1));
   }
   let nodes = next.nodes;
-  let edges = next.edges;
+  const nodeById = new Map(next.nodes.map((node) => [node.id, node]));
+  let edges = next.edges.map((edge) => resolveVideoSourceOutputEdge(edge, nodeById.get(edge.source), nodeById.get(edge.target)));
   let disconnected = 0;
   const resolved = new Set<string>();
   for (const input of additions.toReversed()) {

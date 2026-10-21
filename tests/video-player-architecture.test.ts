@@ -177,7 +177,7 @@ test("TikTok import atomically transfers the paused media lease to its new edito
   const importFlow = canvasApp.slice(canvasApp.indexOf("async function importSource"), canvasApp.indexOf("async function createProject"));
   assert.match(importFlow, /const focusedImportedNode = videoTimelineNode \|\| sceneNodes\[0\] \|\| sourceNode/);
   assert.match(importFlow, /stopAllVideoPlayback\(\);[\s\S]*?setSelectedId\(focusedImportedNode\.id\);[\s\S]*?commitGraph\(selectGraphNode\([\s\S]*?focusedImportedNode\.id\)/);
-  assert.match(sceneTimeline, /setSelectedSegmentId\(currentSegment\.id\);[\s\S]*?play\(true, 0, currentSegment\.id\)/);
+  assert.match(sceneTimeline, /onOutputSelectionChange\(currentSegment\.id\);[\s\S]*?play\(true, 0, currentSegment\.id\)/);
   assert.match(masterPlayer, /shouldAttachVideoTransport\(\{ selected: active, ownerId: playbackOwnerId, command \}\)/);
 });
 
@@ -283,8 +283,8 @@ test("selecting a source scene issues one stable seek-and-play command", () => {
   assert.match(sceneTimeline, /handledSegmentClickRef\.current === segment\.id[\s\S]*?playSelectedSourceSegment\(segment\)/);
   const segmentClickHandler = sceneTimeline.slice(sceneTimeline.indexOf("data-video-segment-id={segment.id}"), sceneTimeline.indexOf("video-scene-boundary"));
   assert.doesNotMatch(segmentClickHandler, /\.load\(\)|\.play\(\)|\.src\s*=/);
-  assert.match(sceneTimeline, /setSelectedSegmentId\(currentSegment\.id\);[\s\S]*?play\(true, 0, currentSegment\.id\)/);
-  assert.match(sceneTimeline, /const seek = \(time: number\) => \{[\s\S]*?setSeekRequest\([\s\S]*?relativeTime: Math\.max\(0, next - active\.start\)/);
+  assert.match(sceneTimeline, /onOutputSelectionChange\(currentSegment\.id\);[\s\S]*?play\(true, 0, currentSegment\.id\)/);
+  assert.match(sceneTimeline, /const seek = \(time: number\) => \{[\s\S]*?setSeekRequest\([\s\S]*?relativeTime: Math\.max\(0, next - \(selectedSegmentIdRef\.current === "full" \? 0 : active\.start\)\)/);
   assert.match(sceneTimeline, /const play = \(manual:[\s\S]*?videoPlaybackManager\.play\(playbackOwnerId, targetKey/);
 });
 

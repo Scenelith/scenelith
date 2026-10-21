@@ -3374,7 +3374,7 @@ function CanvasWorkspace({ initialProject, projects: initialProjects, initialWor
   async function ensureGeneratorSegmentReferences(nodeId: string, explicitMasterClipId?: string) {
     const generatorNode = nodesRef.current.find((node) => node.id === nodeId);
     const masterClipId = generatorNode?.data.kind === "videoMaster" ? explicitMasterClipId || generatorNode.data.videoMasterGeneratingClipId : undefined;
-    const segmentEdges = edgesRef.current.filter((edge) => edge.target === nodeId && edge.data?.sourceSegmentId && (!masterClipId || edge.data?.masterClipId === masterClipId));
+    const segmentEdges = normalizeEdgePorts(edgesRef.current, nodesRef.current).filter((edge) => edge.target === nodeId && edge.data?.sourceSegmentId && (!masterClipId || edge.data?.masterClipId === masterClipId));
     if (!segmentEdges.length) return;
     await Promise.all(segmentEdges.map((edge) => materializeVideoSegment(edge.source, String(edge.data?.sourceSegmentId))));
   }

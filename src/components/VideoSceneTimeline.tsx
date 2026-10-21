@@ -111,7 +111,7 @@ export function VideoSceneTimeline({ nodeId, src, title, selected, segments, det
   const [muted, setMuted] = useState(true);
   const [playRequest, setPlayRequest] = useState<{ token: number; targetKey: string; relativeTime: number } | null>(null);
   const [seekRequest, setSeekRequest] = useState({ token: 0, relativeTime: 0 });
-  const [selectedSegmentId, setSelectedSegmentId] = useState(segments[0]?.id || "");
+  const selectedSegmentId = localSegments.some((segment) => segment.id === outputSelection) ? outputSelection : "full";
   const selectedSegmentIdRef = useRef(selectedSegmentId);
   useLayoutEffect(() => {
     selectedSegmentIdRef.current = selectedSegmentId;
@@ -141,7 +141,6 @@ export function VideoSceneTimeline({ nodeId, src, title, selected, segments, det
     setDuration(nextDuration);
     const normalized = normalizeSegments(segments, nextDuration);
     setSegments(normalized);
-    setSelectedSegmentId((current) => normalized.some((segment) => segment.id === current) ? current : normalized[0]?.id || "");
   }, [durationHint, segments]);
 
   useEffect(() => () => segmentDragCleanupRef.current?.(), []);
@@ -150,11 +149,6 @@ export function VideoSceneTimeline({ nodeId, src, title, selected, segments, det
     if (outputSelection === "full" || localSegments.some((segment) => segment.id === outputSelection)) return;
     onOutputSelectionChange("full");
   }, [localSegments, onOutputSelectionChange, outputSelection]);
-
-  useEffect(() => {
-    if (selected || outputSelection === "full" || !localSegments.some((segment) => segment.id === outputSelection)) return;
-    queueMicrotask(() => setSelectedSegmentId(outputSelection));
-  }, [localSegments, outputSelection, selected]);
 
   useEffect(() => {
     const viewport = timelineViewportRef.current;
@@ -187,7 +181,8 @@ export function VideoSceneTimeline({ nodeId, src, title, selected, segments, det
     return () => viewport.removeEventListener("wheel", onWheel);
   }, []);
 
-  const selectedSegment = localSegments.find((segment) => segment.id === selectedSegmentId) || localSegments[0];
+  const selectedSegment = localSegments.find((segment) => segment.id === selectedSegmentId)
+    || { id: "full", label: "Full video", role: "video", start: 0, end: duration, thumbnailUrl: segments[0]?.thumbnailUrl };
   const progress = Math.min(100, Math.max(0, currentTime / duration * 100));
   const timelineStyle = { "--scene-playhead": `${progress}%` } as CSSProperties;
   const replacementCount = useMemo(() => localSegments.filter((segment) => segment.replacementAssetId).length, [localSegments]);
@@ -237,10 +232,10 @@ export function VideoSceneTimeline({ nodeId, src, title, selected, segments, det
     setCurrentTime(next);
     const active = localSegmentsRef.current.find((segment) => next >= segment.start && next < segment.end) || localSegmentsRef.current.at(-1);
     if (!active) return;
-    if (!dragRef.current) setSelectedSegmentId(active.id);
-    videoPlaybackManager.pause(playbackOwnerId, active.id);
+    videoPlaybackManager.pause(playbackOwnerId, selectedSegmentIdRef.current);
+    if (!dragRef.current && selectedSegmentIdRef.current !== "full" && active.id !== selectedSegmentIdRef.current) onOutputSelectionChange(active.id);
     setPlaying(false);
-    setSeekRequest((request) => ({ token: request.token + 1, relativeTime: Math.max(0, next - active.start) }));
+    setSeekRequest((request) => ({ token: request.token + 1, relativeTime: Math.max(0, next - (selectedSegmentIdRef.current === "full" ? 0 : active.start)) }));
   };
 
   const scrubAt = (surface: "transport" | "timeline", clientX: number, transport?: HTMLDivElement) => {
@@ -386,8 +381,6 @@ export function VideoSceneTimeline({ nodeId, src, title, selected, segments, det
     videoPlaybackManager.pause(playbackOwnerId, selectedSegmentIdRef.current || "full");
     manualPlaybackRef.current = false;
     hoverSuppressedRef.current = true;
-    const active = resetSegments.find((segment) => currentTime >= segment.start && currentTime < segment.end) || resetSegments.at(-1);
-    if (active) setSelectedSegmentId(active.id);
     if (outputSelection !== "full" && !resetSegments.some((segment) => segment.id === outputSelection)) onOutputSelectionChange("full");
     commit(resetSegments);
   };
@@ -409,7 +402,6 @@ export function VideoSceneTimeline({ nodeId, src, title, selected, segments, det
         ? { ...segment, start: time, clipAssetId: boundaryChanged ? undefined : segment.clipAssetId, clipUrl: boundaryChanged ? undefined : segment.clipUrl }
         : segment);
     setSegments(next);
-    setSelectedSegmentId(following.id);
     seek(time);
   };
 
@@ -454,8 +446,8 @@ export function VideoSceneTimeline({ nodeId, src, title, selected, segments, det
       { ...segment, end: currentTime },
       { ...segment, id: nextId, start: currentTime, thumbnailTime: currentTime, confidence: 1, replacementAssetId: undefined, replacementUrl: undefined },
     ]);
-    setSelectedSegmentId(nextId);
     commit(next);
+    if (outputSelection !== "full") onOutputSelectionChange(nextId);
   };
 
   const captureCurrentFrame = async () => {
@@ -510,7 +502,6 @@ export function VideoSceneTimeline({ nodeId, src, title, selected, segments, det
 
   const playSelectedSourceSegment = (segment: VideoSceneSegment) => {
     const currentSegment = localSegmentsRef.current.find((item) => item.id === segment.id) || segment;
-    setSelectedSegmentId(currentSegment.id);
     onOutputSelectionChange(currentSegment.id);
     // One click is one media command. Keeping seek and play under the same
     // command id prevents a late rejection from the interrupted scene from
@@ -707,7 +698,7 @@ export function VideoSceneTimeline({ nodeId, src, title, selected, segments, det
       <div ref={timelineViewportRef} className="video-scene-timeline-viewport">
       <div className="video-scene-timeline-canvas" style={{ ...timelineStyle, width: `${timelineZoom * 100}%` }} onPointerDown={(event) => beginScrub("timeline", event)} onPointerMove={(event) => moveScrub("timeline", event)} onPointerUp={(event) => endScrub("timeline", event)} onPointerCancel={(event) => endScrub("timeline", event)}>
       <div className="video-scene-ruler" aria-hidden="true">{rulerTicks.map((tick) => <span key={tick.left} style={{ left: `${tick.left}%` }}><i />{rulerTime(tick.time)}</span>)}</div>
-      <div ref={trackRef} className="video-scene-track">
+      <div ref={trackRef} className={`video-scene-track ${selectedSegmentId === "full" ? "is-full-output" : ""}`} data-output-selection={selectedSegmentId}>
         <div className="video-scene-filmstrip" aria-hidden="true">{filmstripFrames.map((frame) => <i key={frame.key} style={frame.style} />)}</div>
         {localSegments.map((segment, index) => {
           const left = segment.start / duration * 100;
@@ -765,7 +756,7 @@ export function VideoSceneTimeline({ nodeId, src, title, selected, segments, det
         <span>⌘ + wheel zoom · wheel scroll · arrows 1 frame · Shift 1 ms <b>{Math.round(timelineZoom * 100)}%</b></span>
         <div>
           <button type="button" onClick={resetDetectedScenes} disabled={!canResetSegments} title="Restore automatically detected scenes"><RotateCcw size={12} />Reset cuts</button>
-          <button type="button" onClick={splitAtPlayhead} disabled={!selectedSegment || currentTime <= selectedSegment.start + 1 / 120 || currentTime >= selectedSegment.end - 1 / 120}><Scissors size={12} />Split</button>
+          <button type="button" onClick={splitAtPlayhead} disabled={!localSegments.some((segment) => currentTime > segment.start + 1 / 120 && currentTime < segment.end - 1 / 120)}><Scissors size={12} />Split</button>
           <div ref={outputMenuRef} className={`video-scene-output-select ${outputMenuOpen ? "is-open" : ""}`} onPointerDown={(event) => event.stopPropagation()}>
             <button
               type="button"
@@ -776,7 +767,7 @@ export function VideoSceneTimeline({ nodeId, src, title, selected, segments, det
               onClick={() => setOutputMenuOpen((open) => !open)}
             ><Video size={11} /><span>{outputSelection === "full" ? "Full" : localSegments.find((segment) => segment.id === outputSelection)?.label || "Full"}</span><ChevronDown size={11} /></button>
             {outputMenuOpen && <div className="video-scene-output-menu" role="listbox" aria-label="Video Master input">
-              {[{ value: "full", label: "Full video", detail: preciseTime(duration) }, ...localSegments.map((segment) => ({ value: segment.id, label: segment.label, detail: `${preciseTime(segment.start)} — ${preciseTime(segment.end)}` }))].map((option) => <button type="button" role="option" aria-selected={outputSelection === option.value} key={option.value} onClick={() => { onOutputSelectionChange(option.value); setOutputMenuOpen(false); }}><span><strong>{option.label}</strong><small>{option.detail}</small></span>{outputSelection === option.value && <Check size={11} />}</button>)}
+              {[{ value: "full", label: "Full video", detail: preciseTime(duration) }, ...localSegments.map((segment) => ({ value: segment.id, label: segment.label, detail: `${preciseTime(segment.start)} — ${preciseTime(segment.end)}` }))].map((option) => <button type="button" role="option" aria-selected={outputSelection === option.value} key={option.value} onClick={() => { videoPlaybackManager.pause(playbackOwnerId, selectedSegmentIdRef.current); manualPlaybackRef.current = false; setPlaying(false); setCurrentTime(option.value === "full" ? 0 : localSegments.find((segment) => segment.id === option.value)?.start || 0); setSeekRequest((request) => ({ token: request.token + 1, relativeTime: 0 })); onOutputSelectionChange(option.value); setOutputMenuOpen(false); }}><span><strong>{option.label}</strong><small>{option.detail}</small></span>{outputSelection === option.value && <Check size={11} />}</button>)}
             </div>}
           </div>
           <button
