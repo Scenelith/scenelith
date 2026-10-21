@@ -1,0 +1,52 @@
+import { readFileSync } from "node:fs";
+import path from "node:path";
+import { build } from "esbuild";
+import { expect, test } from "@playwright/test";
+
+let fixture: string;
+test.beforeAll(async () => {
+  fixture = (await build({ entryPoints: ["tests/browser/fixtures/canvas-assistant-position.tsx"], absWorkingDir: process.cwd(), tsconfig: path.resolve("tsconfig.json"), bundle: true, write: false, platform: "browser", jsx: "automatic", define: { "process.env.NODE_ENV": '"production"' } })).outputFiles[0].text;
+});
+for (const master of [false, true]) for (const zoom of [.65, 1]) test(`Canvas assistant stays with ${master ? "Master" : "generator"} at zoom ${zoom} and suppresses prompt hover`, async ({ page }) => {
+  test.setTimeout(25000);
+  const errors: string[] = []; page.on("pageerror", (error) => errors.push(error.message));
+  await page.setViewportSize({ width: 1600, height: 1200 });
+  await page.route("https://canvas.test/**", (route) => route.fulfill({ contentType: "text/html", body: `<style>${readFileSync("node_modules/@xyflow/react/dist/style.css", "utf8")}${readFileSync("src/app/globals.css", "utf8")}${readFileSync("src/app/theme.css", "utf8")}body{margin:0}</style><div id="root"></div>` }));
+  await page.goto(`https://canvas.test/?zoom=${zoom}${master ? "&master=1" : ""}`);
+  await page.addScriptTag({ content: fixture });
+  const card = page.locator(master ? ".frame-node--video-master" : ".frame-node--generator");
+  await card.hover({position:{x:5,y:5}});
+  await page.getByRole("button", { name: master ? "Open scene prompt assistant" : "Open prompt assistant", exact: true }).click();
+  const assistant = page.getByRole("dialog", { name: "Prompt assistant", exact: true });
+  await expect(assistant).toBeVisible();
+  expect(await assistant.evaluate((element) => !!element.closest(".react-flow__viewport"))).toBe(true);
+  expect((await assistant.boundingBox())!.width).toBeCloseTo(430, 0);
+  const prompt = card.locator(".generator-overlay textarea");
+  const before = await prompt.boundingBox();
+  expect(await prompt.evaluate((element) => getComputedStyle(element).height)).toBe("44px");
+  await page.mouse.move(30, 1000);
+  await card.hover({position:{x:5,y:5}});
+  expect(await prompt.boundingBox()).toEqual(before);
+  const localPosition = async () => assistant.evaluate((element) => {
+    const panel = element.closest("[data-floating-menu]")!.getBoundingClientRect(), viewport = element.closest<HTMLElement>(".react-flow__viewport")!, bounds = viewport.getBoundingClientRect(), scale = bounds.width / viewport.offsetWidth;
+    return { x: Math.round((panel.x - bounds.x) / scale * 100) / 100, y: Math.round((panel.y - bounds.y) / scale * 100) / 100 };
+  });
+  const initial = await localPosition(), viewportBefore = await page.locator(".react-flow__viewport").getAttribute("style");
+  await page.mouse.move(30, 1000); await page.mouse.wheel(100, 140);
+  await expect(page.locator(".react-flow__viewport")).not.toHaveAttribute("style", viewportBefore!);
+  await expect.poll(localPosition).toEqual(initial);
+  const pannedViewport = await page.locator(".react-flow__viewport").getAttribute("style");
+  await page.keyboard.down("Control"); await page.mouse.wheel(0, -100); await page.keyboard.up("Control");
+  await expect(page.locator(".react-flow__viewport")).not.toHaveAttribute("style", pannedViewport!);
+  await expect.poll(localPosition).toEqual(initial);
+  await page.getByRole("textbox", { name: "Assistant request" }).fill("Keep the same framing");
+  expect(await localPosition()).toEqual(initial);
+  await page.getByRole("button", { name: "System prompt settings" }).click();
+  await expect(page.getByRole("textbox", { name: "Default system prompt" })).toBeVisible();
+  expect(await localPosition()).toEqual(initial);
+  await page.getByRole("button", { name: "Close assistant" }).click();
+  await expect(assistant).toHaveCount(0);
+  await card.hover({position:{x:5,y:5}});
+  await expect.poll(() => prompt.evaluate((element) => parseFloat(getComputedStyle(element).height))).toBeGreaterThan(44);
+  expect(errors).toEqual([]);
+});

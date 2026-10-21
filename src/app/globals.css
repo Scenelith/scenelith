@@ -2063,3 +2063,9 @@ select.panel-input { color-scheme: dark; }
  .media-viewer.is-editing.has-text-editor[data-short-viewport] .media-viewer-body{min-height:calc(var(--edit-composer-height,230px) + 407px)}
  .media-viewer.is-editing.has-text-editor[data-short-viewport] .media-viewer-stage{height:calc(var(--edit-composer-height,230px) + 407px)}
 }
+
+/* The prompt stays collapsed while its Canvas assistant owns editing focus. */
+.frame-node--generator[data-assistant-open] .generator-overlay,
+.frame-node--video-master[data-assistant-open] .video-master-generator-overlay { padding-bottom:16px; pointer-events:none; transition:none; }
+.frame-node--generator[data-assistant-open] .generator-overlay textarea,
+.frame-node--video-master[data-assistant-open] .video-master-generator-overlay textarea { height:44px; min-height:44px; overflow:hidden; transition:none; }

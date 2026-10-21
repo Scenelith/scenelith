@@ -1,6 +1,7 @@
 "use client";
 
 import { runMediaOperation, fetchAfterMediaPreparation } from "@/lib/media-client";
+import { bindCanvasClipboard, canvasSelectionPrefix } from "@/lib/canvas-clipboard";
 
 import { detachAssetReferences } from "@/lib/detach-asset-references";
 
@@ -581,7 +582,7 @@ function CanvasWorkspace({ initialProject, projects: initialProjects, initialWor
   const skipEdgeHistoryUntilRef = useRef(0);
   const lastCanvasPointerRef = useRef<{ x: number; y: number } | null>(null);
   const canvasMediaInputRef = useRef<HTMLInputElement>(null);
-  const canvasClipboardRef = useRef<{ graph: GraphSnapshot; nodeIds: string[]; pasteCount: number } | null>(null);
+  const canvasClipboardRef = useRef<{ graph: GraphSnapshot; nodeIds: string[]; pasteCount: number; token: string } | null>(null);
   const usageRefreshSequence = useRef(0);
   const projectSwitchSequence = useRef(0);
   const projectHydratingIdRef = useRef<string | null>(initialProject.id);
@@ -1064,57 +1065,6 @@ function CanvasWorkspace({ initialProject, projects: initialProjects, initialWor
     return () => window.removeEventListener("keydown", handleHistoryShortcut);
   }, [redo, undo]);
   useEffect(() => {
-    const handleNodeClipboardShortcut = (event: KeyboardEvent) => {
-      const target = event.target as HTMLElement | null;
-      if (target?.closest("input, textarea, select, [contenteditable='true']")) return;
-      if (!(event.metaKey || event.ctrlKey) || event.altKey || event.repeat) return;
-      const key = event.key.toLowerCase();
-
-      if (key === "c") {
-        const selectedNodeIds = nodesRef.current.filter((node) => node.selected).map((node) => node.id);
-        if (!selectedNodeIds.length && selectedId) selectedNodeIds.push(selectedId);
-        if (!selectedNodeIds.length) return;
-        event.preventDefault();
-        canvasClipboardRef.current = {
-          graph: structuredClone({ nodes: nodesRef.current, edges: edgesRef.current }),
-          nodeIds: selectedNodeIds,
-          pasteCount: 0,
-        };
-        setNotice(selectedNodeIds.length === 1 ? "Node copied" : `${selectedNodeIds.length} nodes copied`);
-        return;
-      }
-
-      if (key !== "v" || !canvasClipboardRef.current) return;
-      const clipboard = canvasClipboardRef.current;
-      event.preventDefault();
-      pushHistory();
-      const pasteCount = clipboard.pasteCount + 1;
-      const duplicated = duplicateGraphSelection(
-        clipboard.graph.nodes,
-        clipboard.graph.edges,
-        clipboard.nodeIds,
-        uid,
-        { x: 48 * pasteCount, y: 48 * pasteCount },
-        new Set(nodesRef.current.map((node) => node.id)),
-      );
-      const nextNodes = [
-        ...nodesRef.current.map((node) => node.selected ? { ...node, selected: false } : node),
-        ...duplicated.nodes,
-      ];
-      const nextEdges = [...edgesRef.current, ...duplicated.edges];
-      nodesRef.current = nextNodes;
-      edgesRef.current = nextEdges;
-      setNodes(nextNodes);
-      setEdges(nextEdges);
-      setSelectedId(duplicated.firstNodeId);
-      setSidebarOpen(false);
-      canvasClipboardRef.current = { ...clipboard, pasteCount };
-      setNotice(duplicated.nodes.length === 1 ? "Node pasted" : `${duplicated.nodes.length} nodes pasted`);
-    };
-    window.addEventListener("keydown", handleNodeClipboardShortcut);
-    return () => window.removeEventListener("keydown", handleNodeClipboardShortcut);
-  }, [pushHistory, selectedId]);
-  useEffect(() => {
     let ignore = false;
     fetch(`/api/personas?workspaceId=${workspace.id}`).then(async (response) => {
       if (!response.ok || ignore) return;
@@ -1481,27 +1431,62 @@ function CanvasWorkspace({ initialProject, projects: initialProjects, initialWor
     await importCanvasMedia(images, undefined, "clipboard");
   }, [importCanvasMedia]);
 
-  useEffect(() => {
-    const handleClipboardPaste = (event: ClipboardEvent) => {
-      const target = event.target as HTMLElement | null;
-      if (target?.closest("input, textarea, select, [contenteditable='true']")) return;
+  useEffect(() => bindCanvasClipboard({
+    copyNodes: () => {
+      const selectedNodeIds = nodesRef.current.filter((node) => node.selected).map((node) => node.id);
+      if (!selectedNodeIds.length && selectedId) selectedNodeIds.push(selectedId);
+      if (!selectedNodeIds.length) return null;
+      const token = canvasSelectionPrefix + uid("copy");
+      canvasClipboardRef.current = {
+        graph: structuredClone({ nodes: nodesRef.current, edges: edgesRef.current }),
+        nodeIds: selectedNodeIds,
+        pasteCount: 0,
+        token,
+      };
+      setNotice(selectedNodeIds.length === 1 ? "Node copied" : `${selectedNodeIds.length} nodes copied`);
+      return token;
+    },
+    pasteNodes: (token) => {
+      const clipboard = canvasClipboardRef.current;
+      if (!clipboard || clipboard.token !== token) return false;
+      pushHistory();
+      const pasteCount = clipboard.pasteCount + 1;
+      const duplicated = duplicateGraphSelection(
+        clipboard.graph.nodes,
+        clipboard.graph.edges,
+        clipboard.nodeIds,
+        uid,
+        { x: 48 * pasteCount, y: 48 * pasteCount },
+        new Set(nodesRef.current.map((node) => node.id)),
+      );
+      const nextNodes = [
+        ...nodesRef.current.map((node) => node.selected ? { ...node, selected: false } : node),
+        ...duplicated.nodes,
+      ];
+      const nextEdges = [...edgesRef.current, ...duplicated.edges];
+      nodesRef.current = nextNodes;
+      edgesRef.current = nextEdges;
+      setNodes(nextNodes);
+      setEdges(nextEdges);
+      setSelectedId(duplicated.firstNodeId);
+      setSidebarOpen(false);
+      canvasClipboardRef.current = { ...clipboard, pasteCount };
+      setNotice(duplicated.nodes.length === 1 ? "Node pasted" : `${duplicated.nodes.length} nodes pasted`);
+      return true;
+    },
+    pasteImages: (images) => { void pasteClipboardImages(images); },
+    canPaste: () => {
+      if (projectHydratingIdRef.current || !collaborationReadyRef.current) return false;
       const stage = document.querySelector<HTMLElement>(".canvas-stage");
-      if (!stage) return;
+      if (!stage) return false;
+      const active = document.activeElement;
+      if (active && stage.contains(active)) return true;
       const pointer = lastCanvasPointerRef.current;
-      if (!pointer) return;
+      if (!pointer) return active === document.body || active === document.documentElement;
       const bounds = stage.getBoundingClientRect();
-      if (pointer.x < bounds.left || pointer.x > bounds.right || pointer.y < bounds.top || pointer.y > bounds.bottom) return;
-      const images = Array.from(event.clipboardData?.items || [])
-        .filter((item) => item.kind === "file" && item.type.startsWith("image/"))
-        .map((item) => item.getAsFile())
-        .filter((file): file is File => Boolean(file));
-      if (!images.length) return;
-      event.preventDefault();
-      void pasteClipboardImages(images);
-    };
-    window.addEventListener("paste", handleClipboardPaste);
-    return () => window.removeEventListener("paste", handleClipboardPaste);
-  }, [pasteClipboardImages]);
+      return pointer.x >= bounds.left && pointer.x <= bounds.right && pointer.y >= bounds.top && pointer.y <= bounds.bottom;
+    },
+  }), [pasteClipboardImages, pushHistory, selectedId, setEdges, setNodes, setSelectedId]);
 
   function addNode(kind: FrameNode["data"]["kind"], data?: Partial<FrameNode["data"]>, position?: { x: number; y: number }) {
     pushHistory();
