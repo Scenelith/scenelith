@@ -94,6 +94,7 @@ import { duplicateGraphSelection, generatorInputCapacity, generatorSourceAssetId
 import { assetIdFromAssetUrl, hydrateVideoMasterSourceClips, nearestVideoMasterRatio, resolveVideoMasterSourceTarget, unsupportedMasterReferenceRoles, videoMasterClipExportMedia, videoMasterClipPlaybackMedia, videoMasterClipThumbnail, videoMasterGenerationDuration, videoMasterReferencePreparationDuration, videoMasterModelsForScene, videoMasterProviderAspectRatio, videoMasterSourceRatio, videoMasterTimelineDuration, type VideoMasterDownloadLane } from "@/lib/video-master";
 import { reconcileGeneratorReferenceChanges } from "@/lib/generator-reference-modes";
 import { stopAllVideoPlayback } from "@/lib/video-playback-owner";
+import { CanvasEdgeLayer } from "./CanvasEdgeLayer";
 import { findTikTokSlideshowSources, type TikTokSlideshowSource } from "@/lib/tiktok-slideshow-sources";
 import { useCanvasCollaboration } from "@/lib/use-canvas-collaboration";
 import type { UsageSummary } from "@/modules/usage/contracts";
@@ -4862,6 +4863,7 @@ function CanvasWorkspace({ initialProject, projects: initialProjects, initialWor
           zoomActivationKeyCode={["Meta", "Control"]}
           proOptions={{ hideAttribution: true }}
         >
+          <CanvasEdgeLayer />
           <Controls showInteractive={false} />
           <MiniMap
             className={automationFocusNodeIds.size ? "is-automation-focused" : ""}
