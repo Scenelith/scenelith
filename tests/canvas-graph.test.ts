@@ -473,3 +473,21 @@ test("legacy Master handles retain scene and input semantics without prepared me
   assert.equal(normalized.data?.sourceSegmentId, "scene-a");
   assert.deepEqual(normalizeEdgePorts([normalized], nodes), [normalized]);
 });
+
+test('reloaded source references resolve the visible Full or scene range before preparation', () => {
+  const source = node('timeline', 'source', { mediaType: 'video', assetId: 'original', videoOutputSelection: 'full', videoSegments: [
+    { id: 'one', index: 1, label: 'Scene 01', role: 'hook', confidence: 1, start: 0, end: 3 },
+    { id: 'two', index: 2, label: 'Scene 02', role: 'cta', confidence: 1, start: 3, end: 8, clipAssetId: 'second-clip', clipUrl: '/second.mp4' },
+  ] });
+  const generator = node('generator', 'prompt', { mediaType: 'video' });
+  const oldEdge: FrameEdge = { id: 'video-ref', source: source.id, target: generator.id, sourceHandle: 'segment-output:one', targetHandle: 'reference-video-input', data: { portType: 'video', inputRole: 'reference-video', sourceSegmentId: 'one', sourceSegmentStart: 0, sourceSegmentEnd: 3, clipAssetId: 'stale-first-clip', clipUrl: '/first.mp4' } };
+  const full = normalizeEdgePorts([oldEdge], [source, generator])[0];
+  assert.equal(full.sourceHandle, 'video-output');
+  assert.equal(full.data?.sourceSegmentId, undefined);
+  assert.equal(full.data?.clipAssetId, undefined);
+  const second = normalizeEdgePorts([oldEdge], [{ ...source, data: { ...source.data, videoOutputSelection: 'two' } }, generator])[0];
+  assert.equal(second.sourceHandle, 'segment-output:two');
+  assert.equal(second.data?.clipAssetId, 'second-clip');
+  assert.deepEqual([second.data?.sourceSegmentStart, second.data?.sourceSegmentEnd], [3, 8]);
+  assert.equal(oldEdge.data?.clipAssetId, 'stale-first-clip');
+});

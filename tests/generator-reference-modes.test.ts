@@ -68,3 +68,66 @@ test("legacy image attachments without an explicit role still switch out of fram
   assert.equal(result.disconnected, 1);
   assert.deepEqual(result.graph.nodes[0].data.attachedReferences?.map(ref => ref.assetId), ["identity"]);
 });
+
+function videoSourceGraph(): ProjectGraph {
+  return {
+    nodes: [
+      { id: 'source', position: { x: 0, y: 0 }, data: { kind: 'source', title: 'Video', mediaType: 'video', assetId: 'original', videoOutputSelection: 'full', videoSegments: [
+        { id: 'one', index: 1, label: 'Scene 01', role: 'hook', confidence: 1, start: 0, end: 3 },
+        { id: 'two', index: 2, label: 'Scene 02', role: 'scene', confidence: 1, start: 3, end: 8, clipAssetId: 'clip-two', clipUrl: '/clip-two.mp4' },
+      ] } },
+      { id: 'generator', position: { x: 500, y: 0 }, data: { kind: 'prompt', title: 'Generator', mediaType: 'video', modelId: 'seedance-2-5' } },
+      { id: 'master', position: { x: 500, y: 400 }, data: { kind: 'videoMaster', title: 'Master' } },
+    ],
+    edges: [
+      { id: 'ref', source: 'source', target: 'generator', sourceHandle: 'video-output', targetHandle: 'reference-video-input', data: { portType: 'video', inputRole: 'reference-video' } },
+      { id: 'master-ref', source: 'source', target: 'master', sourceHandle: 'segment-output:one', targetHandle: 'master:a:reference-video-input', data: { portType: 'video', inputRole: 'reference-video', masterClipId: 'a', sourceSegmentId: 'one', sourceSegmentStart: 0, sourceSegmentEnd: 3, clipAssetId: 'clip-one' } },
+    ],
+  };
+}
+
+test('changing a connected source selection updates generator range and preserves pinned Master clips', () => {
+  const before = videoSourceGraph();
+  const next = structuredClone(before);
+  next.nodes[0].data.videoOutputSelection = 'two';
+  const { graph, disconnected } = reconcileGeneratorReferenceChanges(before, next);
+  const ref = graph.edges[0];
+  assert.equal(disconnected, 0);
+  assert.equal(ref.id, 'ref');
+  assert.equal(ref.sourceHandle, 'segment-output:two');
+  assert.equal(ref.data?.sourceSegmentStart, 3);
+  assert.equal(ref.data?.sourceSegmentEnd, 8);
+  assert.equal(ref.data?.clipAssetId, 'clip-two');
+  assert.equal(ref.data?.clipUrl, '/clip-two.mp4');
+  assert.deepEqual(graph.edges[1], before.edges[1]);
+  assert.equal(before.edges[0].data?.sourceSegmentId, undefined);
+});
+
+test('Full removes every old trim and prepared-generation asset from the connected reference', () => {
+  const before = videoSourceGraph();
+  before.nodes[0].data.videoOutputSelection = 'two';
+  before.edges[0] = { ...before.edges[0], sourceHandle: 'segment-output:two', data: { ...before.edges[0].data, sourceSegmentId: 'two', sourceSegmentStart: 3, sourceSegmentEnd: 8, clipAssetId: 'clip-two', clipUrl: '/clip-two.mp4', generationClipAssetId: 'old-generation-trim', generationClipUrl: '/old.mp4', generationClipDuration: 5 } };
+  const next = structuredClone(before);
+  next.nodes[0].data.videoOutputSelection = 'full';
+  const { graph } = reconcileGeneratorReferenceChanges(before, next);
+  assert.equal(graph.edges[0].sourceHandle, 'video-output');
+  for (const field of ['sourceSegmentId', 'sourceSegmentStart', 'sourceSegmentEnd', 'clipAssetId', 'clipUrl', 'generationClipAssetId', 'generationClipUrl', 'generationClipDuration']) assert.equal((graph.edges[0].data as Record<string, unknown>)[field], undefined, field);
+  assert.equal(graph.nodes[0].data.assetId, 'original');
+  assert.deepEqual(graph.edges[1], before.edges[1]);
+});
+
+test('selecting an unprepared scene cannot forward the previous prepared clip, and a read preserves explicit links', () => {
+  const before = videoSourceGraph();
+  before.nodes[0].data.videoOutputSelection = 'two';
+  before.edges[0].data = { ...before.edges[0].data, sourceSegmentId: 'two', clipAssetId: 'clip-two' };
+  before.nodes[0].data.videoOutputSelection = undefined;
+  assert.deepEqual(reconcileGeneratorReferenceChanges(before, structuredClone(before)).graph.edges, before.edges);
+  before.nodes[0].data.videoOutputSelection = 'two';
+  const next = structuredClone(before);
+  next.nodes[0].data.videoOutputSelection = 'one';
+  const ref = reconcileGeneratorReferenceChanges(before, next).graph.edges[0];
+  assert.equal(ref.data?.sourceSegmentId, 'one');
+  assert.equal(ref.data?.clipAssetId, undefined);
+  assert.equal(ref.data?.sourceSegmentStart, 0);
+  assert.equal(ref.data?.sourceSegmentEnd, 3);
+});
