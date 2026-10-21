@@ -94,7 +94,6 @@ import { duplicateGraphSelection, generatorInputCapacity, generatorSourceAssetId
 import { assetIdFromAssetUrl, hydrateVideoMasterSourceClips, nearestVideoMasterRatio, resolveVideoMasterSourceTarget, unsupportedMasterReferenceRoles, videoMasterClipExportMedia, videoMasterClipPlaybackMedia, videoMasterClipThumbnail, videoMasterGenerationDuration, videoMasterReferencePreparationDuration, videoMasterModelsForScene, videoMasterProviderAspectRatio, videoMasterSourceRatio, videoMasterTimelineDuration, type VideoMasterDownloadLane } from "@/lib/video-master";
 import { reconcileGeneratorReferenceChanges } from "@/lib/generator-reference-modes";
 import { stopAllVideoPlayback } from "@/lib/video-playback-owner";
-import { CanvasEdgeLayer } from "./CanvasEdgeLayer";
 import { findTikTokSlideshowSources, type TikTokSlideshowSource } from "@/lib/tiktok-slideshow-sources";
 import { useCanvasCollaboration } from "@/lib/use-canvas-collaboration";
 import type { UsageSummary } from "@/modules/usage/contracts";
@@ -806,9 +805,11 @@ function CanvasWorkspace({ initialProject, projects: initialProjects, initialWor
         return {
           ...edge,
           type: "disconnectable",
+          // Persisted graphs may still contain animated:true. Connections only
+          // change appearance on selection; they never need an idle paint loop.
+          animated: false,
           ...(isMasterSceneLink ? {
             hidden: false,
-            animated: true,
             className: [edge.className, "is-master-scene-link"].filter(Boolean).join(" "),
           } : {}),
         };
@@ -844,7 +845,6 @@ function CanvasWorkspace({ initialProject, projects: initialProjects, initialWor
     return disconnectableEdges.map((edge) => selectedPathIds.has(edge.id) ? {
       ...edge,
       className: [edge.className, "is-selected-path"].filter(Boolean).join(" "),
-      animated: true,
       zIndex: 8,
     } : edge);
   }, [disconnectableEdges, selectedId]);
@@ -4863,7 +4863,6 @@ function CanvasWorkspace({ initialProject, projects: initialProjects, initialWor
           zoomActivationKeyCode={["Meta", "Control"]}
           proOptions={{ hideAttribution: true }}
         >
-          <CanvasEdgeLayer />
           <Controls showInteractive={false} />
           <MiniMap
             className={automationFocusNodeIds.size ? "is-automation-focused" : ""}
