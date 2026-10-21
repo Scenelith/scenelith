@@ -2,7 +2,7 @@
 
 import { useEffect, useLayoutEffect, useMemo, useRef, useState, type CSSProperties, type PointerEvent as ReactPointerEvent } from "react";
 import { createPortal } from "react-dom";
-import { Camera, Check, ChevronDown, ChevronsLeftRight, MousePointer2, Pause, Play, RotateCcw, Scissors, Video, Volume2, VolumeX } from "lucide-react";
+import { Camera, Download, Check, ChevronDown, ChevronsLeftRight, MousePointer2, Pause, Play, RotateCcw, Scissors, Video, Volume2, VolumeX } from "lucide-react";
 import type { VideoSceneSegment } from "@/lib/types";
 import { editorThumbnailUrl } from "@/lib/editor-media";
 import { videoPlaybackReplayTime } from "@/lib/video-playback";
@@ -64,7 +64,7 @@ type TimelineSprite = { assetId: string; url: string; frameCount: number; column
 
 const SEGMENT_DRAG_ACTIVATION_PX = 7;
 
-export function VideoSceneTimeline({ nodeId, src, title, selected, segments, detectedSegments, durationHint, timelineSprite, outputSelection, hoverPlayback = false, demoPlaybackToken, demoPlaybackSegmentId, demoClickSegmentId, onActivate, onOutputSelectionChange, onChange, onOpenPreview, onAspectRatio, onExtractSegment, onCaptureFrame }: {
+export function VideoSceneTimeline({ nodeId, src, title, selected, segments, detectedSegments, durationHint, timelineSprite, outputSelection, hoverPlayback = false, demoPlaybackToken, demoPlaybackSegmentId, demoClickSegmentId, onActivate, onOutputSelectionChange, onChange, onOpenPreview, onAspectRatio, onExtractSegment, onCaptureFrame, onDownload }: {
   nodeId: string;
   src: string;
   title: string;
@@ -85,6 +85,7 @@ export function VideoSceneTimeline({ nodeId, src, title, selected, segments, det
   onAspectRatio: (ratio: number) => void;
   onExtractSegment: (segment: VideoSceneSegment, clientX: number, clientY: number) => void;
   onCaptureFrame?: (time: number) => Promise<void> | void;
+  onDownload?: () => Promise<void>;
 }) {
   const playbackOwnerId = `video-source:${nodeId}`;
   const initialDuration = Math.max(0.001, durationHint || segments.at(-1)?.end || 0.001);
@@ -124,6 +125,7 @@ export function VideoSceneTimeline({ nodeId, src, title, selected, segments, det
 
   const [timelineZoom, setTimelineZoom] = useState(1);
   const [capturingFrame, setCapturingFrame] = useState(false);
+  const [downloading, setDownloading] = useState(false);
   const [outputMenuOpen, setOutputMenuOpen] = useState(false);
   const outputMenuRef = useRef<HTMLDivElement>(null);
   const callbacksRef = useRef({ onAspectRatio, onChange });
@@ -786,6 +788,7 @@ export function VideoSceneTimeline({ nodeId, src, title, selected, segments, det
             disabled={!onCaptureFrame || capturingFrame}
             aria-busy={capturingFrame}
           ><Camera size={12} />Screenshot</button>
+          {onDownload && <button type="button" disabled={downloading} aria-label={`Download ${selectedSegment.label}`} title={`Download ${selectedSegment.label}`} onClick={async () => { if (downloading) return; setDownloading(true); try { await onDownload(); } finally { setDownloading(false); } }}><Download size={12} />{downloading ? "Preparing…" : "Download"}</button>}
         </div>
       </div>
     </div>

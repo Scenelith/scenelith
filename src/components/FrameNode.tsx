@@ -1223,6 +1223,7 @@ export type GeneratorNodeActions = {
   captureVideoFrame: (nodeId: string, time: number) => Promise<void>;
   extractVideoSegment: (nodeId: string, segment: VideoSceneSegment, clientX: number, clientY: number) => void;
   openPreview: (nodeId: string, media?: { url: string; start?: number; end?: number; title?: string }) => void;
+  downloadSourceMedia?: (nodeId: string) => Promise<void>;
   downloadMasterMedia: (nodeId: string, lane: VideoMasterDownloadLane, scope: "scene" | "video", audioMode?: VideoMasterExportAudioMode) => Promise<boolean>;
   openEdit: (nodeId: string) => void;
   addToIdentity: (personaId: string, role: "reference" | "before" | "after", sourceAssetId: string) => Promise<{ alreadyAdded?: boolean }>;
@@ -2962,6 +2963,7 @@ function FrameNodeCardComponent({ id, data, selected }: NodeProps<FrameNode>) {
         onAspectRatio={(videoAspectRatio) => generator?.updateNode(id, { videoAspectRatio })}
         onExtractSegment={(segment, clientX, clientY) => generator?.extractVideoSegment(id, segment, clientX, clientY)}
         onCaptureFrame={generator ? (time) => generator.captureVideoFrame(id, time) : undefined}
+        onDownload={generator?.downloadSourceMedia ? () => generator.downloadSourceMedia!(id) : undefined}
         onChange={(videoSegments, videoDurationSeconds) => generator?.updateNode(id, { videoSegments, videoDurationSeconds })}
       />
       <Handle id="input" type="target" position={Position.Left} className="node-handle node-visual-port video-timeline-input" title="TikTok source video"><Video size={13} /></Handle>

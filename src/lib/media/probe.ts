@@ -37,6 +37,12 @@ export function quantizeRange(start:number,end:number,frames:FrameBoundary[]) {
   return {start:from,end:to};
 }
 
+/** Browser/container clocks round the final timestamp to milliseconds. */
+export function normalizeMediaRange(start:number,end:number,metadata:Pick<MediaMetadata,'duration'>) {
+  if(start>=metadata.duration || end>metadata.duration+.002)throw new MediaError('RANGE_OUTSIDE_SOURCE');
+  return {start,end:Math.min(end,metadata.duration)};
+}
+
 /** Square-pixel display dimensions, accounting for the stored pixel shape and display matrix. */
 export function displayGeometry(metadata:MediaMetadata) {
   const ratio=rational(metadata.video?.sample_aspect_ratio?.replace(':','/')) || 1;

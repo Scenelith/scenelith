@@ -13,7 +13,9 @@ test('Full and scene choices share the visible range, playback range and existin
  const graph=async()=>JSON.parse((await page.getByTestId('graph').textContent())!);
  const choose=async(name:string)=>{await page.getByRole('button',{name:'Choose Video Master input'}).click();await page.getByRole('option',{name:new RegExp(name)}).click();};
  await expect(track).toHaveAttribute('data-output-selection','full');await expect(track).toHaveClass(/is-full-output/);await expect(page.locator('.video-scene-segment-range.is-selected')).toHaveCount(0);await expect(page.locator('.video-scene-readout b')).toHaveText('Full video');await expect(player).toHaveAttribute('data-playback-key','full');
+ await page.getByRole('button',{name:'Download Full video',exact:true}).click();await expect(page.getByTestId('download')).toHaveText('full');
  await choose('Scene 02');await expect(track).toHaveAttribute('data-output-selection','two');await expect(player).toHaveAttribute('data-playback-key','two');await expect(page.locator('.video-scene-segment-range.is-selected')).toHaveAttribute('data-video-segment-id','two');
+ await page.getByRole('button',{name:'Download Scene 02',exact:true}).click();await expect(page.getByTestId('download')).toHaveText('two');
  let ref=(await graph()).edges[0];expect(ref.sourceHandle).toBe('segment-output:two');expect(ref.data.clipAssetId).toBe('clip-two');expect([ref.data.sourceSegmentStart,ref.data.sourceSegmentEnd]).toEqual([3,8]);
  await page.getByRole('button',{name:'Play',exact:true}).click();await expect.poll(()=>page.locator('video[data-active-deck="true"]').evaluate((v:HTMLVideoElement)=>v.currentTime)).toBeGreaterThan(3);
  await choose('Full video');await expect(track).toHaveClass(/is-full-output/);await expect(player).toHaveAttribute('data-playback-key','full');ref=(await graph()).edges[0];expect(ref.sourceHandle).toBe('video-output');expect(ref.data.sourceSegmentId).toBeUndefined();expect(ref.data.clipAssetId).toBeUndefined();

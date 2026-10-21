@@ -1,6 +1,6 @@
 import { planProcessing } from './planner';
 import { resolveTikTok } from '../tiktok-resolver';
-import type { MediaMetadata } from './probe';
+import { normalizeMediaRange, type MediaMetadata } from './probe';
 import { db, userCanAccessAsset, userCanAccessProject, userCanAccessWorkspace } from '../postgres-db';
 import { MEDIA_VERSION, MediaError, fingerprint, inputIds, mediaJobRequestSchema, type MediaInput, type MediaJob, type MediaSpec } from './contracts';
 import { mediaConfig } from './config';
@@ -55,10 +55,10 @@ export async function createMediaJob(userId: string, raw: unknown): Promise<Medi
   if(spec.operation==='segment' || spec.operation==='export'){
     const ranges=spec.operation==='segment'?[spec.range]:spec.assets;
     if(ranges.every(r=>metadata.has(r.id))){
-      if(ranges.some(r=>r.start>=metadata.get(r.id)!.duration || r.end>metadata.get(r.id)!.duration+1e-6))throw new MediaError('RANGE_OUTSIDE_SOURCE');
+      const boundedRanges=ranges.map(r=>({...r,...normalizeMediaRange(r.start,r.end,metadata.get(r.id)!)}));
       const first=metadata.get(ranges[0].id)!;
       const geometry=spec.operation==='segment' && spec.modelId==='seedance-2-5' && Number(first.video?.width)*Number(first.video?.height)>921600;
-      const plan=planProcessing(ranges.map(r=>({...r,metadata:metadata.get(r.id)!})),spec.operation==='export'?spec.audioMode:'selected',geometry);
+      const plan=planProcessing(boundedRanges.map(r=>({...r,metadata:metadata.get(r.id)!})),spec.operation==='export'?spec.audioMode:'selected',geometry);
       if(plan.video==='copy' || plan.video==='reuse')resource='light';
       if(plan.video==='reuse'){reuseId=ranges[0].id;reusePlan=plan;}
     }

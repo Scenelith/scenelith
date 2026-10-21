@@ -26,3 +26,13 @@ test('contract canonicalizes settings and retains distinct ranges',()=>{
   assert.notEqual(fingerprint({start:.001}),fingerprint({start:.002}));
   assert.equal(mediaJobRequestSchema.safeParse({projectId:'test',requestKey:'test',spec:{operation:'export',assets:[{id:crypto.randomUUID(),start:0,end:1}]}}).success,true);
 });
+
+test('millisecond-rounded EOF is bounded without admitting real out-of-source ranges', async()=>{
+ const {normalizeMediaRange}=await import('../../src/lib/media/probe');
+ const duration=8.233333;
+ assert.deepEqual(normalizeMediaRange(0,8.234,{duration}),{start:0,end:duration});
+ assert.deepEqual(normalizeMediaRange(5.866667,8.234,{duration}),{start:5.866667,end:duration});
+ assert.deepEqual(normalizeMediaRange(0,5.866667,{duration}),{start:0,end:5.866667});
+ assert.throws(()=>normalizeMediaRange(0,8.24,{duration}),/RANGE_OUTSIDE_SOURCE/);
+ assert.throws(()=>normalizeMediaRange(duration,duration+.001,{duration}),/RANGE_OUTSIDE_SOURCE/);
+});
