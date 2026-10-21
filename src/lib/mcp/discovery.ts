@@ -95,6 +95,7 @@ Seedance 2.x (including 2.5) supports either strict \`start-frame\` / \`end-fram
 - Scoped writes return \`canvas.partial: true\`, changed nodes and their inputs, \`changes\` including deleted IDs, and a short read token for that returned context. Merge by ID; never replace a whole graph with a partial response. Keep older tokens for nodes outside that response.
 - On \`CANVAS_REVISION_CONFLICT\`, inspect \`conflicts\` (node/edge/fields/reason), call \`get_canvas_nodes\` for \`refreshNodeIds\`, and reconsider that action against those nodes and incoming sources. The tool reports deleted IDs explicitly. Keep the new token for refreshed nodes and previous tokens for untouched nodes. On CANVAS_READ_SET_EXPIRED, refresh only the nodes needed for that action. Never resolve a conflict by blindly overwriting or repeating paid work.
 - Do not invent object IDs, model IDs, node types, ports, roles, or workflow versions.
+- For a batch, always retain \`started\` generation IDs. On \`failures\` or \`deferredNodeIds\`, poll started jobs and refresh/resume deferred nodes individually; never repeat the entire batch to recover a later conflict.
 - Running Assistant, generation, or Automation tools may consume credits or configured provider resources.
 `;
 

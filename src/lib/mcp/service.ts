@@ -941,9 +941,10 @@ export async function runMcpCanvasGeneration(principal: McpPrincipal, input: {
     let revision = prepared.revision;
     const started: Array<{ nodeId: string; generationId: string }> = [];
     let deferredNodeIds: string[] = [];
+    const failures: Array<{ nodeId: string; code: string; error: string; refreshNodeIds?: string[]; generationId?: string }> = [];
     for (const [index, nodeId] of nodeIds.entries()) {
       try {
-        const result = await runMcpCanvasGeneration(principal, { projectId: input.projectId, expectedRevision: revision, nodeId, generationCount: 1 });
+        const result = await runMcpCanvasGeneration(principal, { projectId: input.projectId, expectedRevision: revision, readSet: prepared.readSet, nodeId, generationCount: 1 });
         if (!("generationId" in result)) throw new Error("Generation batch could not start its prepared node");
         started.push({ nodeId, generationId: result.generationId });
         revision = result.currentRevision || revision;
@@ -952,10 +953,15 @@ export async function runMcpCanvasGeneration(principal: McpPrincipal, input: {
           deferredNodeIds = nodeIds.slice(index);
           break;
         }
-        throw error;
+        if (!started.length) throw error;
+        const failure = error as { code?: string; refreshNodeIds?: string[]; generationId?: string };
+        failures.push({ nodeId, code: failure.code || "BATCH_NODE_FAILED", error: error instanceof Error ? error.message : "Batch node could not start", refreshNodeIds: failure.refreshNodeIds, generationId: failure.generationId });
+        deferredNodeIds = nodeIds.slice(index);
+        break;
       }
     }
-    return { batch: true as const, requested: generationCount, started, deferredNodeIds, currentRevision: revision, canvas: await getMcpCanvas(principal, input.projectId) };
+    const latest = await getMcpCanvas(principal, input.projectId);
+    return { batch: true as const, requested: generationCount, started, deferredNodeIds, failures, currentRevision: latest.revision, canvas: { ...latest, changes: prepared.changes } };
   }
   if (inspected.unresolvedReferences.length) throw Object.assign(new Error(inspected.unresolvedReferences[0].reason), { status: 409 });
   const provider = generationProvider();
@@ -1104,7 +1110,7 @@ async function persistMcpMasterGenerationStatus(principal: McpPrincipal, project
     try { assertMasterSceneRevision(current.graph, nodeId, clipId, expected); }
     catch { return { persisted: false, currentRevision: current.revision, reason: "Scene changed after enqueue; poll the returned generation ID." }; }
     try {
-      const canvas = await patchMcpCanvas(principal, { projectId, expectedRevision: current.revision, operations: [{ type: "update_node", nodeId,
+      const canvas = await patchMcpCanvas(principal, { projectId, expectedRevision: current.revision, readSet: current.readSet, operations: [{ type: "update_node", nodeId,
         data: { status: "queued", queueReason: "provider", generationError: undefined, videoMasterGeneratingClipId: clipId } }] });
       return { persisted: true, currentRevision: canvas.revision, canvas };
     } catch (error) { if ((error as { code?: string }).code !== "CANVAS_REVISION_CONFLICT") throw error; }
@@ -1130,7 +1136,7 @@ export async function cancelMcpCanvasGeneration(principal: McpPrincipal, generat
   const node = canvas.graph.nodes.find((candidate) => candidate.id === current.node_id);
   let updated = canvas;
   if (cancelled && node) {
-    updated = await patchMcpCanvas(principal, { projectId: current.project_id, expectedRevision: canvas.revision, operations: [{ type: "update_node", nodeId: node.id, data: { status: "failed", queueReason: undefined, generationError: "Generation cancelled", videoMasterGeneratingClipId: undefined } }] });
+    updated = await patchMcpCanvas(principal, { projectId: current.project_id, expectedRevision: canvas.revision, readSet: canvas.readSet, operations: [{ type: "update_node", nodeId: node.id, data: { status: "failed", queueReason: undefined, generationError: "Generation cancelled", videoMasterGeneratingClipId: undefined } }] });
   }
   return { cancelled, generation: await generationClientState((await readGenerationState(generationId))!), canvas: updated };
 }
@@ -1198,12 +1204,12 @@ export async function editMcpCanvasImage(principal: McpPrincipal, input: {
     const live = await getMcpCanvas(principal, input.projectId);
     const liveNode = live.graph.nodes.find((candidate) => candidate.id === node.id);
     if (liveNode?.data.status === "queued" && liveNode.data.queueReason === "plan" && liveNode.data.prompt === effectivePrompt) {
-      await patchMcpCanvas(principal, { projectId: input.projectId, expectedRevision: live.revision, operations: [{ type: "update_node", nodeId: node.id, data: { status: "failed", queueReason: undefined, generationError: admission.error } }] }).catch(() => undefined);
+      await patchMcpCanvas(principal, { projectId: input.projectId, expectedRevision: live.revision, readSet: live.readSet, operations: [{ type: "update_node", nodeId: node.id, data: { status: "failed", queueReason: undefined, generationError: admission.error } }] }).catch(() => undefined);
     }
     throw Object.assign(new Error(admission.error), { status: admission.status, code: admission.code, retryAfterMs: admission.retryAfterMs, requiredCredits: admission.requiredCredits });
   }
   const queued = await getMcpCanvas(principal, input.projectId);
-  const updated = await patchMcpCanvas(principal, { projectId: input.projectId, expectedRevision: queued.revision, operations: [{ type: "update_node", nodeId: node.id, data: { status: "queued", queueReason: "provider" } }] });
+  const updated = await patchMcpCanvas(principal, { projectId: input.projectId, expectedRevision: queued.revision, readSet: queued.readSet, operations: [{ type: "update_node", nodeId: node.id, data: { status: "queued", queueReason: "provider" } }] });
   return { ...admission, modelId: model.id, operation: "edit" as const, canvas: updated, preparedRevision: prepared.revision };
 }
 
@@ -1363,7 +1369,7 @@ export async function importMcpTikTokToCanvas(principal: McpPrincipal, input: {
     ...importedNodes.map((node) => ({ type: "add_node" as const, id: node.id, nodeType: node.type, position: node.position, data: node.data })),
     ...sourceEdges.map((edge) => ({ type: "add_edge" as const, id: edge.id, source: edge.source, sourceHandle: edge.sourceHandle, target: edge.target, targetHandle: edge.targetHandle, data: edge.data })),
   ];
-  const canvas = await patchMcpCanvas(principal, { projectId: input.projectId, expectedRevision: current.revision, operations });
+  const canvas = await patchMcpCanvas(principal, { projectId: input.projectId, expectedRevision: current.revision, readSet: current.readSet, operations });
   await appendAuditEvent({ workspaceId, actorUserId: principal.userId, action: "mcp.canvas.tiktok_imported", targetType: "project", targetId: input.projectId, metadata: { connectionId: principal.connectionId, sourceUrl: input.url, sourceNodeId: sourceId, assetCount: result.assets.length } });
   return { canvas, post: result.post, assets: result.assets, hook, hookError, importedNodeIds: importedNodes.map((node) => node.id), importedEdgeIds: sourceEdges.map((edge) => edge.id) };
 }
@@ -1694,7 +1700,7 @@ export async function createMcpCanvasSegmentNode(principal: McpPrincipal, input:
     videoClipStart: liveSegment.clipAssetId ? 0 : liveSegment.start, videoClipEnd: liveSegment.clipAssetId ? duration : liveSegment.end,
     videoSourceNodeId: liveSource.id, videoSegmentId: liveSegment.id, videoSourceAssetId: liveSource.data.assetId, segmentMaterializing: false,
   };
-  const canvas = await patchMcpCanvas(principal, { projectId: input.projectId, expectedRevision: current.revision, operations: [{ type: "add_node", id: nodeId, nodeType: "frameNode", position: input.position, data }] });
+  const canvas = await patchMcpCanvas(principal, { projectId: input.projectId, expectedRevision: current.revision, readSet: current.readSet, operations: [{ type: "add_node", id: nodeId, nodeType: "frameNode", position: input.position, data }] });
   return { canvas, node: canvas.graph.nodes.find((node) => node.id === nodeId)! };
 }
 
@@ -1922,7 +1928,7 @@ export async function captureMcpCanvasVideoFrame(principal: McpPrincipal, input:
       canvasMediaOrigin: "capture", capturedFromNodeId: sourceNode.id, capturedAtSeconds: asset.time, nodeWidth, createdAt: new Date().toISOString(), status: "ready",
     },
   };
-  const canvas = await patchMcpCanvas(principal, { projectId: input.projectId, expectedRevision: current.revision, operations: [{ type: "add_node", id: node.id, nodeType: node.type, position: node.position, data: node.data }] });
+  const canvas = await patchMcpCanvas(principal, { projectId: input.projectId, expectedRevision: current.revision, readSet: current.readSet, operations: [{ type: "add_node", id: node.id, nodeType: node.type, position: node.position, data: node.data }] });
   return { asset, canvas, node: canvas.graph.nodes.find((candidate) => candidate.id === nodeId)! };
 }
 
@@ -1959,7 +1965,7 @@ export async function materializeMcpCanvasVideoSegment(principal: McpPrincipal, 
         data: edge.source === source.id && edge.data?.sourceSegmentId === segment.id ? { ...edge.data, clipAssetId: asset.id, clipUrl: asset.url } : edge.data });
     }
     try {
-      const canvas = await patchMcpCanvas(principal, { projectId: input.projectId, expectedRevision: current.revision, operations });
+      const canvas = await patchMcpCanvas(principal, { projectId: input.projectId, expectedRevision: current.revision, readSet: current.readSet, operations });
       return { asset, canvas, persisted: true };
     } catch (error) { if ((error as { code?: string }).code !== "CANVAS_REVISION_CONFLICT") throw error; }
   }
