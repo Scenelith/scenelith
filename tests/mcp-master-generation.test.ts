@@ -401,3 +401,34 @@ test("ordinary generator inputs are checked again before any reservation",async(
   mock.method(usage,"summary",async()=>{const live=await getMcpCanvas(principal,input.projectId);await patchMcpCanvas(principal,{projectId:input.projectId,expectedRevision:live.revision,operations:[{type:"update_node",nodeId:input.nodeId,data:{prompt:"Human changed the instruction"}}]});return summary;});
   await assert.rejects(runMcpCanvasGeneration(principal,input),(error:unknown)=>(error as {code:string}).code==="CANVAS_REVISION_CONFLICT");assert.equal(reserve.mock.callCount(),0);assert.equal((await db.prepare("SELECT count(*) AS count FROM generations").get() as {count:number}).count,0);
 });
+
+for (const changeNextNode of [false,true]) test(`MCP batch ${changeNextNode ? "returns admitted IDs and defers a changed next node" : "continues while an unrelated node keeps moving"}`,async()=>{
+  const input=await generatorRequest();const initial=await getMcpCanvas(principal,input.projectId);
+  const {createServer}=await import("node:http");
+  let live={graph:initial.graph,revision:initial.revision,stateVector:"initial",updatedAt:new Date().toISOString()};let moves=0;let changedNext=false;
+  const server=createServer(async(req,res)=>{
+    if(req.method==="GET"){
+      live=structuredClone(live);const note=live.graph.nodes.find(node=>node.id==="unrelated")!;note.position={x:++moves*10,y:700};
+      const next=live.graph.nodes.find(node=>node.data.kind==="prompt" && node.id!==input.nodeId);
+      if(changeNextNode && !changedNext && reserve.mock.callCount()===1 && next){next.data.prompt="Human changed the next node";changedNext=true;}
+      live.revision++;live.stateVector=`move-${moves}`;
+    }else if(req.method==="PUT"){
+      let body="";for await(const chunk of req)body+=chunk;const command=JSON.parse(body);
+      assert.equal(command.expectedRevision,live.revision);assert.equal(command.expectedStateVector,live.stateVector);
+      live={...live,graph:command.graph,revision:live.revision+1,stateVector:`write-${live.revision+1}`};
+    }
+    res.setHeader("content-type","application/json");res.end(JSON.stringify(live));
+  });
+  await new Promise<void>(resolve=>server.listen(0,"127.0.0.1",resolve));
+  const previous={url:process.env.COLLABORATION_INTERNAL_URL,secret:process.env.COLLABORATION_INTERNAL_SECRET};
+  process.env.COLLABORATION_INTERNAL_URL=`http://127.0.0.1:${(server.address() as {port:number}).port}`;process.env.COLLABORATION_INTERNAL_SECRET="test";
+  try{
+    const result=await runMcpCanvasGeneration(principal,{...input,generationCount:2});assert.ok("started" in result);assert.equal(result.started.length,changeNextNode?1:2);assert.equal(reserve.mock.callCount(),changeNextNode?1:2);assert.ok(moves>5);assert.equal(live.graph.nodes.find(node=>node.id==="unrelated")!.position.x,moves*10);
+    assert.equal(result.failures.length,changeNextNode?1:0);assert.equal(result.deferredNodeIds.length,changeNextNode?1:0);
+    if(changeNextNode){assert.equal(result.failures[0].code,"CANVAS_REVISION_CONFLICT");assert.equal(live.graph.nodes.find(node=>node.id===result.deferredNodeIds[0])!.data.prompt,"Human changed the next node");assert.ok(result.started[0].generationId);}
+  }finally{
+    if(previous.url===undefined)delete process.env.COLLABORATION_INTERNAL_URL;else process.env.COLLABORATION_INTERNAL_URL=previous.url;
+    if(previous.secret===undefined)delete process.env.COLLABORATION_INTERNAL_SECRET;else process.env.COLLABORATION_INTERNAL_SECRET=previous.secret;
+    await new Promise<void>(resolve=>server.close(()=>resolve()));
+  }
+});
