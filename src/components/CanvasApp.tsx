@@ -2074,11 +2074,17 @@ function CanvasWorkspace({ initialProject, projects: initialProjects, initialWor
     if (!sourceUrl.trim()) return;
     setImporting(true);
     setNotice("");
-    const response = await fetchAfterMediaPreparation("/api/import/tiktok", {
+    let response: Response;
+    try { response = await fetchAfterMediaPreparation("/api/import/tiktok", {
       method: "POST",
       headers: { "content-type": "application/json" },
-      body: JSON.stringify({ projectId: project.id, url: sourceUrl.trim() }),
+      body: JSON.stringify({ projectId: project.id, url: sourceUrl.trim(), retryFailed:true }),
     });
+    } catch (error) {
+      setImporting(false);
+      setNotice(error instanceof Error ? error.message : "Import failed. Try again.");
+      return;
+    }
     const body = (await response.json().catch(() => ({}))) as {
       error?: string;
       post?: {

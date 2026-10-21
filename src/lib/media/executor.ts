@@ -10,6 +10,7 @@ import { displayGeometry, probeFile, frameBoundaries, quantizeRange, type MediaM
 import { planProcessing, type PlannedClip } from './planner';
 import { mediaProcess } from './process';
 import { importMedia } from './import';
+import type { TikwmData } from '../tiktok-resolver';
 import { extractSceneFiles } from './scenes';
 import { renderPlan, type LocalMedia } from './render';
 import { retainMediaStaging, claimMediaCleanup } from './staging';
@@ -22,7 +23,7 @@ async function processJob(job:MediaJob,dir:string,signal:AbortSignal,timings:Rec
   const spec=JSON.parse(job.spec_json) as MediaSpec,inputs=JSON.parse(job.inputs_json) as MediaInput[];
   const media=new Map<string,LocalMedia>();
   const config=mediaConfig();let totalBytes=0;
-  if(spec.operation==='import')return importMedia(spec.url,dir,signal,timings);
+  if(spec.operation==='import')return importMedia(spec.url,dir,signal,timings,(spec as typeof spec & {resolvedTikTok?:TikwmData}).resolvedTikTok);
   for(const input of inputs){
     signal.throwIfAborted();
     if(input.size_bytes>config.maxFileBytes)throw new MediaError('MEDIA_FILE_LIMIT');
