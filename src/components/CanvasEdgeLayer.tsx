@@ -89,7 +89,8 @@ export function CanvasEdgeLayer() {
     const size = gl.getUniformLocation(program, "size"), view = gl.getUniformLocation(program, "view");
     const phase = gl.getUniformLocation(program, "phase"), zoom = gl.getUniformLocation(program, "zoom");
     const maxSize = gl.getParameter(gl.MAX_VIEWPORT_DIMS) as Int32Array;
-    gl.enable(gl.BLEND); gl.blendFunc(gl.SRC_ALPHA, gl.ONE_MINUS_SRC_ALPHA);
+    gl.enable(gl.BLEND);
+    gl.blendFuncSeparate(gl.SRC_ALPHA, gl.ONE_MINUS_SRC_ALPHA, gl.ONE, gl.ONE_MINUS_SRC_ALPHA);
     const colorContext = document.createElement("canvas").getContext("2d", { willReadFrequently: true });
     const colors = new Map<string, number[]>();
     const color = (value: string) => {
