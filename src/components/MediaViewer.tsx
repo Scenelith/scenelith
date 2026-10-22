@@ -108,6 +108,7 @@ export function MediaViewer({
   mediaTitle,
   references,
   persona,
+  availableEditReferences = [],
   editCanvasReferences,
   editPersonas,
   identities,
@@ -136,6 +137,7 @@ export function MediaViewer({
   mediaTitle?: string;
   references: PreviewReference[];
   persona?: { id: string; name: string; avatarUrl?: string; variant?: "reference" | "before" | "after" };
+  availableEditReferences?: ImageEditReference[];
   editCanvasReferences: ImageEditReference[];
   editPersonas: ImageEditPersona[];
   identities: PersonaRecord[];
@@ -231,6 +233,12 @@ export function MediaViewer({
     sourceAspectRatio: sourceRatio,
     sourcePersonaName: persona?.name,
     sourcePersonaVariant: persona?.variant,
+  };
+
+  const availableReferences = availableEditReferences.filter(reference => reference.assetId !== node.data.assetId && !editReferences.some(selected => selected.assetId === reference.assetId));
+  const selectAvailableReference = (assetId: string) => {
+    const reference = availableReferences.find(item => item.assetId === assetId);
+    if (reference && editReferences.length < maxAdditionalReferences) changeEditReferences([...editReferences, reference]);
   };
 
   const changeEditReferences = (next: ImageEditReference[]) => {
@@ -481,7 +489,7 @@ export function MediaViewer({
             onDragOver={event=>{if(acceptsEditDrop(event.dataTransfer)){event.preventDefault();event.dataTransfer.dropEffect='copy';}}}
             onDrop={event=>{if(!acceptsEditDrop(event.dataTransfer))return;event.preventDefault();event.stopPropagation();if(submitting||uploadingReferences)return;if(event.dataTransfer.files.length){void importEditFiles(Array.from(event.dataTransfer.files));return;}try{const item=JSON.parse(event.dataTransfer.getData('application/x-scenelith-reference')||event.dataTransfer.getData('application/x-scenelith-studio-image'));const assetId=String(item.url||'').match(/^\/api\/assets\/([0-9a-f-]{36})(?:\?|$)/i)?.[1];if(!assetId)throw Error('Choose an image from your library');if(item.url===url||editReferences.some(reference=>reference.url===item.url))return;if(editReferences.length>=maxAdditionalReferences)throw Error('Remove a reference to add another.');changeEditReferences([...editReferences,{assetId,url:item.url,title:String(item.label||item.name||'Reference'),origin:'canvas',detail:'Reference image'}]);}catch(reason){setError(reason instanceof Error?reason.message:'Could not add the reference');}}}>
             <GenerationComposerInput inputRef={editRequestRef} label="Image edit request" placeholder="What do you want to change?" prompt={editRequest} onPromptChange={setEditRequest} disabled={submitting||uploadingReferences}
-              references={<GenerationReferenceStrip items={editReferences.map(reference=>({id:reference.assetId,url:reference.thumbnailUrl||reference.url,title:reference.title,onRemove:()=>changeEditReferences(editReferences.filter(item=>item.assetId!==reference.assetId))}))} uploads={uploadPreviews} disabled={submitting||uploadingReferences}/>}
+              references={<GenerationReferenceStrip items={[{id:"edit-source",url:assetThumbnailUrl(url),title:"Current image · @EditSource (base image)",locked:true},...editReferences.map(reference=>({id:reference.assetId,url:assetThumbnailUrl(reference.thumbnailUrl||reference.url),title:reference.title,onRemove:()=>changeEditReferences(editReferences.filter(item=>item.assetId!==reference.assetId))})),...availableReferences.map(reference=>({id:reference.assetId,url:assetThumbnailUrl(reference.thumbnailUrl||reference.url),title:reference.title,onSelect:()=>selectAvailableReference(reference.assetId)}))]} uploads={uploadPreviews} disabled={submitting||uploadingReferences}/>}
               onKeyDown={event=>{if((event.metaKey||event.ctrlKey)&&event.key==='Enter')void submit();}}
               controls={<><GeneratorSelect menuKey="edit-model" openMenu={openEditMenu} setOpenMenu={setOpenEditMenu} className="generator-model-control media-edit-model" value={editModel?.id || editModelId} label="EDIT MODEL" options={editableModels.map((item) => ({
                 value: item.id,
@@ -520,7 +528,7 @@ export function MediaViewer({
 } assistantActive={assistantOpen} assistantRef={assistantTrigger} assistantDisabled={submitting||uploadingReferences||textDirty} onAssistant={()=>setAssistantOpen(!assistantOpen)}/><GenerationSubmit label="Create edited version" credits={editCredits} busy={submitting?'Creating…':undefined} disabled={!editRequest.trim()||refining||submitting||uploadingReferences||textDirty} onClick={()=>void submit()}/></>}/>
             {textDirty&&<p role="alert" className="media-edit-error">Apply or reset your text changes before editing the image.</p>}
             {error&&<p role="alert" className="media-edit-error">{error}</p>}
-            {assistantOpen&&<PromptAssistant anchor={composerRef} preferences={assistantPreferences} onPreferencesChange={saveAssistant} initialBrief={editRequest} references={[{assetId:node.data.assetId,url,title:'Current image',token:'@EditSource',role:'reference-image',kind:'image'},...editReferences.map(reference=>({...reference,token:editReferenceMentionToken(reference.title,reference.assetId),role:'reference-image',kind:'image' as const}))]} defaultSystemPrompt={imagePromptSystemInstruction({modelId:editModelId,aspectRatio:editOptions.aspectRatio,resolution:editResolution,editMode:true})} onCompose={(brief,assistant)=>onRefineEdit(brief,{...editOptions,assistant},editReferences)} onApply={prompt=>{setEditRequest(prompt);setAssistantOpen(false);}} onClose={()=>{setAssistantOpen(false);assistantTrigger.current?.focus({preventScroll:true});}} disabled={submitting||textDirty}/>}
+            {assistantOpen&&<PromptAssistant availableReferences={availableReferences.map(reference=>({...reference,token:editReferenceMentionToken(reference.title,reference.assetId),role:"reference-image",kind:"image" as const}))} onSelectReference={reference=>selectAvailableReference(reference.assetId||"")} anchor={composerRef} preferences={assistantPreferences} onPreferencesChange={saveAssistant} initialBrief={editRequest} references={[{assetId:node.data.assetId,url,title:'Current image',token:'@EditSource',role:'reference-image',kind:'image'},...editReferences.map(reference=>({...reference,token:editReferenceMentionToken(reference.title,reference.assetId),role:'reference-image',kind:'image' as const}))]} defaultSystemPrompt={imagePromptSystemInstruction({modelId:editModelId,aspectRatio:editOptions.aspectRatio,resolution:editResolution,editMode:true})} onCompose={(brief,assistant)=>onRefineEdit(brief,{...editOptions,assistant},editReferences)} onApply={prompt=>{setEditRequest(prompt);setAssistantOpen(false);}} onClose={()=>{setAssistantOpen(false);assistantTrigger.current?.focus({preventScroll:true});}} disabled={submitting||textDirty}/>}
           </GenerationComposer>}
         </section>
 

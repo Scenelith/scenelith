@@ -3,6 +3,8 @@
 /* eslint-disable @next/next/no-img-element */
 
 import { useEffect, useRef, useState } from "react";
+import {assetThumbnailUrl} from "@/lib/asset-preview-url";
+import {PreparedMediaImage} from "./PreparedMediaImage";
 import FloatingMenu from "./FloatingMenu";
 import {GenerationReferenceButton} from "./GenerationComposer";
 import { Check, Images, LockKeyhole, Paperclip, Upload, UserRound, X } from "lucide-react";
@@ -43,7 +45,7 @@ function ReferenceTile({ reference, selected, disabled, onToggle }: {
     onPointerDown={(event) => { event.stopPropagation(); onToggle(); }}
   >
     <span className="media-edit-reference-image">
-      <img src={reference.thumbnailUrl || reference.url} alt="" loading="lazy" decoding="async" />
+      <PreparedMediaImage src={assetThumbnailUrl(reference.thumbnailUrl || reference.url)} alt="" width={160} height={200} loading="lazy" decoding="async" />
       {selected && <span><Check size={10} /></span>}
     </span>
   </button>;
@@ -131,7 +133,7 @@ export function ImageEditReferencePicker({
   const orderedPersonas = [...personas].sort((left, right) => Number(right.id === source.personaId) - Number(left.id === source.personaId));
 
   return <div ref={rootRef} className={`media-edit-reference-picker ${open ? "is-open" : ""}`}>
-    <GenerationReferenceButton ref={anchor} aria-expanded={open} aria-label={`Edit references · ${selected.length} attached`} disabled={disabled} onClick={()=>{setOpen(value=>!value);setError("");}}/>
+    <GenerationReferenceButton ref={anchor} aria-expanded={open} aria-label={`Edit references · ${selected.length} attached`} disabled={disabled} onClick={()=>{if(!open)setTab(source.personaId ? "identity" : "canvas");setOpen(value=>!value);setError("");}}/>
     {open && <FloatingMenu anchor={anchor} onClose={()=>setOpen(false)} width={600} maxHeight={560} preferAbove matchAnchorWidth={false} className="image-reference-popover" label="Edit references panel"><section className="media-edit-reference-menu" aria-label="Edit references" onWheel={event=>event.stopPropagation()}>
       <header>
         <span><strong>Edit references</strong><small>Choose only the evidence this edit needs</small></span>
@@ -140,7 +142,7 @@ export function ImageEditReferencePicker({
       </header>
 
       <div className="media-edit-reference-source">
-        <span className="media-edit-reference-source-image"><img src={source.url} alt="" /><LockKeyhole size={10} /></span>
+        <span className="media-edit-reference-source-image"><PreparedMediaImage src={assetThumbnailUrl(source.url)} alt="" /><LockKeyhole size={10} /></span>
         <span><strong>Current image</strong><small>{source.title} · @EditSource · {source.personaName ? `Identity: ${source.personaName}${source.personaVariant ? ` / ${source.personaVariant.toUpperCase()}` : ""}` : "No assigned identity"}</small></span>
         <em>BASE</em>
       </div>
@@ -161,7 +163,7 @@ export function ImageEditReferencePicker({
         {tab === "identity" && <>
           {orderedPersonas.some((persona) => persona.references.length) ? <div className="media-edit-persona-groups">
             {orderedPersonas.filter((persona) => persona.references.length).map((persona) => <section className={persona.id === source.personaId ? "is-primary" : ""} key={persona.id}>
-              <header>{persona.avatarUrl ? <img src={persona.avatarUrl} alt="" /> : <span><UserRound size={13} /></span>}<strong>{persona.name}</strong>{persona.id === source.personaId && <b>SOURCE IDENTITY</b>}<small>{persona.references.length}</small></header>
+              <header>{persona.avatarUrl ? <PreparedMediaImage src={assetThumbnailUrl(persona.avatarUrl)} alt="" loading="lazy" decoding="async" /> : <span><UserRound size={13} /></span>}<strong>{persona.name}</strong>{persona.id === source.personaId && <b>SOURCE IDENTITY</b>}<small>{persona.references.length}</small></header>
               {(["reference", "before", "after"] as const).map((variant) => {
                 const references = persona.references.filter((reference) => (reference.variant || "reference") === variant);
                 if (!references.length) return null;

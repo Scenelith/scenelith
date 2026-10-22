@@ -1,4 +1,5 @@
 "use client";
+import {imageEditIdentityId} from "@/lib/image-edit-context";
 
 import { runMediaOperation, fetchAfterMediaPreparation } from "@/lib/media-client";
 import { bindCanvasClipboard, canvasSelectionPrefix } from "@/lib/canvas-clipboard";
@@ -3507,7 +3508,9 @@ function CanvasWorkspace({ initialProject, projects: initialProjects, initialWor
 
   async function composeImageEditPrompt(node: FrameNode, brief: string, options: ImageEditOptions, additionalReferences: ImageEditReference[]) {
     if (!node.data.assetId) throw new Error("This image is not available as an editable asset yet");
-    const editReferences = imageEditReferenceEntries(additionalReferences);
+    const liveNode = nodesRef.current.find(candidate => candidate.id === node.id);
+    if (liveNode && liveNode.data.assetId !== node.data.assetId) throw new Error("The source image changed. Reopen Edit on the image you want to modify.");
+    const editReferences = imageEditReferenceEntries(additionalReferences.filter(reference => reference.assetId !== node.data.assetId));
     const response = await fetchAfterMediaPreparation("/api/prompts/compose", {
       method: "POST",
       headers: { "content-type": "application/json" },
@@ -4078,6 +4081,7 @@ function CanvasWorkspace({ initialProject, projects: initialProjects, initialWor
     if (projectHydratingIdRef.current || !collaborationReadyRef.current) throw new Error("Wait for the canvas to connect");
     if (foregroundGenerationsRef.current.has(sourceNode.id) || activeGenerationNodeIds.includes(sourceNode.id)) throw new Error("This node already has a generation in progress");
     const currentNode = nodesRef.current.find((node) => node.id === sourceNode.id) || sourceNode;
+    if (currentNode.data.assetId !== sourceNode.data.assetId) throw new Error("The source image changed. Reopen Edit on the image you want to modify.");
     const sourceUrl = String(currentNode.data.outputUrl || currentNode.data.imageUrl || "");
     const displayedAssetId = currentNode.data.assetId;
     if (!displayedAssetId || !sourceUrl) throw new Error("This image is not available as an editable asset yet");
@@ -4089,7 +4093,7 @@ function CanvasWorkspace({ initialProject, projects: initialProjects, initialWor
         ? currentModel
       : models.find((model) => model.id === "nano-banana-2") || models.find((model) => model.mediaType === "image" && model.maxReferences > 0);
     if (!editModel) throw new Error("No image editing model is available");
-    const editReferences = imageEditReferenceEntries(additionalReferences);
+    const editReferences = imageEditReferenceEntries(additionalReferences.filter(reference => reference.assetId !== displayedAssetId));
     const maxAdditionalReferences = Math.max(0, editModel.maxReferences - 1);
     if (editReferences.length > maxAdditionalReferences) {
       throw new Error(`${editModel.label} accepts ${maxAdditionalReferences} additional edit reference${maxAdditionalReferences === 1 ? "" : "s"}`);
@@ -4102,10 +4106,8 @@ function CanvasWorkspace({ initialProject, projects: initialProjects, initialWor
     const aspectRatio = allowedRatios.includes(requestedRatio)
       ? requestedRatio
       : allowedRatios.includes(editModel.defaultRatio || "") ? editModel.defaultRatio! : allowedRatios[0] || "4:5";
-    const effectiveEditPrompt = prompt.includes("IMAGE EDIT MODE")
-      ? prompt
-      : [
-          "IMAGE EDIT MODE. Modify the provided @EditSource image in place.",
+    const effectiveEditPrompt = [
+          "IMAGE EDIT MODE. Image 1 is @EditSource: the exact base image to edit, including its person, face, body, pose, clothing, camera, framing and background. Keep every property unless the user explicitly requests changing it.",
           "Preserve every element the user did not explicitly ask to change. Do not redesign or recompose the whole image.",
           options.sizeMode === "custom" ? `Reframe the output to ${aspectRatio}; the source was ${options.sourceAspectRatio || "a different aspect ratio"}.` : "Keep the source framing and aspect ratio.",
           options.sourcePersonaName
@@ -4294,14 +4296,11 @@ function CanvasWorkspace({ initialProject, projects: initialProjects, initialWor
   const inspectorGeneratedHook = inspectorGeneratedHooks[inspectorGeneratedIndex];
   const previewUrl = previewMedia?.url || (previewNode ? String(previewNode.data.outputUrl || previewNode.data.imageUrl || "") : "");
   const previewReferences = previewNode ? nodeReferencePreviews(previewNode.id) : [];
-  const previewPersonaReference = previewReferences.find((reference) => reference.personaId);
-  const previewPersona = previewNode?.data.personaId
-    ? personas.find((persona) => persona.id === previewNode.data.personaId)
-    : previewPersonaReference
-      ? personas.find((persona) => persona.id === previewPersonaReference.personaId)
-      : undefined;
+  const previewPersonaId = imageEditIdentityId(previewNode, nodes, edges, personas);
+  const previewPersona = personas.find(persona => persona.id === previewPersonaId);
   const previewPersonaVariant = previewNode?.data.personaVariant
-    || previewPersonaReference?.variant
+    || previewPersona?.assets.find(asset => asset.id === previewNode?.data.assetId)?.role
+    || previewReferences.find(reference => reference.personaId === previewPersona?.id)?.variant
     || (/\bbefore\b/i.test(String(previewNode?.data.title || "")) ? "before" as const
       : /\bafter\b/i.test(String(previewNode?.data.title || "")) ? "after" as const
         : undefined);
@@ -4400,6 +4399,13 @@ function CanvasWorkspace({ initialProject, projects: initialProjects, initialWor
       };
     }),
   }));
+  const connectedEditReferences: ImageEditReference[] = previewNode ? generationReferenceEntries(previewNode.id)
+    .filter(reference => ["reference-image", "start-frame", "end-frame"].includes(reference.role) && reference.assetId !== previewNode.data.assetId)
+    .map(reference => {
+      const known = editPersonas.flatMap(persona => persona.references).find(item => item.assetId === reference.assetId)
+        || editCanvasReferences.find(item => item.assetId === reference.assetId);
+      return known || {assetId:reference.assetId,url:`/api/assets/${reference.assetId}`,thumbnailUrl:assetThumbnailUrl(`/api/assets/${reference.assetId}`),title:reference.title,origin:"canvas" as const,detail:"Connected to this node"};
+    }).filter((reference,index,all) => all.findIndex(item => item.assetId === reference.assetId) === index) : [];
   const inspectorGeneratorReferences = selectedNode?.data.kind === "prompt" ? nodeReferencePreviews(selectedNode.id) : [];
   const inspectorHasVideoInput = inspectorGeneratorReferences.some((reference) => reference.role === "reference-video" || reference.role === "motion-video");
   const inspectorVideoReference = inspectorGeneratorReferences.find((reference) => reference.role === "reference-video" || reference.role === "motion-video");
@@ -4918,6 +4924,7 @@ function CanvasWorkspace({ initialProject, projects: initialProjects, initialWor
         mediaTitle={previewMedia?.title}
         references={previewReferences}
         persona={previewPersona ? { id: previewPersona.id, name: previewPersona.name, avatarUrl: previewPersona.avatarUrl, variant: previewPersonaVariant } : undefined}
+        availableEditReferences={connectedEditReferences}
         editCanvasReferences={editCanvasReferences}
         editPersonas={editPersonas}
         identities={personas}

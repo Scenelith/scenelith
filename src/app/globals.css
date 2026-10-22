@@ -2072,3 +2072,12 @@ select.panel-input { color-scheme: dark; }
 .frame-node--video-master[data-assistant-open] .video-master-generator-overlay { padding-bottom:16px; pointer-events:none; transition:none; }
 .frame-node--generator[data-assistant-open] .generator-overlay textarea,
 .frame-node--video-master[data-assistant-open] .video-master-generator-overlay textarea { height:44px; min-height:44px; overflow:hidden; transition:none; }
+
+/* Edit choices use the same lightweight thumbnail strip; choosing evidence is explicit. */
+.generation-reference-strip > div > button.generation-reference-choice{position:relative;inset:auto;display:block;width:auto;height:64px;opacity:1;border-radius:12px;background:none;outline:1px dashed #8888;outline-offset:-2px}
+.generation-reference-choice > img{display:block;height:64px;width:auto;max-width:none;object-fit:contain;opacity:.65}
+.generation-reference-choice::after{content:'+';position:absolute;right:4px;bottom:4px;display:grid;place-items:center;width:18px;height:18px;border-radius:50%;background:#151515dd;color:#eee;font-size:15px}
+.generation-reference-choice:hover > img{opacity:1}
+.image-reference-popover .media-edit-reference-image>img{aspect-ratio:auto 4/5}
+.generation-reference-lock{position:absolute;right:3px;bottom:3px;padding:3px;box-sizing:content-box;border-radius:50%;background:#151515dd;color:#77ddbb}
+.media-edit-composer .generation-reference-strip>div:has(>button[aria-label^="Remove"]){outline:1px solid #77ddbb;outline-offset:-1px}
