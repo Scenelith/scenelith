@@ -43,6 +43,14 @@ export function canvasGenerationModels() {
     defaultGenerateAudio: model.defaultGenerateAudio || false,
     supportsAudio: model.supportsAudio || false,
     ...(model.id === "flux-3-klein" ? {imageOptions:{referenceNames:"image 1, image 2, in submitted order; EditSource is image 1",outputFormats:["png","jpeg","webp"],seed:{min:0,max:2147483647},enhancePrompt:{generationDefault:true,editDefault:false},imagesPerCanvasRequest:1,batchMode:"One independently tracked task per generator node"}} : {}),
+    ...(model.id.startsWith("kling-4-") ? {referenceModeRules: {
+      endFrameRequiresStartFrame: false,
+      referenceNames: model.id === "kling-4-keyframe" ? "@first_frame, @keyframe_1, @keyframe_2, @last_frame; middle frames follow connected input order" : "@image_1, @video_1, @voice_1; independently numbered per media kind",
+      canvasAliases: "Canvas reference tokens are translated to the declared provider names. Every @mention must refer to a connected asset.",
+      nativeAudio: true, keepOriginalSound: false,
+      ...(model.id === "kling-4-keyframe" ? {maxFrames: "min(10, output seconds + 1), including first and last; at most 8 middle frames", frameModeAspectRatio:"Follows the first provided frame"} : {maxReferenceVideoSeconds:30,minReferenceVideoSeconds:2,maxTotalReferences:15,voiceInput:"Speech reference; generation fails if no usable voice is detected",videoBilling:"max(input video seconds + output seconds, 2 * output seconds); all input clips summed"}),
+      groupedSubjects: "Optional KIE elements are not exposed as Canvas ports; connect individual image/video references instead.",
+    }} : {}),
     ...(model.id.startsWith("wan-3") ? { referenceModeRules: {
       mutuallyExclusiveRoleGroups: [["start-frame", "end-frame"], ["reference-image", "reference-video", "reference-audio"]],
       endFrameRequiresStartFrame: true, audioRequiresVisualReference: model.id === "wan-3", maxInputPlusOutputVideoSeconds: 30,

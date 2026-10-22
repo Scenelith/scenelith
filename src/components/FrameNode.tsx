@@ -1971,7 +1971,7 @@ function FrameNodeCardComponent({ id, data, selected }: NodeProps<FrameNode>) {
     const inputPorts = selectedModel?.inputPorts || (selectedModel?.maxReferences ? [{ id: "reference-image", label: "Image reference", kind: "image" as const, max: selectedModel.maxReferences }] : []);
     const missingRequiredInputs = inputPorts.filter((port) => port.required && !references.some((reference) => reference.role === port.id));
     const sourceDuration = referenceDurationSettings(selectedModel?.id || "",references,data.duration || selectedModel?.defaultDuration || "5",data.durationMode || "reference");
-    const modelInputError = selectedModel ? newKieInputError(selectedModel.id, { prompt: connectedText?.text || data.prompt || "", references: sourceDuration.references, aspectRatio: data.aspectRatio, resolution: data.resolution, duration: sourceDuration.duration }, { allowUnmeasuredMedia: true }) : null;
+    const modelInputError = selectedModel ? newKieInputError(selectedModel.id, { prompt: connectedText?.text || data.prompt || "", references: sourceDuration.references.map(reference => ({...reference,label:stableReferenceToken(reference)})), aspectRatio: data.aspectRatio, resolution: data.resolution, duration: sourceDuration.duration }, { allowUnmeasuredMedia: true }) : null;
     const canGenerate = Boolean(connectedText?.text || data.prompt?.trim()) && missingRequiredInputs.length === 0 && !modelInputError;
     const generationCount = Math.min(MAX_GENERATION_BATCH, Math.max(1, Number(data.generationCount || 1)));
     const generatedAudioEnabled = data.generateAudio ?? selectedModel?.defaultGenerateAudio ?? false;
@@ -2343,7 +2343,7 @@ function FrameNodeCardComponent({ id, data, selected }: NodeProps<FrameNode>) {
     const resolutions = generatorResolutionsFor(selectedModel, hasVideoInput);
     const generatedAudioEnabled = selectedClip?.generateAudio ?? selectedModel?.defaultGenerateAudio ?? false;
     const missingRequiredInputs = inputPorts.filter((port) => port.required && !sceneReferences.some((reference) => reference.role === port.id));
-    const modelInputError = selectedModel && selectedClip ? newKieInputError(selectedModel.id, { prompt: selectedClip.prompt, references: sceneReferences, aspectRatio: selectedModel.ratioSource === "reference" ? "auto" : selectedAspectRatio, resolution: selectedClip.resolution || selectedModel.defaultResolution, duration: String(generationDuration) }, { allowUnmeasuredMedia: true }) : null;
+    const modelInputError = selectedModel && selectedClip ? newKieInputError(selectedModel.id, { prompt: selectedClip.prompt, references: sceneReferences.map(reference => ({...reference,label:stableReferenceToken(reference)})), aspectRatio: selectedModel.ratioSource === "reference" ? "auto" : selectedAspectRatio, resolution: selectedClip.resolution || selectedModel.defaultResolution, duration: String(generationDuration) }, { allowUnmeasuredMedia: true }) : null;
     const selectedPlaybackMedia = videoMasterClipPlaybackMedia(selectedClip, videoMasterSelectedLane, videoMasterLaneVisibility);
     const masterPlaybackSources = clips.flatMap((clip) => [
       videoMasterClipPlaybackMedia(clip, "original", { output: false, original: true }).url,

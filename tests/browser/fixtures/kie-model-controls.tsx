@@ -1,3 +1,4 @@
+import {stableReferenceToken} from "../../../src/lib/prompt-assistant";
 import { useState } from "react";
 import { createRoot } from "react-dom/client";
 import { ReactFlow, type NodeTypes } from "@xyflow/react";
@@ -28,7 +29,10 @@ function Fixture() {
     <button onClick={() => choose("gpt-image-2-5-flare")}>Images</button>
     <button onClick={() => choose("flux-3-klein")}>FLUX</button>
     <button onClick={() => choose("wan-3")}>Wan</button>
+    <button onClick={() => choose("kling-4-reference")}>Kling</button>
+    <button onClick={() => choose("kling-4-keyframe")}>Keyframes</button>
     <button onClick={() => setReferenceSeconds(23.5)}>Long video</button>
+    <button onClick={() => updateNode("image",{prompt:`Follow ${stableReferenceToken({assetId:"video",url:thumbnail,title:"Reference video",role:"reference-video"})}`})}>Mention video</button>
     <button onClick={() => choose("pixverse-v6-text")}>PixVerse</button>
     <button onClick={() => choose("gemini-omni-flash-1-1")}>Omni</button>
     <button onClick={() => setVideoReference((v) => !v)}>Toggle video reference</button>

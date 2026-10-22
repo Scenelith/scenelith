@@ -5,7 +5,7 @@ export function followsReferenceDuration(modelId: string, mode?: ReferenceDurati
 }
 /** Wan accepts whole output seconds. Like Reviral, round up to cover the
  * selected source, with a 2s minimum and a 15s reference budget. */
-export function referenceDurationSettings(modelId: string, references: TimedReference[], fixedDuration: string, mode?: ReferenceDurationMode) {
+export function referenceDurationSettings<T extends TimedReference>(modelId: string, references: T[], fixedDuration: string, mode?: ReferenceDurationMode) {
   const videos = references.filter(ref => ref.role === "reference-video" || ref.role === "motion-video");
   const active = followsReferenceDuration(modelId, mode) && videos.length > 0;
   const preparedReferences = active && videos.length === 1
