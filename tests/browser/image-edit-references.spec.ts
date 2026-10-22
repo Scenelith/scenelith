@@ -1,0 +1,45 @@
+import {readFileSync} from 'node:fs';
+import {build} from 'esbuild';
+import {test,expect} from '@playwright/test';
+import path from 'node:path';
+for(const width of [1440,390])test(`Edit keeps its base, exposes connected choices and loads thumbnails at ${width}px`,async({page})=>{
+ const errors:string[]=[],mediaRequests:string[]=[];page.on('pageerror',error=>errors.push(error.message));
+ await page.route('https://edit.test/api/**',route=>{
+  const url=route.request().url();
+  if(url.includes('/assets/')){mediaRequests.push(url);return route.fulfill({contentType:'image/svg+xml',body:'<svg xmlns="http://www.w3.org/2000/svg" width="300" height="500"><rect width="300" height="500" fill="#688979"/></svg>'});}
+  return route.fulfill({json:{}});
+ });
+ const bundle=await build({entryPoints:['tests/browser/fixtures/image-edit-references.tsx'],bundle:true,write:false,platform:'browser',jsx:'automatic',tsconfig:path.resolve('tsconfig.json'),define:{'process.env.NODE_ENV':'"production"','process.env':'{}'}});
+ const css=(readFileSync('src/app/globals.css','utf8')+readFileSync('src/app/theme.css','utf8')).replace(/@import[^;]+;/g,'');
+ await page.route('https://edit.test/',route=>route.fulfill({contentType:'text/html',body:`<style>${css}</style><div id="root"></div>`}));
+ await page.setViewportSize({width,height:1000});await page.goto('https://edit.test/');await page.addScriptTag({content:bundle.outputFiles[0].text});
+ const composer=page.getByLabel('Image edit composer',{exact:true});
+ await expect(composer.getByAltText('Current image · @EditSource (base image)')).toBeVisible();
+ await expect(composer.getByRole('button',{name:'Add Hair evidence',exact:true})).toBeVisible();
+ expect(await page.locator('#selected').textContent()).toBe('[]');
+ await page.getByRole('button',{name:/Edit references ·/}).click();
+ const picker=page.getByLabel('Edit references',{exact:true});
+ await expect(picker.locator('nav button.is-active')).toHaveText(/Identities/);
+ await expect(picker.locator('.media-edit-persona-groups > section').first().locator('header strong')).toHaveText('Iris');
+ await expect(picker.getByRole('button',{name:'Add Iris portrait'})).toBeVisible();
+ await picker.getByRole('button',{name:'Close edit references'}).click();
+ await page.getByRole('button',{name:'Prompt assistant',exact:true}).click();
+ const assistant=page.getByRole('dialog',{name:'Prompt assistant',exact:true});
+ await expect(assistant.getByLabel('Available edit references').getByRole('button',{name:/Add @Hair/})).toBeVisible();
+ await assistant.getByRole('textbox',{name:'Assistant request'}).fill('Change only hair color using ');
+ await assistant.getByRole('button',{name:/Add @Hair/}).click();
+ await expect(composer.getByRole('button',{name:'Remove Hair evidence'})).toHaveCount(1);
+ await expect(assistant.getByRole('textbox',{name:'Assistant request'})).toHaveValue(/@Hair_evidence_/);
+ await assistant.getByRole('button',{name:'Suggest',exact:true}).click();
+ await expect(assistant.getByRole('textbox',{name:'Suggested prompt'})).toBeVisible();
+ const calls=JSON.parse((await page.locator('#calls').textContent())!);expect(calls[0].source).toBe('source');expect(calls[0].references.map((r:{assetId:string})=>r.assetId)).toEqual(['hair']);
+ await assistant.getByRole('button',{name:'Use prompt'}).click();
+ await composer.getByRole('button',{name:/Create edited version/}).click();
+ await expect.poll(async()=>JSON.parse((await page.locator('#calls').textContent())!).length).toBe(2);
+ const generated=JSON.parse((await page.locator('#calls').textContent())!)[1];expect(generated.source).toBe('source');expect(generated.references.map((r:{assetId:string})=>r.assetId)).toEqual(['hair']);
+ await expect(composer.getByRole('button',{name:/Create edited version/})).toBeEnabled();
+ expect(mediaRequests.some(url=>url.includes('thumbnail=1'))).toBe(false);
+ for(const url of mediaRequests.filter(url=>url.includes('/hair')||url.includes('/iris')||url.includes('/other'))){expect(url).toContain('variant=thumbnail');expect(url).toContain('delivery=direct');}
+ expect(errors).toEqual([]);
+ await page.screenshot({path:`/tmp/image-edit-references-${width}.png`});
+});

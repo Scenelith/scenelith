@@ -145,7 +145,7 @@ test("image edit assistant keeps the source authoritative and binds named suppor
   });
   assert.match(instruction, /@EditSource is the exact current image/i);
   assert.match(instruction, /supporting evidence, never a replacement canvas/i);
-  assert.match(instruction, /reference declared as identity controls the named person's stable identity only/i);
+  assert.match(instruction, /reference declared as identity is available evidence; it does not automatically replace @EditSource identity/i);
   assert.match(instruction, /visible reference title and exact @token together/i);
   assert.match(instruction, /Keep the original composition and framing/i);
 });

@@ -1,3 +1,4 @@
+import {imageEditSourceInstruction} from "./image-edit-context";
 import { prepareReferenceAnalyses } from "./media/reference-preparation";
 import { MediaPending } from "./media/compatibility";
 import { mediaResponse } from "./media/http";
@@ -123,6 +124,8 @@ export async function executeGenerationRequest(userId: string, input: unknown, q
       if (!asset) return Response.json({error:"Choose references from this workspace"},{status:409});
     }
   }
+  if (parsed.data.operation === "edit" && (model.mediaType !== "image" || !loaded.assets.length)) return Response.json({error:"Image edit requires a base image"}, {status:400});
+  if (parsed.data.operation === "edit" && parsed.data.referenceLabels.slice(1).includes("@EditSource")) return Response.json({error:"Only the first image can be @EditSource"}, {status:400});
   const references = [];
   for (const [index, asset] of loaded.assets.entries()) {
     const requestedRole = parsed.data.referenceRoles[index] || "reference-image";
@@ -147,7 +150,7 @@ export async function executeGenerationRequest(userId: string, input: unknown, q
       durationSeconds,
       sizeBytes: asset.size_bytes,
       width, height,
-      label: parsed.data.referenceLabels[index] || (asset.kind === "persona_ref" ? `Identity ${asset.role === "after" ? "After" : asset.role === "before" ? "Before" : "Character"} reference ${index + 1}` : `Composition reference ${index + 1}`),
+      label: parsed.data.operation === "edit" && index === 0 ? "@EditSource" : parsed.data.referenceLabels[index] || (asset.kind === "persona_ref" ? `Identity ${asset.role === "after" ? "After" : asset.role === "before" ? "Before" : "Character"} reference ${index + 1}` : `Composition reference ${index + 1}`),
     });
   }
   if (references.length > model.maxReferences) return Response.json({ error: `${model.label} accepts at most ${model.maxReferences} reference inputs` }, { status: 400 });
@@ -245,7 +248,7 @@ export async function executeGenerationRequest(userId: string, input: unknown, q
     userId,
     projectId: parsed.data.projectId,
     nodeId: parsed.data.nodeId,
-    prompt: parsed.data.prompt,
+    prompt: parsed.data.operation === "edit" ? imageEditSourceInstruction(parsed.data.prompt, normalizedReferences.map(reference => reference.label)) : parsed.data.prompt,
     model,
     references: normalizedReferences,
     operation: parsed.data.operation,

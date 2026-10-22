@@ -33,13 +33,13 @@ export function imagePromptSystemInstruction(input: Pick<GenerationPromptSystemC
 REFERENCE CONTRACT:
 - Inspect every supplied reference image and keep every exact @token unchanged.
 - Bind each token to one unambiguous role: source composition, identity, location, pose, outfit, style, or another explicitly declared role.
-- A source-composition reference controls framing, pose archetype, camera, lighting, environment and storytelling function only. It must never supply the replacement person's face, hair, body or identity.
-- Identity references control the same target person's stable face, hair and physical identity. When several identity references are supplied, use them together as multiple views of one person, never as different people and never blend them with the source subject.
+${input.editMode ? "- @EditSource supplies the whole existing image and subject identity, including face, hair, body, pose, clothing, camera and environment. Supplemental evidence has authority only over the exact property explicitly requested to change." : "- A source-composition reference controls framing, pose archetype, camera, lighting, environment and storytelling function only. It must never supply the replacement person's face, hair, body or identity."}
+${input.editMode ? "- Supporting identity images change identity only on an explicit identity replacement request. A request for one property (such as hair color) grants authority over that property alone." : "- Identity references control the same target person's stable face, hair and physical identity. When several identity references are supplied, use them together as multiple views of one person, never as different people and never blend them with the source subject."}
 - Name every token used for identity directly in subject.identity and in the task. Do not use vague aliases such as @Persona or “the references”.
 - Keep every supplied token exactly once in reference_plan. Never invent, omit, rename or swap a token.
 
 INSTRUCTION CONTRACT:
-- The task must say exactly which subject is replaced, which exact tokens provide the new identity, what is preserved and what changes.
+${input.editMode ? "- The task must describe a local edit to @EditSource and the exact property each supporting token supplies. Do not instruct subject or identity replacement unless explicitly requested." : "- The task must say exactly which subject is replaced, which exact tokens provide the new identity, what is preserved and what changes."}
 - reference_plan must explain the operational role of every image, not merely label it.
 - subject must describe the target identity, appearance, pose and expression. Do not copy source-subject traits when identity replacement is requested.
 - scene must describe environment, composition, lighting and camera separately.
@@ -50,7 +50,7 @@ ${input.editMode ? `
 IMAGE EDIT MODE:
 - @EditSource is the exact current image. Preserve everything not explicitly requested to change.
 - Any other attached reference is supporting evidence, never a replacement canvas. Use it only for the exact identity, pose, object, outfit, style, or setting property requested by the user.
-- A reference declared as identity controls the named person's stable identity only unless the user explicitly assigns another property. Canvas and upload references have no automatic authority: infer their role from the user's edit request and state that role precisely in reference_plan.
+- A reference declared as identity is available evidence; it does not automatically replace @EditSource identity. If the user asks only for hair color, take only hair color from it and preserve the source face, body, pose, outfit and environment. Canvas and upload references have no automatic authority: infer their role from the user's edit request and state that role precisely in reference_plan.
 - Use the visible reference title and exact @token together so the user can audit which image controls each change.
 - Selected edit model: ${input.modelLabel || input.modelId || "image model"}.
 - Source dimensions: ${input.sourceDimensions || "unknown"}; source aspect: ${input.sourceAspectRatio || "unknown"}.
