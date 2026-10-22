@@ -4,6 +4,7 @@
 
 import {MediaDialogBackdrop,MediaDialogSurface,MediaDialogClose,useElementHeight} from "./MediaDialog";
 import GenerationComposer,{GenerationComposerInput,GenerationComposerTools,GenerationSubmit,GenerationReferenceStrip} from "./GenerationComposer";
+import {useBrowserDraft,stringDraft} from "./useBrowserDraft";
 import PromptAssistant from "./PromptAssistant";
 import {defaultPromptAssistantPreferences,type PromptAssistantPreferences} from "@/lib/prompt-assistant";
 import {imagePromptSystemInstruction} from "@/lib/generation-prompt-system";
@@ -166,7 +167,10 @@ export function MediaViewer({
   const [textPanel, setTextPanel] = useState<HTMLElement | null>(null);
   const [textDirty, setTextDirty] = useState(false);
   const hasTextEditor = Boolean(projectId && onApplyTextOverlay && node.data.assetId && node.data.mediaType !== "video");
-  const [editRequest, setEditRequest] = useState(() => initialEditReferences.map((reference) => editReferenceMentionToken(reference.title, reference.assetId)).join(" "));
+  const editDraftKey=assistantStorageKey||`scenelith.edit-draft.${projectId}.${node.id}`;
+  const [savedEditRequest,saveEditRequest]=useBrowserDraft(editDraftKey+".request",stringDraft);
+  const editRequest=savedEditRequest??initialEditReferences.map(reference=>editReferenceMentionToken(reference.title,reference.assetId)).join(" ");
+  const setEditRequest=(value:string|((current:string)=>string))=>saveEditRequest(typeof value==='function'?value(editRequest):value);
   const [refining, setRefining] = useState(false);
   const [assistantOpen,setAssistantOpen]=useState(false),[assistantPreferences,setAssistantPreferences]=useState(defaultPromptAssistantPreferences);
   const assistantKey=assistantStorageKey||`scenelith.edit-assistant.${projectId}.${node.data.assetId||node.id}`;
@@ -528,7 +532,7 @@ export function MediaViewer({
 } assistantActive={assistantOpen} assistantRef={assistantTrigger} assistantDisabled={submitting||uploadingReferences||textDirty} onAssistant={()=>setAssistantOpen(!assistantOpen)}/><GenerationSubmit label="Create edited version" credits={editCredits} busy={submitting?'Creating…':undefined} disabled={!editRequest.trim()||refining||submitting||uploadingReferences||textDirty} onClick={()=>void submit()}/></>}/>
             {textDirty&&<p role="alert" className="media-edit-error">Apply or reset your text changes before editing the image.</p>}
             {error&&<p role="alert" className="media-edit-error">{error}</p>}
-            {assistantOpen&&<PromptAssistant availableReferences={availableReferences.map(reference=>({...reference,token:editReferenceMentionToken(reference.title,reference.assetId),role:"reference-image",kind:"image" as const}))} onSelectReference={reference=>selectAvailableReference(reference.assetId||"")} anchor={composerRef} preferences={assistantPreferences} onPreferencesChange={saveAssistant} initialBrief={editRequest} references={[{assetId:node.data.assetId,url,title:'Current image',token:'@EditSource',role:'reference-image',kind:'image'},...editReferences.map(reference=>({...reference,token:editReferenceMentionToken(reference.title,reference.assetId),role:'reference-image',kind:'image' as const}))]} defaultSystemPrompt={imagePromptSystemInstruction({modelId:editModelId,aspectRatio:editOptions.aspectRatio,resolution:editResolution,editMode:true})} onCompose={(brief,assistant)=>onRefineEdit(brief,{...editOptions,assistant},editReferences)} onApply={prompt=>{setEditRequest(prompt);setAssistantOpen(false);}} onClose={()=>{setAssistantOpen(false);assistantTrigger.current?.focus({preventScroll:true});}} disabled={submitting||textDirty}/>}
+            {assistantOpen&&<PromptAssistant draftKey={editDraftKey+".assistant"} availableReferences={availableReferences.map(reference=>({...reference,token:editReferenceMentionToken(reference.title,reference.assetId),role:"reference-image",kind:"image" as const}))} onSelectReference={reference=>selectAvailableReference(reference.assetId||"")} anchor={composerRef} preferences={assistantPreferences} onPreferencesChange={saveAssistant} initialBrief={editRequest} references={[{assetId:node.data.assetId,url,title:'Current image',token:'@EditSource',role:'reference-image',kind:'image'},...editReferences.map(reference=>({...reference,token:editReferenceMentionToken(reference.title,reference.assetId),role:'reference-image',kind:'image' as const}))]} defaultSystemPrompt={imagePromptSystemInstruction({modelId:editModelId,aspectRatio:editOptions.aspectRatio,resolution:editResolution,editMode:true})} onCompose={(brief,assistant)=>onRefineEdit(brief,{...editOptions,assistant},editReferences)} onApply={prompt=>{setEditRequest(prompt);setAssistantOpen(false);}} onClose={()=>{setAssistantOpen(false);assistantTrigger.current?.focus({preventScroll:true});}} disabled={submitting||textDirty}/>}
           </GenerationComposer>}
         </section>
 

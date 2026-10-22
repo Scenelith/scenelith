@@ -5,6 +5,7 @@
 import { useEffect, useRef, useState } from "react";
 import {assetThumbnailUrl} from "@/lib/asset-preview-url";
 import {PreparedMediaImage} from "./PreparedMediaImage";
+import ReferenceHoverPreview from "./ReferenceHoverPreview";
 import FloatingMenu from "./FloatingMenu";
 import {GenerationReferenceButton} from "./GenerationComposer";
 import { Check, Images, LockKeyhole, Paperclip, Upload, UserRound, X } from "lucide-react";
@@ -40,12 +41,11 @@ function ReferenceTile({ reference, selected, disabled, onToggle }: {
     className={`media-edit-reference-tile ${selected ? "is-selected" : ""}`}
     aria-pressed={selected}
     aria-label={`${selected ? "Remove" : "Add"} ${reference.title}`}
-    title={reference.title}
     disabled={disabled && !selected}
     onPointerDown={(event) => { event.stopPropagation(); onToggle(); }}
   >
     <span className="media-edit-reference-image">
-      <PreparedMediaImage src={assetThumbnailUrl(reference.thumbnailUrl || reference.url)} alt="" width={160} height={200} loading="lazy" decoding="async" />
+      <ReferenceHoverPreview src={reference.thumbnailUrl||reference.url} title={reference.title}><PreparedMediaImage src={assetThumbnailUrl(reference.thumbnailUrl || reference.url)} alt="" width={160} height={200} loading="lazy" decoding="async" /></ReferenceHoverPreview>
       {selected && <span><Check size={10} /></span>}
     </span>
   </button>;

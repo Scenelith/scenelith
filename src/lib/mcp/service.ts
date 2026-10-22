@@ -1195,7 +1195,7 @@ export async function editMcpCanvasImage(principal: McpPrincipal, input: {
   ].join("\n");
   if (effectivePrompt.length > (model.maxPromptLength || 5_000)) throw new Error(`${model.label} accepts prompts up to ${model.maxPromptLength || 5_000} characters`);
   const editReferences = extra.map((reference) => ({ assetId: reference.assetId, url: `/api/assets/${reference.assetId}`, title: reference.title || "Edit reference", origin: reference.origin || "canvas", detail: reference.detail || "Supporting edit reference" }));
-  const prepared = await patchMcpCanvas(principal, { projectId: input.projectId, expectedRevision: input.expectedRevision, readSet: input.readSet, operations: [{ type: "update_node", nodeId: node.id, data: { prompt: effectivePrompt, status: "queued", queueReason: "plan", generationError: undefined, editReferencesByAssetId: { ...(node.data.editReferencesByAssetId || {}), [sourceAssetId]: editReferences } } }] });
+  const prepared = await patchMcpCanvas(principal, { projectId: input.projectId, expectedRevision: input.expectedRevision, readSet: input.readSet, operations: [{ type: "update_node", nodeId: node.id, data: { status: "queued", queueReason: "plan", generationError: undefined, editReferencesByAssetId: { ...(node.data.editReferencesByAssetId || {}), [sourceAssetId]: editReferences } } }] });
   const admission = await admitGeneration({ userId: principal.userId, projectId: input.projectId, nodeId: node.id, prompt: effectivePrompt, model, references: referenceRows, operation: "edit", aspectRatio, resolution, duration: model.defaultDuration || model.durations?.[0] || "5", generateAudio: false, hasVideoInput: false, inputVideoDurationSeconds: 0, exclusiveNode: true, beforeAdmit: async () => {
     const latest = await getMcpCanvas(principal, input.projectId);
     if (canvasNodeInputFingerprint(latest.graph, node.id) !== canvasNodeInputFingerprint(prepared.graph, node.id)) throw canvasConflict(latest.revision, [{ nodeId: node.id, fields: ["inputs"], reason: "Image edit inputs changed before admission" }]);
@@ -1203,7 +1203,7 @@ export async function editMcpCanvasImage(principal: McpPrincipal, input: {
   if (!admission.ok) {
     const live = await getMcpCanvas(principal, input.projectId);
     const liveNode = live.graph.nodes.find((candidate) => candidate.id === node.id);
-    if (liveNode?.data.status === "queued" && liveNode.data.queueReason === "plan" && liveNode.data.prompt === effectivePrompt) {
+    if (liveNode?.data.status === "queued" && liveNode.data.queueReason === "plan" && liveNode.data.prompt === node.data.prompt && liveNode.data.assetId === node.data.assetId) {
       await patchMcpCanvas(principal, { projectId: input.projectId, expectedRevision: live.revision, readSet: live.readSet, operations: [{ type: "update_node", nodeId: node.id, data: { status: "failed", queueReason: undefined, generationError: admission.error } }] }).catch(() => undefined);
     }
     throw Object.assign(new Error(admission.error), { status: admission.status, code: admission.code, retryAfterMs: admission.retryAfterMs, requiredCredits: admission.requiredCredits });

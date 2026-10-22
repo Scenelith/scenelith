@@ -4205,7 +4205,6 @@ function CanvasWorkspace({ initialProject, projects: initialProjects, initialWor
             const currentAspectRatio = String(currentNode.data.aspectRatio || currentModel?.defaultRatio || "4:5");
             const preservedAspectRatio = /^\d+:\d+$/.test(currentAspectRatio) ? currentAspectRatio : "16:9";
             const nextData: Partial<FrameNode["data"]> = {
-              prompt: effectiveEditPrompt,
               subtitle: "Image edited in place",
               outputUrl: output.url,
               assetId: output.assetId,
@@ -4915,6 +4914,7 @@ function CanvasWorkspace({ initialProject, projects: initialProjects, initialWor
         onDownloadMaster={(lane, scope) => downloadMasterMedia(previewNode.id, lane, scope)}
         onDeleteNode={() => deleteCanvasNode(previewNode.id)}
       /> : previewNode && previewUrl ? <MediaViewer
+        key={`${project.id}:${previewNode.id}`}
         node={previewNode}
         projectId={project.id}
         onApplyTextOverlay={previewNode.id.startsWith("library:") ? undefined : (...args) => applyTextOverlay(previewNode.id, ...args)}
