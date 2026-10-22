@@ -12,11 +12,12 @@ export async function prepareNewKieReferences<T extends ModelReference & { path:
   if (!newKieModel(modelId)) return references;
   return Promise.all(references.map(async (reference) => {
     const wan = modelId.startsWith("wan-3") || modelId === "seedance-2-5";
+    const kling = modelId.startsWith("kling-4-");
     const image = reference.mimeType.startsWith("image/");
     const video = reference.mimeType.startsWith("video/");
     const strict = wan || modelId === "nano-banana-2-1" || modelId === "gpt-image-2-5-sunburst";
-    const needsDimensions = (wan && video) || (strict && image);
-    const needsDuration = (wan || (modelId.startsWith("gemini-omni") && !reference.durationSeconds)) && !image;
+    const needsDimensions = (wan && video) || ((strict || kling) && image);
+    const needsDuration = (wan || (kling && video) || (modelId.startsWith("gemini-omni") && !reference.durationSeconds)) && !image;
     if (reference.sizeBytes && !needsDimensions && !needsDuration) return reference;
     if(!image && (mediaExecutionVersion===1 || (mediaExecutionVersion===undefined && process.env.SCENELITH_MEDIA_QUEUE_ENABLED === "true"))){
       if(strict && !mediaContentMatchesMime(await readStoragePrefix(reference.path,64),reference.mimeType))throw new Error("Reference content does not match its format");

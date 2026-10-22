@@ -226,7 +226,7 @@ export async function executeGenerationRequest(userId: string, input: unknown, q
     if (hasFrames && hasMaterials) return Response.json({ error: "Veo 3.1 Fast uses either first/last frames or material references, not both" }, { status: 400 });
     if (hasMaterials && selectedDuration !== "8") return Response.json({ error: "Veo material-reference mode supports only 8 seconds" }, { status: 400 });
   }
-  if (normalizedReferences.some((reference) => reference.role === "end-frame") && !normalizedReferences.some((reference) => reference.role === "start-frame")) {
+  if (model.id !== "kling-4-keyframe" && normalizedReferences.some((reference) => reference.role === "end-frame") && !normalizedReferences.some((reference) => reference.role === "start-frame")) {
     return Response.json({ error: "Connect a start frame before an end frame" }, { status: 400 });
   }
   let referenceDuration = selectedDuration;

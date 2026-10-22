@@ -1,4 +1,5 @@
 import type { KieModel } from "./kie";
+import { isKling4, kling4InputError, kling4Prompt, kling4ReferenceNames } from "./kling4";
 
 const imageRatios = ["auto", "1:1", "3:2", "2:3", "4:3", "3:4", "16:9", "9:16", "21:9"];
 const image1KRatios = [...imageRatios, "27:16", "16:27", "9:8", "8:9"];
@@ -22,6 +23,20 @@ export const newKieModels: KieModel[] = [
     ratios: ["1:1", "4:3", "3:4", "3:2", "2:3", "16:9", "9:16", "21:9", "9:21", "auto"], referenceOnlyRatios: ["auto"],
     resolutions: ["1K", "2K", "4K"], defaultRatio: "9:16", defaultResolution: "1K",
     inputPorts: [{ id: "reference-image", label: "Reference images", kind: "image", max: 10 }] },
+  ...["reference", "keyframe"].map((mode): KieModel => ({
+    id: `kling-4-${mode}`, label: `Kling 4.0 · ${mode === "reference" ? "References" : "Keyframes"}`,
+    mediaType: "video", description: mode === "reference" ? "3–30s · images, video and voice references · native audio" : "3–30s · start, ordered middle and end frames · ratio follows frames · native audio",
+    providerModel: `kling-4.0/${mode}-to-video`, providerPath: jobPath,
+    maxReferences: mode === "reference" ? 15 : 10, minPromptLength: 1, maxPromptLength: 10_000,
+    ratios: ["auto", "16:9", "9:16", "1:1", "21:9"],
+    ...(mode === "keyframe" ? {referenceRatiosByResolution: {"720P": ["auto"], "1080P": ["auto"]}} : {}),
+    resolutions: ["720P", "1080P"], durations: seconds(3, 30), defaultRatio: "9:16", defaultResolution: "720P", defaultDuration: "5", defaultGenerateAudio: true,
+    inputPorts: mode === "reference" ? [
+      {id:"reference-image",label:"Reference images",kind:"image",max:10},
+      {id:"reference-video",label:"Reference videos · 2–30s each",kind:"video",max:5},
+      {id:"reference-audio",label:"Voice references",kind:"audio",max:3},
+    ] : [frames[0],{id:"reference-image",label:"Middle keyframes · chronological",kind:"image",max:8},frames[1]],
+  })),
   { id: "seedance-2-5", label: "Seedance 2.5", mediaType: "video", description: "Multimodal video · 4–30s · up to 1080p", providerModel: "bytedance/seedance-2-5", providerPath: jobPath,
     maxReferences: 50, minPromptLength: 1, maxPromptLength: 20_480, ratios: ["adaptive", "16:9", "4:3", "1:1", "3:4", "9:16", "21:9"],
     resolutions: ["480P", "720P", "1080P"], durations: seconds(4, 30), defaultRatio: "adaptive", defaultResolution: "720P", defaultDuration: "5", defaultGenerateAudio: true, supportsAudio: true,
@@ -107,7 +122,7 @@ export function newKieInputError(id: string, input: NewModelInput, options: { al
     const port = model.inputPorts?.find((port) => port.id === (ref.role || "reference-image"));
     if (!port) return fail(`unsupported input ${ref.role || "reference-image"}; disconnect it or select a compatible model`);
     if (ref.mimeType && !ref.mimeType.startsWith(`${port.kind}/`)) return fail(`${port.label} requires ${port.kind} media`);
-    const sizeLimit = (id.startsWith("gpt-image-2-5") || id === "nano-banana-2-1" || id === "flux-3-klein" || (id === "seedance-2-5" && port.kind === "image")) ? 30 : port.kind === "video" ? (id === "pixverse-v6-extend" ? Infinity : id === "seedance-2-5" ? 200 : 100) : port.kind === "audio" ? 15 : 20;
+    const sizeLimit = isKling4(id) && port.kind !== "audio" ? 10 : (id.startsWith("gpt-image-2-5") || id === "nano-banana-2-1" || id === "flux-3-klein" || (id === "seedance-2-5" && port.kind === "image")) ? 30 : port.kind === "video" ? (id === "pixverse-v6-extend" ? Infinity : id === "seedance-2-5" ? 200 : 100) : port.kind === "audio" ? 15 : 20;
     if (ref.sizeBytes && ref.sizeBytes > sizeLimit * 1024 * 1024) return fail(`${port.label} must be at most ${sizeLimit} MB per file`);
     if (id.startsWith("wan-3") && ref.mimeType) {
       const formats = port.kind === "video" ? ["video/mp4", "video/quicktime"] : port.kind === "audio" ? ["audio/mpeg", "audio/mp3", "audio/wav", "audio/x-wav", "audio/wave"] : ["image/jpeg", "image/png", "image/webp", "image/bmp", "image/x-ms-bmp"];
@@ -146,13 +161,17 @@ export function newKieInputError(id: string, input: NewModelInput, options: { al
     if (port.required && !has(port.id)) return fail(`connect ${port.label} before generating`);
     if (port.max && named(port.id).length > port.max) return fail(`${port.label} accepts at most ${port.max} inputs`);
   }
-  if (has("end-frame") && !has("start-frame")) return fail("connect a start frame before an end frame");
+  if (id !== "kling-4-keyframe" && has("end-frame") && !has("start-frame")) return fail("connect a start frame before an end frame");
   if ((id.startsWith("wan-3") || id === "seedance-2-5" || id === "gemini-omni-flash-1-1") && (has("start-frame") || has("end-frame")) && ["reference-image", "reference-video", "reference-audio"].some(has)) return fail("use start/end frames or reference media in one request; these modes cannot be combined");
   const resolution = (input.resolution || model.defaultResolution!).toUpperCase();
   if (!model.resolutions.includes(resolution)) return fail(`unsupported resolution ${resolution}`);
   const ratios = model.ratiosByResolution?.[resolution] || model.ratios;
   if (model.ratioSource !== "reference" && (!ratios.includes(input.aspectRatio || model.defaultRatio!) || (id === "flux-3-klein" && !refs.length && input.aspectRatio === "auto"))) return fail(`unsupported aspect ratio at ${resolution}`);
   if (model.durations && !model.durations.includes(input.duration || model.defaultDuration!)) return fail(`duration must be one of ${model.durations.join(", ")} seconds`);
+  if (isKling4(id)) {
+    const error = kling4InputError(id, input, options.allowUnmeasuredMedia);
+    if (error) return fail(error);
+  }
   if (id.startsWith("wan-3")) {
     if (id === "wan-3" && has("reference-audio") && !has("reference-image") && !has("reference-video")) return fail("connect an image or video together with an audio reference");
     for (const role of ["reference-video", "reference-audio"]) {
@@ -173,6 +192,7 @@ export type NewUploadedReference = ModelReference & { assetUrl: string; label: s
 /** Names are unique and stable for the order submitted, even with duplicate or
  * non-ASCII canvas labels. The prompt maps the user's labels to these names. */
 export function newKieReferenceNames(id: string, refs: ModelReference[]) {
+  if (isKling4(id)) return kling4ReferenceNames(id, refs);
   const counts: Record<string, number> = {};
   return refs.map((ref, index) => {
     if (id === "flux-3-klein") return `image ${index + 1}`;
@@ -187,6 +207,7 @@ export function newKieReferenceNames(id: string, refs: ModelReference[]) {
 }
 
 export function newKiePrompt(id: string, prompt: string, refs: ModelReference[]) {
+  if (isKling4(id)) return kling4Prompt(id, prompt, refs).prompt;
   return refs.length ? `REFERENCE_MAP (exact bindings):\n${newKieReferenceNames(id, refs).map((name, i) => `${name}: ${refs[i].label || `Reference ${i + 1}`}`).join("\n")}\nUSER_REQUEST:\n${prompt.trim()}` : prompt.trim();
 }
 
@@ -196,10 +217,21 @@ export function newKiePayload(id: string, input: Omit<NewModelInput, "references
   const error = newKieInputError(id, { ...input, references: refs });
   if (error) throw new Error(error);
   const urls = (role: string) => refs.filter((ref) => (ref.role || "reference-image") === role).map((ref) => ref.assetUrl);
-  const prompt = input.prompt;
+  const prompt = isKling4(id) ? kling4Prompt(id, input.prompt, refs).prompt : input.prompt;
   const ratio = input.aspectRatio || model.defaultRatio;
   const resolution = (input.resolution || model.defaultResolution!).toUpperCase();
   const duration = Number(input.duration || model.defaultDuration);
+  if (isKling4(id)) return { prompt, duration, resolution: resolution.toLowerCase(),
+    ...(id === "kling-4-keyframe" && refs.length ? {} : {aspect_ratio: ratio}),
+    ...(id === "kling-4-reference" ? {
+      image_urls: urls("reference-image"), video_urls: urls("reference-video"), keep_original_sound: false,
+      voices: urls("reference-audio").map((audio_url, index) => ({name: `voice_${index + 1}`, audio_url})),
+    } : {
+      ...(urls("start-frame").length ? {first_frame_url: urls("start-frame")[0]} : {}),
+      keyframe_urls: urls("reference-image"),
+      ...(urls("end-frame").length ? {last_frame_url: urls("end-frame")[0]} : {}),
+    }),
+  };
   if (id.startsWith("gpt-image-2-5")) return { prompt, ...(refs.length ? { input_urls: refs.map((ref) => ref.assetUrl) } : {}), aspect_ratio: ratio, resolution, ...(input.background ? {background:input.background} : {}) };
   if (id === "flux-3-klein") return { prompt, ...(refs.length ? {image_urls: refs.map(ref => ref.assetUrl)} : {}), aspect_ratio: ratio, resolution, output_format: input.outputFormat || "png", num_images: 1, enhance_prompt: input.enhancePrompt ?? !refs.length, ...(input.seed !== undefined ? {seed: input.seed} : {}) };
   if (id === "nano-banana-2-1") return { prompt, image_input: refs.map(ref => ref.assetUrl), aspect_ratio: ratio, resolution, output_format: input.outputFormat || "png" };

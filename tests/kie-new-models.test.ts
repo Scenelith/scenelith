@@ -111,7 +111,7 @@ test("quotes match Kie credit tables including audio, fusion, input duration and
 });
 
 test("catalogues expose current models, correct output types and disjoint frame/reference modes", () => {
-  assert.equal(newKieModels.length, 14);
+  assert.equal(newKieModels.length, 16);
   const capabilities = canvasGenerationModels();
   for (const model of newKieModels) {
     const data = defaultCanvasNodeData(model.mediaType === "image" ? "image_generator" : "video_generator", { modelId: model.id });

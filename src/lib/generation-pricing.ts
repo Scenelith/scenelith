@@ -101,6 +101,12 @@ export function generationCreditCost(modelId: string, resolution: string, durati
   }
   const outputSeconds = Math.max(1, Number(duration) || 5);
   // Kie model-page credit tables verified 2026-09-12; see docs/KIE_MODELS_2026_09.md.
+  if (canonicalId === "kling-4-reference" || canonicalId === "kling-4-keyframe") {
+    const withVideo = canonicalId === "kling-4-reference" && options.hasVideoInput;
+    const rates = withVideo ? {"720P":17,"1080P":25.5} : {"720P":28.5,"1080P":42.5};
+    const billedSeconds = withVideo ? Math.max(outputSeconds * 2, outputSeconds + Math.max(0, options.inputVideoDurationSeconds || 0)) : outputSeconds;
+    return Math.ceil(configuredValue(rates, normalizedResolution) * billedSeconds);
+  }
   if (canonicalId === "wan-3" || canonicalId === "wan-3-prime") {
     const rates = canonicalId === "wan-3" ? { "480P": 8, "720P": 16, "1080P": 32 } : { "480P": 12.2, "720P": 25.2, "1080P": 50.4 };
     return Math.ceil(configuredValue(rates, normalizedResolution) * (outputSeconds + (options.hasVideoInput ? Math.max(0, options.inputVideoDurationSeconds || 0) : 0)));
