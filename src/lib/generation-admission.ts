@@ -1,3 +1,4 @@
+import {prepareReferenceDuration} from "./prepare-reference-duration";
 import { prepareReferenceAnalyses } from "./media/reference-preparation";
 import { MediaPending } from "./media/compatibility";
 import { prepareNewKieReferences } from "./kie-reference-validation";
@@ -63,6 +64,7 @@ export function generationDispatchPayload(input: GenerationAdmissionInput): Gene
     ...((input.mediaExecutionVersion ?? (process.env.SCENELITH_MEDIA_QUEUE_ENABLED === "true" ? 1 : 0)) === 1 ? {mediaExecutionVersion:1} : {}),
     ...(input.background !== undefined ? {background:input.background}:{}),
     ...(input.seed !== undefined ? {seed:input.seed}:{}),
+    ...(input.enhancePrompt !== undefined ? {enhancePrompt:input.enhancePrompt}:{}),
     ...(input.outputFormat !== undefined ? {outputFormat:input.outputFormat}:{}),
     ...(input.outputRole ? {outputRole:input.outputRole}:{}),
     ...(input.returnLastFrame !== undefined ? {returnLastFrame:input.returnLastFrame}:{}),
@@ -90,6 +92,7 @@ export async function admitGeneration(input: GenerationAdmissionInput): Promise<
   try {
     await prepareReferenceAnalyses(input.userId,input.projectId,input.references,input.mediaExecutionVersion===1);
     input = { ...input, references: await prepareNewKieReferences(input.model.id, input.references,input.mediaExecutionVersion) };
+    input = {...input,...await prepareReferenceDuration({...input,modelId:input.model.id})};
   } catch(error) {
     if(error instanceof MediaPending)throw error;
     return { ok: false, status: 400, code: "INVALID_REFERENCE_MEDIA", error: "Could not read reference media; upload a valid file before generating" };

@@ -1,4 +1,5 @@
 "use client";
+import {referenceDurationSettings} from "@/lib/reference-duration";
 import { assetThumbnailUrl } from "@/lib/asset-preview-url";
 import FloatingMenu from "./FloatingMenu";
 import PromptAssistant from "./PromptAssistant";
@@ -1969,15 +1970,16 @@ function FrameNodeCardComponent({ id, data, selected }: NodeProps<FrameNode>) {
     const maxReferences = selectedModel?.maxReferences || 8;
     const inputPorts = selectedModel?.inputPorts || (selectedModel?.maxReferences ? [{ id: "reference-image", label: "Image reference", kind: "image" as const, max: selectedModel.maxReferences }] : []);
     const missingRequiredInputs = inputPorts.filter((port) => port.required && !references.some((reference) => reference.role === port.id));
-    const modelInputError = selectedModel ? newKieInputError(selectedModel.id, { prompt: connectedText?.text || data.prompt || "", references, aspectRatio: data.aspectRatio, resolution: data.resolution, duration: data.duration }, { allowUnmeasuredMedia: true }) : null;
+    const sourceDuration = referenceDurationSettings(selectedModel?.id || "",references,data.duration || selectedModel?.defaultDuration || "5",data.durationMode || "reference");
+    const modelInputError = selectedModel ? newKieInputError(selectedModel.id, { prompt: connectedText?.text || data.prompt || "", references: sourceDuration.references, aspectRatio: data.aspectRatio, resolution: data.resolution, duration: sourceDuration.duration }, { allowUnmeasuredMedia: true }) : null;
     const canGenerate = Boolean(connectedText?.text || data.prompt?.trim()) && missingRequiredInputs.length === 0 && !modelInputError;
     const generationCount = Math.min(MAX_GENERATION_BATCH, Math.max(1, Number(data.generationCount || 1)));
     const generatedAudioEnabled = data.generateAudio ?? selectedModel?.defaultGenerateAudio ?? false;
-    const inputVideoDurationSeconds = references
+    const inputVideoDurationSeconds = sourceDuration.references
       .filter((reference) => reference.role === "reference-video" || reference.role === "motion-video")
       .reduce((total, reference) => total + Math.max(0, Number(reference.durationSeconds || 0)), 0);
     const runCredits = selectedModel
-      ? generationCreditCost(selectedModel.id, resolutions.includes(String(data.resolution || "").toUpperCase()) ? String(data.resolution).toUpperCase() : resolutions.includes(selectedModel.defaultResolution || "") ? selectedModel.defaultResolution! : resolutions[0] || "1K", data.duration || selectedModel.defaultDuration || selectedModel.durations?.[0] || "5", references.length, { generateAudio: generatedAudioEnabled, hasVideoInput, inputVideoDurationSeconds }) * generationCount
+      ? generationCreditCost(selectedModel.id, resolutions.includes(String(data.resolution || "").toUpperCase()) ? String(data.resolution).toUpperCase() : resolutions.includes(selectedModel.defaultResolution || "") ? selectedModel.defaultResolution! : resolutions[0] || "1K", sourceDuration.duration, references.length, { generateAudio: generatedAudioEnabled, hasVideoInput, inputVideoDurationSeconds }) * generationCount
       : 0;
     const runCreditLabel = modelInputError || (missingRequiredInputs.length
       ? `Connect ${missingRequiredInputs.map((port) => port.label).join(" and ")}`
@@ -2232,7 +2234,7 @@ function FrameNodeCardComponent({ id, data, selected }: NodeProps<FrameNode>) {
               generator.updateNode(id, { resolution: value as FrameNode["data"]["resolution"], aspectRatio: nextRatio as FrameNode["data"]["aspectRatio"], ratioMode: nextRatio === currentRatio ? data.ratioMode : "custom" });
             }} />
             {selectedModel?.durationSourceWithVideo === "model" && hasVideoInput && <span className="generator-duration-control" title="With a reference video, the model chooses the output length">Auto duration</span>}
-            {outputMediaType === "video" && Boolean(selectedModel?.durations?.length) && !(selectedModel?.durationSourceWithVideo === "model" && hasVideoInput) && <GeneratorSelect menuKey="duration" openMenu={openGeneratorMenu} setOpenMenu={setOpenGeneratorMenu} className="generator-duration-control" value={data.duration || selectedModel?.defaultDuration || selectedModel?.durations?.[0] || "5"} label="DURATION" options={selectedModel!.durations!.map((duration) => ({ value: duration, label: `${duration}s` }))} onChange={(value) => generator.updateNode(id, { duration: value as FrameNode["data"]["duration"] })} />}
+            {outputMediaType === "video" && Boolean(selectedModel?.durations?.length) && !(selectedModel?.durationSourceWithVideo === "model" && hasVideoInput) && <GeneratorSelect menuKey="duration" openMenu={openGeneratorMenu} setOpenMenu={setOpenGeneratorMenu} className="generator-duration-control" displayValue={sourceDuration.active ? `${sourceDuration.duration}s` : undefined} value={sourceDuration.active ? "reference" : data.duration || selectedModel?.defaultDuration || selectedModel?.durations?.[0] || "5"} label="DURATION" options={[...(hasVideoInput && selectedModel?.id.startsWith("wan-3") ? [{value:"reference",label:`From reference${sourceDuration.seconds > 0 ? ` · ${Math.min(15,sourceDuration.seconds).toFixed(1)}s` : ""} · max 15s`}] : []),...selectedModel!.durations!.map((duration) => ({ value: duration, label: `${duration}s` }))]} onChange={(value) => generator.updateNode(id, value === "reference" ? {durationMode:"reference"} : { duration: value, durationMode:"fixed" })} />}
             {outputMediaType === "video" && selectedModel?.supportsAudio && <button type="button" className={`generator-sound-control ${generatedAudioEnabled ? "is-on" : ""}`} title={generatedAudioEnabled ? "Generated audio on" : "Generated audio off"} aria-label={generatedAudioEnabled ? "Disable generated audio" : "Enable generated audio"} onPointerDown={(event) => { event.preventDefault(); event.stopPropagation(); generator.updateNode(id, { generateAudio: !generatedAudioEnabled }); }}>{generatedAudioEnabled ? <Volume2 size={12} /> : <VolumeX size={12} />}</button>}
             <button type="button" className={`generator-assistant-trigger generator-assistant-control ${assistantOpen ? "is-active" : ""}`} aria-label="Open prompt assistant" title="Prompt assistant" onPointerDown={(event) => { event.preventDefault(); event.stopPropagation(); setOpenGeneratorMenu(null); setPromptAssistantSettingsOpen(false); setAssistantOpen((open) => !open); }}><AssistantGlyph size={13} /></button>
             <div className={`generator-run-control ${openGeneratorMenu === "run" ? "is-open" : ""}`}>

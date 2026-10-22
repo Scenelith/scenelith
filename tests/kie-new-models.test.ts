@@ -111,7 +111,7 @@ test("quotes match Kie credit tables including audio, fusion, input duration and
 });
 
 test("catalogues expose current models, correct output types and disjoint frame/reference modes", () => {
-  assert.equal(newKieModels.length, 13);
+  assert.equal(newKieModels.length, 14);
   const capabilities = canvasGenerationModels();
   for (const model of newKieModels) {
     const data = defaultCanvasNodeData(model.mediaType === "image" ? "image_generator" : "video_generator", { modelId: model.id });
@@ -178,6 +178,10 @@ test("all new routes submit the expected provider model; GPT switches text/edit 
     await startGeneration({ modelId: `gpt-image-2-5-${variant}`, prompt, references: [{ path, mimeType: "image/png", label: "@Subject", role: "reference-image", sizeBytes: 7 }] });
     assert.equal(requests.at(-1)?.model, `gpt-image-2-5-${variant}-image-to-image`);
   }
+  await startGeneration({modelId:"flux-3-klein",prompt,references:[{path,mimeType:"image/png",label:"@EditSource",role:"reference-image",sizeBytes:7}]});
+  assert.equal(requests.at(-1)?.model,"flux-3/klein-edit-image");
+  assert.equal(requests.at(-1)?.input.enhance_prompt,false);
+  assert.match(String(requests.at(-1)?.input.prompt),/image 1: @EditSource/);
   const references = [{ path, mimeType: "video/mp4", label: "@Clip", role: "reference-video", sizeBytes: 7, durationSeconds: 5.25 }];
   const payload = generationDispatchPayload({ userId: "unused", projectId: "unused", nodeId: "unused", model: getKieModel("gemini-omni-video"), prompt, references, aspectRatio: "16:9", resolution: "720P", duration: "8", generateAudio: true, operation: "generation", hasVideoInput: true, inputVideoDurationSeconds: 5.25 });
   await startGeneration(payload);

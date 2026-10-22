@@ -181,6 +181,7 @@ export type FrameNodeData = {
   };
   modelId?: string;
   duration?: string;
+  durationMode?: "reference" | "fixed";
   generateAudio?: boolean;
   aspectRatio?: "auto" | "adaptive" | "1:1" | "1:4" | "1:8" | "2:1" | "1:2" | "2:3" | "3:1" | "1:3" | "3:2" | "4:1" | "4:3" | "3:4" | "5:4" | "4:5" | "8:1" | "16:9" | "9:16" | "21:9" | "9:21" | "27:16" | "16:27" | "9:8" | "8:9";
   ratioMode?: "custom" | "original";
