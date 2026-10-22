@@ -1,3 +1,5 @@
+import {referenceDurationSettings} from "../reference-duration";
+import {DEFAULT_IMAGE_MODEL,DEFAULT_VIDEO_MODEL} from "../generator-defaults";
 import { assertCanvasRead, canvasPatchChanges, assertCanvasFields, assertCanvasPatchRead, canvasReadSet, canvasNodeSemanticRevision, canvasValueRevision, canvasConflict, type CanvasReadSet } from "./canvas-concurrency";
 import { enqueueMediaAnalysis } from "@/lib/media/ingestion";
 import { createMediaJob, getMediaJob } from "@/lib/media/repository";
@@ -384,6 +386,7 @@ export async function createMcpCanvasNode(principal: McpPrincipal, input: {
 }
 
 type McpCanvasNodeConfiguration = {
+  durationMode?: "reference" | "fixed";
   title?: string;
   position?: { x: number; y: number };
   prompt?: string;
@@ -402,7 +405,7 @@ type McpCanvasNodeConfiguration = {
   nodeHeight?: number;
 };
 
-const generatorConfigurationFields = ["prompt", "modelId", "aspectRatio", "resolution", "duration", "generateAudio", "generationCount"] as const;
+const generatorConfigurationFields = ["durationMode", "prompt", "modelId", "aspectRatio", "resolution", "duration", "generateAudio", "generationCount"] as const;
 
 function configuredCanvasNode(graph: ProjectGraph, nodeId: string, configuration: McpCanvasNodeConfiguration) {
   const node = graph.nodes.find((candidate) => candidate.id === nodeId);
@@ -413,7 +416,7 @@ function configuredCanvasNode(graph: ProjectGraph, nodeId: string, configuration
   if (configuration.nodeHeight !== undefined) data.nodeHeight = Math.round(Math.min(1_200, Math.max(120, configuration.nodeHeight)));
   if (node.data.kind === "prompt" && generatorConfigurationFields.some(key => configuration[key] !== undefined)) {
     const provider = generationProvider();
-    const requestedModelId = configuration.modelId || node.data.modelId || (node.data.mediaType === "video" ? "seedance-2-fast" : "nano-banana-2");
+    const requestedModelId = configuration.modelId || node.data.modelId || (node.data.mediaType === "video" ? DEFAULT_VIDEO_MODEL : DEFAULT_IMAGE_MODEL);
     const model = provider.getModel(requestedModelId);
     if (model.mediaType !== node.data.mediaType) throw new Error(`Choose a ${node.data.mediaType || "matching"} model for this generator`);
     const references = graph.edges.filter((edge) => edge.target === node.id && edge.data?.portType !== "text");
@@ -439,6 +442,7 @@ function configuredCanvasNode(graph: ProjectGraph, nodeId: string, configuration
     data.aspectRatio = aspectRatio as FrameNodeData["aspectRatio"];
     data.resolution = resolution as FrameNodeData["resolution"];
     data.duration = duration;
+    if (configuration.durationMode !== undefined || configuration.duration !== undefined) data.durationMode = configuration.durationMode || "fixed";
     data.generateAudio = model.supportsAudio ? configuration.generateAudio ?? node.data.generateAudio ?? model.defaultGenerateAudio ?? false : false;
     data.generationCount = Math.min(8, Math.max(1, Math.floor(configuration.generationCount ?? node.data.generationCount ?? 1)));
   } else if (node.data.kind === "assistant" && [configuration.instruction, configuration.systemPrompt, configuration.textModelId].some(value => value !== undefined)) {
@@ -855,7 +859,7 @@ export async function composeMcpCanvasPrompt(principal: McpPrincipal, input: {
     mediaType: model.mediaType,
     modelId: model.id,
     modelLabel: model.label,
-    duration: model.durationSource === "reference-video" ? undefined : inspected.node.data.duration,
+    duration: model.durationSource === "reference-video" ? undefined : referenceDurationSettings(model.id,inspected.references,inspected.node.data.duration || "5",inspected.node.data.durationMode || "reference").duration,
     generateAudio: inspected.node.data.generateAudio ?? model.defaultGenerateAudio ?? false,
     aspectRatio: inspected.node.data.aspectRatio,
     resolution: inspected.node.data.resolution,
@@ -1087,6 +1091,7 @@ export async function runMcpCanvasGeneration(principal: McpPrincipal, input: {
     generateAudio: masterClip?.generateAudio ?? inspected.node.data.generateAudio ?? model.defaultGenerateAudio ?? false,
     hasVideoInput,
     inputVideoDurationSeconds,
+    durationMode: masterClip ? "fixed" : inspected.node.data.durationMode || "reference",
     targetClipId: masterClip?.id,
     targetSourceAssetId,
     exclusiveNode: true,

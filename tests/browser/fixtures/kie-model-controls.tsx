@@ -10,6 +10,7 @@ const thumbnail = 'data:image/svg+xml,<svg xmlns="http://www.w3.org/2000/svg" wi
 const noop = () => {};
 function Fixture() {
   const [videoReference, setVideoReference] = useState(false);
+  const [referenceSeconds,setReferenceSeconds] = useState(5);
   const [graph, setGraph] = useState<ProjectGraph>({ nodes: [{ id: "image", type: "frameNode", selected: true, position: { x: 100, y: 100 }, data: { kind: "prompt", title: "Image", modelId: "gpt-image-2-5-flare", aspectRatio: "1:1", resolution: "1K", duration: "5", mediaType: "image", prompt: "Portrait", status: "idle" } }], edges: [] });
   const updateNode: GeneratorNodeActions["updateNode"] = (id, data) => setGraph((current) => ({ ...current, nodes: current.nodes.map((node) => node.id === id ? { ...node, data: { ...node.data, ...data } } : node) }));
   const choose = (id: string) => { const model = newKieModels.find((m) => m.id === id)!; setVideoReference(false); updateNode("image", { modelId: id, mediaType: model.mediaType, aspectRatio: model.defaultRatio as never, resolution: model.defaultResolution as never, duration: model.defaultDuration || "5" }); };
@@ -20,11 +21,14 @@ function Fixture() {
     updateMasterClipModel: noop, removeMasterClip: noop, uploadMasterClips: noop, runAssistant: noop, generateChain: noop,
     captureVideoFrame: async () => {}, extractVideoSegment: noop, openPreview: noop, downloadMasterMedia: async () => false,
     openEdit: noop, addToIdentity: async () => ({}), createIdentityFromAsset: async () => {}, deleteNode: noop,
-    hasDownstreamGenerator: () => false, disconnectReference: noop, getReferences: () => videoReference ? [{ id: "video", url: thumbnail, title: "Reference video", role: "reference-video", durationSeconds: 5, assetId: "video" }] : [], getTextInput: () => null,
+    hasDownstreamGenerator: () => false, disconnectReference: noop, getReferences: () => videoReference ? [{ id: "video", url: thumbnail, title: "Reference video", role: "reference-video", durationSeconds: referenceSeconds, assetId: "video" }] : [], getTextInput: () => null,
     generatingNodeIds: [], preparingMasterClipIds: {}, generationConcurrency: 1, queueLabel: "test", runningAssistantNodeId: null, activePreviewNodeId: null,
   };
   return <>
     <button onClick={() => choose("gpt-image-2-5-flare")}>Images</button>
+    <button onClick={() => choose("flux-3-klein")}>FLUX</button>
+    <button onClick={() => choose("wan-3")}>Wan</button>
+    <button onClick={() => setReferenceSeconds(23.5)}>Long video</button>
     <button onClick={() => choose("pixverse-v6-text")}>PixVerse</button>
     <button onClick={() => choose("gemini-omni-flash-1-1")}>Omni</button>
     <button onClick={() => setVideoReference((v) => !v)}>Toggle video reference</button>

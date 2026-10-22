@@ -5,6 +5,7 @@
  */
 
 const imageCredits: Record<string, Record<string, number>> = {
+  "flux-3-klein": { "1K": 1.6, "2K": 2.5, "4K": 6.5 },
   "nano-banana-2-1": { "1K": 4, "2K": 6, "4K": 9 },
   "nano-banana-2-lite": { "1K": 4 },
   "nano-banana-2": { "1K": 8, "2K": 12, "4K": 18 },

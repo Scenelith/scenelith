@@ -1,3 +1,4 @@
+import {prepareReferenceDuration} from "./prepare-reference-duration";
 import {imageEditSourceInstruction} from "./image-edit-context";
 import { prepareReferenceAnalyses } from "./media/reference-preparation";
 import { MediaPending } from "./media/compatibility";
@@ -23,7 +24,9 @@ const schema = z.object({
   expectedCredits: z.number().int().nonnegative().optional(),
   background: z.enum(["transparent", "opaque", "auto"]).optional(),
   seed: z.number().int().min(0).max(2147483647).optional(),
-  outputFormat: z.enum(["mp4", "mov", "png", "jpg"]).optional(),
+  outputFormat: z.enum(["mp4", "mov", "png", "jpg", "jpeg", "webp"]).optional(),
+  enhancePrompt: z.boolean().optional(),
+  durationMode: z.enum(["reference", "fixed"]).optional(),
   returnLastFrame: z.boolean().optional(),
   webSearch: z.boolean().optional(),
   originalAudioAssetId: z.string().uuid().optional(),
@@ -226,9 +229,12 @@ export async function executeGenerationRequest(userId: string, input: unknown, q
   if (normalizedReferences.some((reference) => reference.role === "end-frame") && !normalizedReferences.some((reference) => reference.role === "start-frame")) {
     return Response.json({ error: "Connect a start frame before an end frame" }, { status: 400 });
   }
-  try { await prepareReferenceAnalyses(userId,parsed.data.projectId,normalizedReferences,options.mediaExecutionVersion===1); normalizedReferences = await prepareNewKieReferences(model.id, normalizedReferences,options.mediaExecutionVersion); }
+  let referenceDuration = selectedDuration;
+  try { await prepareReferenceAnalyses(userId,parsed.data.projectId,normalizedReferences,options.mediaExecutionVersion===1); normalizedReferences = await prepareNewKieReferences(model.id, normalizedReferences,options.mediaExecutionVersion);
+    const prepared = await prepareReferenceDuration({userId,projectId:parsed.data.projectId,modelId:model.id,duration:selectedDuration,durationMode:parsed.data.durationMode,references:normalizedReferences});
+    normalizedReferences=prepared.references; referenceDuration=prepared.duration; }
   catch(error) { if(error instanceof MediaPending)return mediaResponse(error.job,true); return Response.json({error:"Could not measure the reference files"}, {status:400}); }
-  const exactError = newKieInputError(model.id, {...parsed.data, references:normalizedReferences});
+  const exactError = newKieInputError(model.id, {...parsed.data, duration:referenceDuration, references:normalizedReferences});
   if (exactError) return Response.json({error:exactError}, {status:400});
   const inputVideoDurationSeconds = normalizedReferences
     .filter((reference) => reference.role === "reference-video" || reference.role === "motion-video")
@@ -238,13 +244,13 @@ export async function executeGenerationRequest(userId: string, input: unknown, q
   }
   const duration = model.durationSource === "reference-video" && inputVideoDurationSeconds > 0
     ? String(Math.ceil(inputVideoDurationSeconds))
-    : selectedDuration;
+    : referenceDuration;
   const creditCost = generationCreditCost(model.id, resolution, duration, normalizedReferences.length, {generateAudio:parsed.data.generateAudio, hasVideoInput, inputVideoDurationSeconds});
   if (quoteOnly) return Response.json({creditCost, pricingVersion:"2026-10-08", modelId:model.id, inputVideoDurationSeconds});
   const result = await admitGeneration({
     ...options,
     personaId:parsed.data.personaId, requestKey:parsed.data.requestKey, expectedCredits:parsed.data.expectedCredits,
-    background:parsed.data.background, seed:parsed.data.seed, outputFormat:parsed.data.outputFormat, returnLastFrame:parsed.data.returnLastFrame, webSearch:parsed.data.webSearch, originalAudioAssetId:parsed.data.originalAudioAssetId,
+    background:parsed.data.background, seed:parsed.data.seed, enhancePrompt:parsed.data.enhancePrompt, outputFormat:parsed.data.outputFormat, returnLastFrame:parsed.data.returnLastFrame, webSearch:parsed.data.webSearch, originalAudioAssetId:parsed.data.originalAudioAssetId,
     userId,
     projectId: parsed.data.projectId,
     nodeId: parsed.data.nodeId,

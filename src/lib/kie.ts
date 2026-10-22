@@ -459,6 +459,7 @@ export async function startGeneration(input: StartInput) {
     if (model.id === "gpt-image-2") providerModel = uploaded.length ? "gpt-image-2-image-to-image" : "gpt-image-2-text-to-image";
     if (model.id === "seedream-5-lite") providerModel = uploaded.length ? "seedream/5-lite-image-to-image" : "seedream/5-lite-text-to-image";
     if (model.id === "seedream-5-pro") providerModel = uploaded.length ? "seedream/5-pro-image-to-image" : "seedream/5-pro-text-to-image";
+    if (model.id === "flux-3-klein") providerModel = uploaded.length ? "flux-3/klein-edit-image" : "flux-3/klein-text-to-image";
     if (model.id === "flux-2-flex") providerModel = uploaded.length ? "flux-2/flex-image-to-image" : "flux-2/flex-text-to-image";
     if (model.id === "wan-2-7") providerModel = uploaded.some((reference) => reference.role === "start-frame" || reference.role === "end-frame" || reference.role === "reference-video") ? "wan/2-7-image-to-video" : "wan/2-7-text-to-video";
     body = {

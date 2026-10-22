@@ -1,4 +1,6 @@
 "use client";
+import {DEFAULT_IMAGE_MODEL,DEFAULT_VIDEO_MODEL,DEFAULT_GENERATOR_RATIO} from "@/lib/generator-defaults";
+import {referenceDurationSettings} from "@/lib/reference-duration";
 import {imageEditIdentityId} from "@/lib/image-edit-context";
 
 import { runMediaOperation, fetchAfterMediaPreparation } from "@/lib/media-client";
@@ -1525,15 +1527,15 @@ function CanvasWorkspace({ initialProject, projects: initialProjects, initialWor
 
   function addCanvasGenerator(mediaType: "image" | "video") {
     const defaultModel = mediaType === "video"
-      ? models.find((item) => item.id === "seedance-2-fast") || models.find((item) => item.mediaType === "video")
-      : models.find((item) => item.id === "nano-banana-2") || models.find((item) => item.mediaType === "image");
+      ? models.find((item) => item.id === DEFAULT_VIDEO_MODEL) || models.find((item) => item.mediaType === "video")
+      : models.find((item) => item.id === DEFAULT_IMAGE_MODEL) || models.find((item) => item.mediaType === "image");
     addNode("prompt", {
       title: mediaType === "video" ? "Video Generator" : "Image Generator",
       subtitle: "Standalone generator",
       prompt: "",
       mediaType,
       modelId: defaultModel?.id,
-      aspectRatio: (mediaType === "image" && defaultModel?.ratios?.includes("1:1") ? "1:1" : defaultModel?.defaultRatio || (mediaType === "video" ? "16:9" : "1:1")) as FrameNode["data"]["aspectRatio"],
+      aspectRatio: (defaultModel?.ratios?.includes(DEFAULT_GENERATOR_RATIO) ? DEFAULT_GENERATOR_RATIO : defaultModel?.defaultRatio || DEFAULT_GENERATOR_RATIO) as FrameNode["data"]["aspectRatio"],
       ratioMode: "custom",
       resolution: (defaultModel?.defaultResolution || defaultModel?.resolutions?.[0] || (mediaType === "video" ? "720P" : "1K")) as FrameNode["data"]["resolution"],
       duration: (defaultModel?.defaultDuration || defaultModel?.durations?.[0] || "5") as FrameNode["data"]["duration"],
@@ -1577,7 +1579,7 @@ function CanvasWorkspace({ initialProject, projects: initialProjects, initialWor
       setNotice("This video does not have an editable scene map yet");
       return;
     }
-    const defaultModel = models.find((item) => item.id === "seedance-2-fast") || models.find((item) => item.mediaType === "video");
+    const defaultModel = models.find((item) => item.id === DEFAULT_VIDEO_MODEL) || models.find((item) => item.mediaType === "video");
     const sourceRatio = Math.max(0.2, Number(source.data.videoAspectRatio || 9 / 16));
     const ratios = generatorRatiosFor(defaultModel, defaultModel?.defaultResolution, true).filter((ratio) => /^\d+:\d+$/.test(ratio));
     const aspectRatio = nearestVideoMasterRatio(sourceRatio, ratios);
@@ -1698,8 +1700,8 @@ function CanvasWorkspace({ initialProject, projects: initialProjects, initialWor
     const isVideo = mode === "video";
     const replacementSegment = nodeCreator.segment;
     const defaultModel = isVideo
-      ? models.find((item) => item.id === "seedance-2-fast") || models.find((item) => item.mediaType === "video")
-      : models.find((item) => item.id === "nano-banana-2") || models.find((item) => item.mediaType === "image");
+      ? models.find((item) => item.id === DEFAULT_VIDEO_MODEL) || models.find((item) => item.mediaType === "video")
+      : models.find((item) => item.id === DEFAULT_IMAGE_MODEL) || models.find((item) => item.mediaType === "image");
     const replacementSeconds = replacementSegment ? Math.max(0.1, replacementSegment.end - replacementSegment.start) : 0;
     const replacementDuration = replacementSegment && defaultModel?.durations?.length
       ? defaultModel.durations.reduce((best, value) => Math.abs(Number(value) - replacementSeconds) < Math.abs(Number(best) - replacementSeconds) ? value : best, defaultModel.durations[0])
@@ -1739,8 +1741,8 @@ function CanvasWorkspace({ initialProject, projects: initialProjects, initialWor
         textModelId: mode === "assistant" ? DEFAULT_ASSISTANT_MODEL_ID : undefined,
         status: "idle",
         mediaType: isVideo ? "video" : "image",
-        modelId: defaultModel?.id || (isVideo ? "seedance-2-fast" : "nano-banana-2"),
-        aspectRatio: (replacementAspectRatio || (!isVideo && defaultModel?.ratios?.includes("1:1") ? "1:1" : defaultModel?.defaultRatio || defaultModel?.ratios?.[0] || (isVideo ? "16:9" : "1:1"))) as FrameNode["data"]["aspectRatio"],
+        modelId: defaultModel?.id || (isVideo ? DEFAULT_VIDEO_MODEL : DEFAULT_IMAGE_MODEL),
+        aspectRatio: (replacementAspectRatio || (defaultModel?.ratios?.includes(DEFAULT_GENERATOR_RATIO) ? DEFAULT_GENERATOR_RATIO : defaultModel?.defaultRatio || defaultModel?.ratios?.[0] || DEFAULT_GENERATOR_RATIO)) as FrameNode["data"]["aspectRatio"],
         ratioMode: "custom",
         resolution: defaultResolution as FrameNode["data"]["resolution"],
         generationCount: 1,
@@ -1832,7 +1834,7 @@ function CanvasWorkspace({ initialProject, projects: initialProjects, initialWor
     const master = nodesRef.current.find((node) => node.id === nodeId && node.data.kind === "videoMaster");
     if (!master) return;
     const current = master.data.videoMasterClips || [];
-    const defaultModel = models.find((item) => item.id === "seedance-2-fast") || models.find((item) => item.mediaType === "video");
+    const defaultModel = models.find((item) => item.id === DEFAULT_VIDEO_MODEL) || models.find((item) => item.mediaType === "video");
     const additions: VideoMasterClip[] = assets.map((asset, index) => {
       const sourceAspectRatio = Math.max(.2, Number(asset.aspectRatio || (asset.width && asset.height ? asset.width / asset.height : master.data.videoAspectRatio) || 9 / 16));
       const ratios = generatorRatiosFor(defaultModel, defaultModel?.defaultResolution, true).filter((ratio) => /^\d+:\d+$/.test(ratio));
@@ -3411,7 +3413,7 @@ function CanvasWorkspace({ initialProject, projects: initialProjects, initialWor
         mediaType: generatorNode?.data.mediaType || selectedModel?.mediaType || "image",
         modelId: selectedModel?.id || generatorNode?.data.modelId,
         modelLabel: selectedModel?.label,
-        duration: selectedModel?.durationSource === "reference-video" ? undefined : generatorNode?.data.duration,
+        duration: selectedModel?.durationSource === "reference-video" ? undefined : referenceDurationSettings(selectedModel?.id || "",nodeReferencePreviews(nodeId),generatorNode?.data.duration || "5",generatorNode?.data.durationMode || "reference").duration,
         generateAudio: generatorNode?.data.generateAudio ?? selectedModel?.defaultGenerateAudio ?? false,
       }),
     });
@@ -3907,6 +3909,7 @@ function CanvasWorkspace({ initialProject, projects: initialProjects, initialWor
               // Motion Control has no provider duration parameter. Its length
               // comes exclusively from the already-trimmed driving video.
               ...(model?.durationSource === "reference-video" ? {} : { duration: generatorNode.data.duration || "5" }),
+              durationMode: generatorNode.data.kind === "videoMaster" ? "fixed" : generatorNode.data.durationMode || "reference",
               generateAudio: generatorNode.data.generateAudio ?? model?.defaultGenerateAudio ?? false,
               targetClipId: generatorNode.data.kind === "videoMaster" ? generatorNode.data.videoMasterGeneratingClipId : undefined,
               targetSourceAssetId: preparedMasterSource?.assetId || masterSourceTarget?.sourceAssetId,
@@ -4407,8 +4410,8 @@ function CanvasWorkspace({ initialProject, projects: initialProjects, initialWor
     }).filter((reference,index,all) => all.findIndex(item => item.assetId === reference.assetId) === index) : [];
   const inspectorGeneratorReferences = selectedNode?.data.kind === "prompt" ? nodeReferencePreviews(selectedNode.id) : [];
   const inspectorHasVideoInput = inspectorGeneratorReferences.some((reference) => reference.role === "reference-video" || reference.role === "motion-video");
-  const inspectorVideoReference = inspectorGeneratorReferences.find((reference) => reference.role === "reference-video" || reference.role === "motion-video");
-  const inspectorInputVideoDuration = inspectorVideoReference && "durationSeconds" in inspectorVideoReference ? inspectorVideoReference.durationSeconds : undefined;
+  const inspectorDuration = referenceDurationSettings(selectedNode?.data.modelId || "",inspectorGeneratorReferences,selectedNode?.data.duration || "5",selectedNode?.data.durationMode || "reference");
+  const inspectorInputVideoDuration = inspectorDuration.seconds;
   const generatorNodeActionsImpl: GeneratorNodeActions = {
     projectId: project.id,
     applyTextOverlay,
@@ -5235,9 +5238,9 @@ function CanvasWorkspace({ initialProject, projects: initialProjects, initialWor
                   }} />
                   {(() => {
                     const currentModel = models.find((item) => item.id === (selectedNode.data.modelId || "nano-banana-2"));
-                    return currentModel ? <div className={`model-card model-${currentModel.mediaType}`}>{currentModel.mediaType === "video" ? <Video size={15} /> : <ImagePlus size={15} />}<span><strong>{currentModel.label}</strong><small>{generatorModelCreditDescription(currentModel, { resolution: selectedNode.data.resolution, duration: selectedNode.data.duration, referenceCount: inspectorGeneratorReferences.length, generateAudio: selectedNode.data.generateAudio, hasVideoInput: inspectorHasVideoInput, inputVideoDurationSeconds: inspectorInputVideoDuration })}</small></span></div> : null;
+                    return currentModel ? <div className={`model-card model-${currentModel.mediaType}`}>{currentModel.mediaType === "video" ? <Video size={15} /> : <ImagePlus size={15} />}<span><strong>{currentModel.label}</strong><small>{generatorModelCreditDescription(currentModel, { resolution: selectedNode.data.resolution, duration: inspectorDuration.duration, referenceCount: inspectorGeneratorReferences.length, generateAudio: selectedNode.data.generateAudio, hasVideoInput: inspectorHasVideoInput, inputVideoDurationSeconds: inspectorInputVideoDuration })}</small></span></div> : null;
                   })()}
-                  {Boolean(models.find((item) => item.id === selectedNode.data.modelId)?.durations?.length) && <><label className="field-label">Video duration</label><InspectorSelect label="Video duration" value={selectedNode.data.duration || models.find((item) => item.id === selectedNode.data.modelId)?.defaultDuration || models.find((item) => item.id === selectedNode.data.modelId)?.durations?.[0] || "5"} options={(models.find((item) => item.id === selectedNode.data.modelId)?.durations || []).map((duration) => ({ value: duration, label: `${duration} seconds` }))} onChange={(duration) => updateSelected({ duration: duration as NonNullable<FrameNode["data"]["duration"]> })} /></>}
+                  {Boolean(models.find((item) => item.id === selectedNode.data.modelId)?.durations?.length) && <><label className="field-label">Video duration</label><InspectorSelect label="Video duration" value={inspectorHasVideoInput && selectedNode.data.modelId?.startsWith("wan-3") && selectedNode.data.durationMode !== "fixed" ? "reference" : selectedNode.data.duration || models.find((item) => item.id === selectedNode.data.modelId)?.defaultDuration || models.find((item) => item.id === selectedNode.data.modelId)?.durations?.[0] || "5"} options={[...(inspectorHasVideoInput && selectedNode.data.modelId?.startsWith("wan-3") ? [{value:"reference",label:"From reference · up to 15s"}] : []),...(models.find((item) => item.id === selectedNode.data.modelId)?.durations || []).map((duration) => ({ value: duration, label: `${duration} seconds` }))]} onChange={(duration) => updateSelected(duration === "reference" ? {durationMode:"reference"} : { duration, durationMode:"fixed" })} /></>}
                   {(() => {
                     const inspectorModel = models.find((item) => item.id === selectedNode.data.modelId);
                     const inspectorResolutions = generatorResolutionsFor(inspectorModel, inspectorHasVideoInput);

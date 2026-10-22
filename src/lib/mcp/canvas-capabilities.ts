@@ -1,3 +1,4 @@
+import {DEFAULT_IMAGE_MODEL,DEFAULT_VIDEO_MODEL,DEFAULT_GENERATOR_RATIO} from "../generator-defaults";
 import { assistantModels, DEFAULT_ASSISTANT_MODEL_ID } from "@/lib/assistant-models";
 import { generationProvider } from "@/platform/providers/registry";
 import type { FrameNodeData, FramePortType, GeneratorInputRole } from "@/lib/types";
@@ -41,9 +42,11 @@ export function canvasGenerationModels() {
     defaultDuration: model.defaultDuration || model.durations?.[0] || null,
     defaultGenerateAudio: model.defaultGenerateAudio || false,
     supportsAudio: model.supportsAudio || false,
+    ...(model.id === "flux-3-klein" ? {imageOptions:{referenceNames:"image 1, image 2, in submitted order; EditSource is image 1",outputFormats:["png","jpeg","webp"],seed:{min:0,max:2147483647},enhancePrompt:{generationDefault:true,editDefault:false},imagesPerCanvasRequest:1,batchMode:"One independently tracked task per generator node"}} : {}),
     ...(model.id.startsWith("wan-3") ? { referenceModeRules: {
       mutuallyExclusiveRoleGroups: [["start-frame", "end-frame"], ["reference-image", "reference-video", "reference-audio"]],
       endFrameRequiresStartFrame: true, audioRequiresVisualReference: model.id === "wan-3", maxInputPlusOutputVideoSeconds: 30,
+      defaultDurationModeWithVideo: "reference", maxMatchedReferenceSeconds: 15, durationModes: ["reference", "fixed"],
       referenceNames: "Image1, Image2, Video1, Audio1, independently numbered per media kind",
     } } : {}),
     ...(model.id === "gemini-omni-flash-1-1" ? { referenceModeRules: {
@@ -108,7 +111,7 @@ export function defaultCanvasNodeData(type: McpCanvasNodeType, input: {
   }
   const mediaType = type === "video_generator" ? "video" : "image";
   const models = generationProvider().models.filter((model) => model.mediaType === mediaType);
-  const preferredId = input.modelId || (mediaType === "video" ? "seedance-2-fast" : "nano-banana-2");
+  const preferredId = input.modelId || (mediaType === "video" ? DEFAULT_VIDEO_MODEL : DEFAULT_IMAGE_MODEL);
   const model = models.find((candidate) => candidate.id === preferredId) || models[0];
   if (!model) throw new Error(`No ${mediaType} generation model is available`);
   return {
@@ -118,7 +121,7 @@ export function defaultCanvasNodeData(type: McpCanvasNodeType, input: {
     prompt: input.prompt || "",
     mediaType,
     modelId: model.id,
-    aspectRatio: (mediaType === "image" && model.ratios.includes("1:1") ? "1:1" : model.defaultRatio || model.ratios[0] || (mediaType === "video" ? "16:9" : "1:1")) as FrameNodeData["aspectRatio"],
+    aspectRatio: (model.ratios.includes(DEFAULT_GENERATOR_RATIO) ? DEFAULT_GENERATOR_RATIO : model.defaultRatio || model.ratios[0] || DEFAULT_GENERATOR_RATIO) as FrameNodeData["aspectRatio"],
     ratioMode: "custom",
     resolution: (model.defaultResolution || model.resolutions[0] || (mediaType === "video" ? "720P" : "1K")) as FrameNodeData["resolution"],
     duration: model.defaultDuration || model.durations?.[0] || "5",

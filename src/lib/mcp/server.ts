@@ -557,6 +557,7 @@ export function createScenelithMcpServer(principal: McpPrincipal, origin: string
         aspect_ratio: z.string().min(1).max(20).optional(),
         resolution: z.string().min(1).max(20).optional(),
         duration: z.string().regex(/^\d+(?:\.\d+)?$/).optional(),
+        duration_mode: z.enum(["reference", "fixed"]).optional(),
         generate_audio: z.boolean().optional(),
         generation_count: z.number().int().min(1).max(8).optional(),
         instruction: z.string().max(10_000).optional(),
@@ -568,8 +569,8 @@ export function createScenelithMcpServer(principal: McpPrincipal, origin: string
         node_height: z.number().finite().min(120).max(1_200).optional(),
       }).strict(),
       annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: false },
-    }, ({ canvas_id, expected_revision, read_set, node_id, title, position, prompt, model_id, aspect_ratio, resolution, duration, generate_audio, generation_count, instruction, system_prompt, text_model_id, note_text, note_color, node_width, node_height }) => scopedTool(read_set,
-      async () => configureMcpCanvasNode(principal, { projectId: canvas_id, expectedRevision: expected_revision, readSet: await resolveCanvasReadReceipt(principal, read_set), nodeId: node_id, configuration: { title, position, prompt, modelId: model_id, aspectRatio: aspect_ratio, resolution, duration, generateAudio: generate_audio, generationCount: generation_count, instruction, systemPrompt: system_prompt, textModelId: text_model_id, noteText: note_text, noteColor: note_color, nodeWidth: node_width, nodeHeight: node_height } }),
+    }, ({ canvas_id, expected_revision, read_set, node_id, title, position, prompt, model_id, aspect_ratio, resolution, duration, duration_mode, generate_audio, generation_count, instruction, system_prompt, text_model_id, note_text, note_color, node_width, node_height }) => scopedTool(read_set,
+      async () => configureMcpCanvasNode(principal, { projectId: canvas_id, expectedRevision: expected_revision, readSet: await resolveCanvasReadReceipt(principal, read_set), nodeId: node_id, configuration: { title, position, prompt, modelId: model_id, aspectRatio: aspect_ratio, resolution, duration, durationMode: duration_mode, generateAudio: generate_audio, generationCount: generation_count, instruction, systemPrompt: system_prompt, textModelId: text_model_id, noteText: note_text, noteColor: note_color, nodeWidth: node_width, nodeHeight: node_height } }),
       (canvas) => ({ canvas }),
     ));
 
