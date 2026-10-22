@@ -980,7 +980,7 @@ body,
 .media-edit-actions .media-edit-reference-tile:disabled { opacity: .34; cursor: default; }
 .media-edit-reference-image { width: 100%; height: 100%; min-width: 0; min-height: 0; position: relative; }
 .media-edit-reference-image img { width: 100%; height: 100%; display: block; object-fit: cover; border-radius: 8px; background: var(--color-ink-1); transition: box-shadow .12s ease; }
-.media-edit-reference-image > span { width: 17px; height: 17px; position: absolute; right: -3px; bottom: -3px; display: grid; place-items: center; border: 2px solid var(--color-ink-2); border-radius: 50%; background: var(--color-mint); color: var(--color-ink-1); }
+.media-edit-reference-image > span:not(.reference-hover-trigger) { width: 17px; height: 17px; position: absolute; right: -3px; bottom: -3px; display: grid; place-items: center; border: 2px solid var(--color-ink-2); border-radius: 50%; background: var(--color-mint); color: var(--color-ink-1); }
 .media-edit-persona-groups { display: flex; flex-direction: column; gap: 11px; }
 .media-edit-persona-groups > section { padding: 7px; display: flex; flex-direction: column; gap: 6px; border: 1px solid transparent; border-radius: 9px; }
 .media-edit-persona-groups > section.is-primary { border-color: transparent; background: transparent; box-shadow: none; }

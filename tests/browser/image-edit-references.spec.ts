@@ -25,7 +25,16 @@ for(const width of [1440,390])test(`Edit keeps its base, exposes connected choic
  await picker.getByRole('button',{name:'Close edit references'}).click();
  await page.getByRole('button',{name:'Prompt assistant',exact:true}).click();
  const assistant=page.getByRole('dialog',{name:'Prompt assistant',exact:true});
- await expect(assistant.getByLabel('Available edit references').getByRole('button',{name:/Add @Hair/})).toBeVisible();
+ await expect(assistant.getByLabel('Connected references').getByRole('button',{name:/Add @Hair/})).toBeVisible();
+ await expect(assistant.locator('.prompt-assistant-references')).toHaveCount(1);
+ const row=assistant.getByLabel('Connected references'),buttons=row.getByRole('button');
+ const first=(await buttons.first().boundingBox())!,last=(await buttons.last().boundingBox())!;expect(Math.abs(first.y-last.y)).toBeLessThan(1);
+ await buttons.first().hover();await expect(page.getByLabel('Preview Current image',{exact:true})).toHaveCount(0);
+ await expect(page.getByLabel('Preview Current image',{exact:true})).toBeVisible();
+ const hover=page.getByLabel('Preview Current image',{exact:true});expect(await hover.evaluate(n=>getComputedStyle(n).borderWidth)).toBe('0px');
+ const full=await hover.locator('img').boundingBox();expect(full!.height).toBeGreaterThan(first.height);
+ await page.screenshot({path:`/tmp/drafts-reference-hover-${width}.png`});
+ await page.mouse.move(0,0);await expect(hover).toHaveCount(0);
  await assistant.getByRole('textbox',{name:'Assistant request'}).fill('Change only hair color using ');
  await assistant.getByRole('button',{name:/Add @Hair/}).click();
  await expect(composer.getByRole('button',{name:'Remove Hair evidence'})).toHaveCount(1);
@@ -42,4 +51,9 @@ for(const width of [1440,390])test(`Edit keeps its base, exposes connected choic
  for(const url of mediaRequests.filter(url=>url.includes('/hair')||url.includes('/iris')||url.includes('/other'))){expect(url).toContain('variant=thumbnail');expect(url).toContain('delivery=direct');}
  expect(errors).toEqual([]);
  await page.screenshot({path:`/tmp/image-edit-references-${width}.png`});
+ await composer.getByRole('textbox',{name:'Image edit request'}).fill('Keep this unfinished edit after reload');
+ await page.reload();await page.addScriptTag({content:bundle.outputFiles[0].text});
+ await expect(composer.getByRole('textbox',{name:'Image edit request'})).toHaveValue('Keep this unfinished edit after reload');
+ await page.getByRole('button',{name:'Prompt assistant',exact:true}).click();
+ await expect(page.getByRole('textbox',{name:'Suggested prompt'})).toHaveValue(/Change hair color only on @EditSource/);
 });

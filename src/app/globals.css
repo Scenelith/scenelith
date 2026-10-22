@@ -2081,3 +2081,15 @@ select.panel-input { color-scheme: dark; }
 .image-reference-popover .media-edit-reference-image>img{aspect-ratio:auto 4/5}
 .generation-reference-lock{position:absolute;right:3px;bottom:3px;padding:3px;box-sizing:content-box;border-radius:50%;background:#151515dd;color:#77ddbb}
 .media-edit-composer .generation-reference-strip>div:has(>button[aria-label^="Remove"]){outline:1px solid #77ddbb;outline-offset:-1px}
+
+.reference-hover-trigger{position:relative;display:inline-flex;min-width:0;vertical-align:top}
+.reference-hover-preview{margin:0;padding:0;border:0;background:transparent;box-shadow:none;line-height:0}
+.reference-hover-preview>img{display:block;width:auto;height:auto;max-width:240px;max-height:300px;object-fit:contain;border:0;border-radius:12px;background:transparent}
+.prompt-assistant-panel .prompt-assistant-references{flex-wrap:nowrap;align-items:flex-start}
+.prompt-assistant-references .reference-hover-trigger>img,.generation-reference-strip .reference-hover-trigger>img{display:block;height:64px;width:auto;max-width:none;object-fit:contain;border-radius:inherit}
+.generation-reference-strip .reference-hover-trigger{height:64px;border-radius:inherit}
+.generation-reference-choice::after{content:none}
+.generation-reference-add{position:absolute;right:3px;bottom:3px;display:grid;place-items:center;width:18px;height:18px;border-radius:50%;background:#151515dd;color:#eee;pointer-events:none}
+.generation-reference-add>svg{display:block;width:12px;height:12px}
+.image-reference-popover .media-edit-reference-image>.reference-hover-trigger{display:block;width:100%}
+.image-reference-popover .media-edit-reference-image>.reference-hover-trigger>img{display:block;width:100%;height:auto;aspect-ratio:auto 4/5;border-radius:inherit;object-fit:contain}

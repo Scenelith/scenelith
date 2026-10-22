@@ -37,6 +37,7 @@ async function seedGeneration(operation: "generation" | "edit" = "generation") {
       data: {
         kind: "prompt",
         title: "Background node",
+        prompt: "Original generation prompt",
         status: "queued",
         ...(originalAssetId ? {
           outputUrl: `/api/assets/${originalAssetId}`,
@@ -170,6 +171,7 @@ test("a background edit keeps the previous version and its edit references", asy
   assert.deepEqual(node.data.generatedOutputs?.map((item) => item.assetId), [seeded.originalAssetId, assetId]);
   assert.equal(node.data.editReferencesByAssetId?.[assetId]?.[0]?.assetId, "reference");
   assert.equal(node.data.subtitle, "Image edited in place");
+  assert.equal(node.data.prompt,"Original generation prompt");
 });
 
 test("replaying a Master variation preserves a newer run and its exact scene target", async () => {
