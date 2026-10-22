@@ -201,7 +201,7 @@ export function MediaViewer({
   const videoBackgroundRef = useRef<HTMLVideoElement>(null);
   const editRequestRef = useRef<HTMLTextAreaElement>(null);
   const composerRef=useRef<HTMLElement>(null),assistantTrigger=useRef<HTMLButtonElement>(null);
-  const composerHeight=useElementHeight(composerRef,mode==="edit");
+  const composerHeight=useElementHeight(composerRef,mode==="edit",`${editRequest}\0${editReferences.length}\0${availableEditReferences.length}\0${uploadPreviews.length}\0${error}`);
   const blockedDisplayUrlRef = useRef<string | null>(null);
   const displaySourceUrlRef = useRef(url);
   const editable = node.data.mediaType !== "video" && Boolean(node.data.assetId);
