@@ -9,7 +9,7 @@ export default function ReferenceHoverPreview({src,title,children}:{src:string;t
  const anchor=useRef<HTMLSpanElement>(null),timer=useRef<ReturnType<typeof setTimeout>|null>(null);
  const [preview,setPreview]=useState<{host:HTMLElement;left:number;top:number}|null>(null);
  const close=()=>{if(timer.current)clearTimeout(timer.current);timer.current=null;setPreview(null);};
- const open=()=>{if(timer.current)clearTimeout(timer.current);timer.current=setTimeout(()=>{
+ const open=()=>{if(!src)return;if(timer.current)clearTimeout(timer.current);timer.current=setTimeout(()=>{
   const trigger=anchor.current;if(!trigger)return;
   const box=trigger.getBoundingClientRect(),viewport=window.visualViewport,left=viewport?.offsetLeft||0,top=viewport?.offsetTop||0,right=left+(viewport?.width||innerWidth),bottom=top+(viewport?.height||innerHeight),width=Math.min(240,right-left-24),height=Math.min(300,bottom-top-24);
   const x=box.right+12+width<=right-12?box.right+12:box.left-12-width>=left+12?box.left-12-width:Math.max(left+12,Math.min(box.left,right-width-12));

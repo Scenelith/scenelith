@@ -46,4 +46,6 @@ test('assistant request and edited proposal survive reload, stay scoped, and pre
  await fixture(page,'persist=1&node=other');await expect(request).toHaveValue('Seed text');
  await fixture(page,'persist=1');await expect(request).toHaveValue('Keep the original scene and change hair only');
  await request.fill('');await fixture(page,'persist=1');await expect(request).toHaveValue('');
+ await page.evaluate(()=>{Storage.prototype.setItem=()=>{throw new DOMException('Full','QuotaExceededError');};});
+ await request.fill('Still editable when browser storage is full');await expect(request).toHaveValue('Still editable when browser storage is full');
 });
