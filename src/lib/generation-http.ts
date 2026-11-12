@@ -32,13 +32,13 @@ const schema = z.object({
   originalAudioAssetId: z.string().uuid().optional(),
   projectId: persistedProjectIdSchema,
   nodeId: z.string().min(1),
-  prompt: z.string().min(1).max(30000),
+  prompt: z.string().min(1).max(32000),
   modelId: z.string().min(1).default("nano-banana-2"),
   referenceAssetIds: z.array(z.string().uuid()).max(50).default([]),
   referenceLabels: z.array(z.string().min(1).max(80)).max(50).default([]),
   referenceRoles: z.array(z.enum(["reference-image", "start-frame", "end-frame", "motion-video", "reference-video", "reference-audio"])).max(50).default([]),
   aspectRatio: z.enum(["auto", "adaptive", "1:1", "1:4", "1:8", "2:1", "1:2", "2:3", "3:1", "1:3", "3:2", "4:1", "4:3", "3:4", "5:4", "4:5", "8:1", "16:9", "9:16", "21:9", "9:21", "27:16", "16:27", "9:8", "8:9"]).default("4:5"),
-  resolution: z.enum(["1K", "2K", "3K", "4K", "360P", "540P", "480P", "720P", "1080P"]).default("1K"),
+  resolution: z.enum(["1K", "1.5K", "2K", "3K", "4K", "360P", "540P", "480P", "720P", "1080P"]).default("1K"),
   // Reference-driven video models can use an exact source duration such as
   // 7.1 seconds. Provider-select models are still normalized against their
   // integer duration catalogue below.

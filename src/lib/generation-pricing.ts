@@ -5,6 +5,9 @@
  */
 
 const imageCredits: Record<string, Record<string, number>> = {
+  "minimax-h3-image": { "1K": 1.8, "2K": 1.8, "4K": 5.5 },
+  "seedream-5-5": { "1K": 3.6, "1.5K": 3.6, "2K": 6.3 },
+  "gpt-image-2-6-economy": { "1K": 5 },
   "flux-3-klein": { "1K": 1.6, "2K": 2.5, "4K": 6.5 },
   "nano-banana-2-1": { "1K": 4, "2K": 6, "4K": 9 },
   "nano-banana-2-lite": { "1K": 4 },
@@ -20,6 +23,8 @@ const imageCredits: Record<string, Record<string, number>> = {
   "imagen4-fast": { "1K": 4 },
   "imagen4-ultra": { "1K": 12 },
 };
+
+export const usesKieTokenPricing = (modelId: string) => modelId === "gpt-image-2-6-flare" || modelId === "gpt-image-2-6-sunburst";
 
 const videoCreditsPerSecond: Record<string, Record<string, number>> = {
   "seedance-2-fast": { "480P": 15.5, "720P": 33 },
@@ -84,12 +89,23 @@ export type GenerationPricingOptions = {
 export function generationCreditCost(modelId: string, resolution: string, duration: string, referenceCount = 0, options: GenerationPricingOptions = {}) {
   const canonicalId = legacyAliases[modelId] || modelId;
   const normalizedResolution = resolution.toUpperCase();
+  if (usesKieTokenPricing(canonicalId)) {
+    // Reservation budgets, not measured token counts. Default medium-quality
+    // raster output is capped at the approved quote by the usage authority.
+    // KIE's rates are 900/1440/5400 credits per million text/image/output tokens.
+    // Allow the full 32k prompt plus reference and output token budgets. The
+    // Cloud edition refunds unused credits using recordInfo.creditsConsumed.
+    const outputTokens = configuredValue({ "1K": 4096, "2K": 8192, "4K": 16384 }, normalizedResolution);
+    return Math.ceil((32_000 * 900 + referenceCount * 8192 * 1440 + outputTokens * 5400) / 1_000_000);
+  }
   const image = imageCredits[canonicalId];
   if (image) {
     let providerCredits = configuredValue(image, normalizedResolution);
     // Seedream 5 Pro includes the first input image; each additional input is
     // currently billed by Kie at 0.5 credit.
     if (canonicalId === "seedream-5-pro") providerCredits += Math.max(0, referenceCount - 1) * 0.5;
+    if (canonicalId === "seedream-5-5") providerCredits += referenceCount * 1.44;
+    if (canonicalId === "minimax-h3-image") providerCredits += referenceCount * 0.5;
     return Math.ceil(providerCredits);
   }
   const fixedVideo = fixedVideoCredits[canonicalId];
@@ -100,6 +116,16 @@ export function generationCreditCost(modelId: string, resolution: string, durati
     return Math.ceil(configuredValue(fixedVideo, normalizedResolution));
   }
   const outputSeconds = Math.max(1, Number(duration) || 5);
+  if (canonicalId === "gemini-omni-flash-1-2") {
+    const rates = { "360P": 4, "720P": 9, "1080P": 10, "4K": 22 };
+    const billedSeconds = options.hasVideoInput ? Math.max(0, options.inputVideoDurationSeconds || 0) : outputSeconds;
+    return Math.ceil(configuredValue(rates, normalizedResolution) * billedSeconds);
+  }
+  if (canonicalId === "kling-4-flash-reference" || canonicalId === "kling-4-flash-keyframe") {
+    const withVideo = canonicalId === "kling-4-flash-reference" && options.hasVideoInput;
+    const billedSeconds = withVideo ? Math.max(outputSeconds * 2, outputSeconds + Math.max(0, options.inputVideoDurationSeconds || 0)) : outputSeconds;
+    return Math.ceil((withVideo ? 11.3 : 17) * billedSeconds);
+  }
   // Kie model-page credit tables verified 2026-09-12; see docs/KIE_MODELS_2026_09.md.
   if (canonicalId === "kling-4-reference" || canonicalId === "kling-4-keyframe") {
     const withVideo = canonicalId === "kling-4-reference" && options.hasVideoInput;

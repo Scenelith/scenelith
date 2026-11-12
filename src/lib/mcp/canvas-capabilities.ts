@@ -2,6 +2,7 @@ import {DEFAULT_IMAGE_MODEL,DEFAULT_VIDEO_MODEL,DEFAULT_GENERATOR_RATIO} from ".
 import { assistantModels, DEFAULT_ASSISTANT_MODEL_ID } from "@/lib/assistant-models";
 import { generationProvider } from "@/platform/providers/registry";
 import type { FrameNodeData, FramePortType, GeneratorInputRole } from "@/lib/types";
+import { isKling4Flash, isKling4Keyframe } from "../kling4";
 
 export const mcpCanvasNodeTypes = ["image_generator", "video_generator", "assistant", "note"] as const;
 export type McpCanvasNodeType = (typeof mcpCanvasNodeTypes)[number];
@@ -25,7 +26,7 @@ export function canvasGenerationModels() {
     ratioSource: model.ratioSource || "select",
     durationSourceWithVideo: model.durationSourceWithVideo || null,
     referenceMediaDuration: model.referenceMediaDuration || null,
-    ...(model.id.startsWith("gemini-omni") ? { referenceSlots: { max: 7, image: 1, video: 2 }, maxReferenceVideoSeconds: 10, audioInput: "Provider audio IDs require a separate voice workflow; audio files are not accepted" } : {}),
+    ...(model.id.startsWith("gemini-omni") ? { referenceSlots: { max: 7, image: 1, video: 2 }, maxReferenceVideoSeconds: model.id === "gemini-omni-flash-1-2" ? 15 : 10, audioInput: "Provider audio IDs require a separate voice workflow; audio files are not accepted" } : {}),
     outputPorts: [{ id: `${model.mediaType}-output`, kind: model.mediaType }],
     maxPromptLength: model.maxPromptLength || 5_000,
     maxReferences: model.maxReferences,
@@ -45,10 +46,10 @@ export function canvasGenerationModels() {
     ...(model.id === "flux-3-klein" ? {imageOptions:{referenceNames:"image 1, image 2, in submitted order; EditSource is image 1",outputFormats:["png","jpeg","webp"],seed:{min:0,max:2147483647},enhancePrompt:{generationDefault:true,editDefault:false},imagesPerCanvasRequest:1,batchMode:"One independently tracked task per generator node"}} : {}),
     ...(model.id.startsWith("kling-4-") ? {referenceModeRules: {
       endFrameRequiresStartFrame: false,
-      referenceNames: model.id === "kling-4-keyframe" ? "@first_frame, @keyframe_1, @keyframe_2, @last_frame; middle frames follow connected input order" : "@image_1, @video_1, @voice_1; independently numbered per media kind",
+      referenceNames: isKling4Flash(model.id) ? isKling4Keyframe(model.id) ? "@first_frame" : "@image_1, @video_1; independently numbered per media kind" : model.id === "kling-4-keyframe" ? "@first_frame, @keyframe_1, @keyframe_2, @last_frame; middle frames follow connected input order" : "@image_1, @video_1, @voice_1; independently numbered per media kind",
       canvasAliases: "Canvas reference tokens are translated to the declared provider names. Every @mention must refer to a connected asset.",
       nativeAudio: true, keepOriginalSound: false,
-      ...(model.id === "kling-4-keyframe" ? {maxFrames: "min(10, output seconds + 1), including first and last; at most 8 middle frames", frameModeAspectRatio:"Follows the first provided frame"} : {maxReferenceVideoSeconds:30,minReferenceVideoSeconds:2,maxTotalReferences:15,voiceInput:"Speech reference; generation fails if no usable voice is detected",videoBilling:"max(input video seconds + output seconds, 2 * output seconds); all input clips summed"}),
+      ...(isKling4Keyframe(model.id) ? {maxFrames: isKling4Flash(model.id) ? "One optional first frame" : "min(10, output seconds + 1), including first and last; at most 8 middle frames", frameModeAspectRatio:"Follows the first provided frame"} : {maxReferenceVideoSeconds:isKling4Flash(model.id) ? 20 : 30,minReferenceVideoSeconds:2,maxTotalReferences:15,...(isKling4Flash(model.id) ? { maxTotalReferenceVideoSeconds: 20 } : {voiceInput:"Speech reference; generation fails if no usable voice is detected"}),videoBilling:"max(input video seconds + output seconds, 2 * output seconds); all input clips summed"}),
       groupedSubjects: "Optional KIE elements are not exposed as Canvas ports; connect individual image/video references instead.",
     }} : {}),
     ...(model.id.startsWith("wan-3") ? { referenceModeRules: {
@@ -57,8 +58,9 @@ export function canvasGenerationModels() {
       defaultDurationModeWithVideo: "reference", maxMatchedReferenceSeconds: 15, durationModes: ["reference", "fixed"],
       referenceNames: "Image1, Image2, Video1, Audio1, independently numbered per media kind",
     } } : {}),
-    ...(model.id === "gemini-omni-flash-1-1" ? { referenceModeRules: {
+    ...(model.id.startsWith("gemini-omni-flash-") ? { referenceModeRules: {
       mutuallyExclusiveRoleGroups: [["start-frame", "end-frame"], ["reference-image", "reference-video"]], endFrameRequiresStartFrame: true,
+      ...(model.id === "gemini-omni-flash-1-2" ? { maxFirstLastFrameSeconds: 10, videoEditDuration: "Follows the input video; omit duration in the provider request" } : {}),
     } } : {}),
     ...(model.id.startsWith("seedance-2") ? { referenceModeRules: {
       mutuallyExclusiveRoleGroups: [["start-frame", "end-frame"], ["reference-image", "reference-video", "reference-audio"]],

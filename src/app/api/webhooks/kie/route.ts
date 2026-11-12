@@ -37,6 +37,7 @@ export async function POST(request: Request) {
         status,
         outputUrl: task.generated?.[0] || null,
         lastFrameUrl: task.lastFrameUrl,
+        providerCredits: task.providerCredits,
         error: providerError,
       });
     } catch (error) {

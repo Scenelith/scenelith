@@ -36,6 +36,12 @@ test("Kling HTTP quotes sum measured videos and accept last-frame-only requests 
     assert.equal(lastFrame.status,200);assert.equal((await lastFrame.json()).creditCost,285);
     const invalid=await executeGenerationRequest("kling-user",{...request,prompt:"Follow @Missing"},true);
     assert.equal(invalid.status,400);assert.match((await invalid.json()).error,/does not match/);
+    const flash=await executeGenerationRequest("kling-user",{...request,modelId:"kling-4-flash-reference"},true);
+    assert.equal(flash.status,200);assert.equal((await flash.json()).creditCost,272);
+    const seedream=await executeGenerationRequest("kling-user",{...request,modelId:"seedream-5-5",referenceAssetIds:[],referenceLabels:[],referenceRoles:[],resolution:"1.5K"},true);
+    assert.equal(seedream.status,200);assert.equal((await seedream.json()).creditCost,4);
+    const tokenImage=await executeGenerationRequest("kling-user",{...request,modelId:"gpt-image-2-6-flare",prompt:"a".repeat(32000),referenceAssetIds:[],referenceLabels:[],referenceRoles:[],resolution:"1K"},true);
+    assert.equal(tokenImage.status,200);assert.equal((await tokenImage.json()).creditCost,51);
     const tasks=await db.prepare("SELECT count(*) AS count FROM generations WHERE project_id='kling-canvas'").get() as {count:string};
     assert.equal(Number(tasks.count),0);
   }finally{await rm(dir,{recursive:true,force:true});}

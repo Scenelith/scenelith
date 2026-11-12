@@ -1,15 +1,17 @@
 import type { ModelReference } from "./kie-new-models";
 
-export const isKling4 = (id: string) => id === "kling-4-reference" || id === "kling-4-keyframe";
+export const isKling4Flash = (id: string) => id === "kling-4-flash-reference" || id === "kling-4-flash-keyframe";
+export const isKling4Keyframe = (id: string) => id === "kling-4-keyframe" || id === "kling-4-flash-keyframe";
+export const isKling4 = (id: string) => id === "kling-4-reference" || isKling4Keyframe(id) || isKling4Flash(id);
 
 /** KIE resolves mentions against submitted field names, not Canvas aliases. */
 export function kling4ReferenceNames(id: string, refs: ModelReference[]) {
   const counts: Record<string, number> = {};
   return refs.map(ref => {
     const role = ref.role || "reference-image";
-    if (id === "kling-4-keyframe" && role === "start-frame") return "@first_frame";
-    if (id === "kling-4-keyframe" && role === "end-frame") return "@last_frame";
-    const kind = id === "kling-4-keyframe" ? "keyframe" : role === "reference-video" ? "video" : role === "reference-audio" ? "voice" : "image";
+    if (isKling4Keyframe(id) && role === "start-frame") return "@first_frame";
+    if (isKling4Keyframe(id) && role === "end-frame") return "@last_frame";
+    const kind = isKling4Keyframe(id) ? "keyframe" : role === "reference-video" ? "video" : role === "reference-audio" ? "voice" : "image";
     counts[kind] = (counts[kind] || 0) + 1;
     return `@${kind}_${counts[kind]}`;
   });
@@ -54,8 +56,10 @@ export function kling4InputError(id: string, input: { prompt: string; references
     const video = ref.role === "reference-video";
     const image = !video && ref.role !== "reference-audio";
     if (ref.mimeType && video && !["video/mp4", "video/quicktime", "video/x-matroska", "video/x-msvideo", "video/webm"].includes(ref.mimeType.toLowerCase())) return "reference video has an unsupported file format";
-    if (image && id === "kling-4-reference" && ref.width && ref.height && (Math.min(ref.width, ref.height) < 300 || Math.max(ref.width, ref.height) > 65536 || ref.width / ref.height < .4 || ref.width / ref.height > 2.5)) return "reference images need sides of 300–65536 pixels and an aspect ratio of 0.4–2.5";
-    if (video && !(allowUnmeasuredMedia && !ref.durationSeconds) && (!Number.isFinite(ref.durationSeconds) || ref.durationSeconds! < 2 || ref.durationSeconds! > 30)) return "each reference video needs a measured duration of 2–30s";
+    if (image && !isKling4Keyframe(id) && ref.width && ref.height && (Math.min(ref.width, ref.height) < 300 || Math.max(ref.width, ref.height) > 65536 || ref.width / ref.height < .4 || ref.width / ref.height > 2.5)) return "reference images need sides of 300–65536 pixels and an aspect ratio of 0.4–2.5";
+    const maxVideoSeconds = isKling4Flash(id) ? 20 : 30;
+    if (video && !(allowUnmeasuredMedia && !ref.durationSeconds) && (!Number.isFinite(ref.durationSeconds) || ref.durationSeconds! < 2 || ref.durationSeconds! > maxVideoSeconds)) return `each reference video needs a measured duration of 2–${maxVideoSeconds}s`;
   }
+  if (isKling4Flash(id) && refs.filter(ref => ref.role === "reference-video").reduce((sum, ref) => sum + (ref.durationSeconds || 0), 0) > 20) return "reference videos may total at most 20s";
   return kling4Prompt(id, input.prompt, refs).error;
 }

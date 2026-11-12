@@ -6,7 +6,7 @@ export function incompatibleReferenceRoles(modelId: string | undefined, role: st
   const frames = ["start-frame", "end-frame"];
   const references = String(modelId).startsWith("seedance-2") || String(modelId).startsWith("wan-3")
     ? ["reference-image", "reference-video", "reference-audio"]
-    : modelId === "gemini-omni-flash-1-1" ? ["reference-image", "reference-video"]
+    : String(modelId).startsWith("gemini-omni-flash-") ? ["reference-image", "reference-video"]
       : modelId === "wan-2-7" ? ["reference-video"]
       : modelId === "veo-3-1-fast" ? ["reference-image"] : [];
   if (!references.length) return [];

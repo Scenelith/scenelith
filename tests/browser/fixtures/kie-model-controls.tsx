@@ -35,6 +35,11 @@ function Fixture() {
     <button onClick={() => updateNode("image",{prompt:`Follow ${stableReferenceToken({assetId:"video",url:thumbnail,title:"Reference video",role:"reference-video"})}`})}>Mention video</button>
     <button onClick={() => choose("pixverse-v6-text")}>PixVerse</button>
     <button onClick={() => choose("gemini-omni-flash-1-1")}>Omni</button>
+    <button onClick={() => choose("seedream-5-5")}>Seedream 5.5</button>
+    <button onClick={() => choose("kling-4-flash-reference")}>Kling Flash</button>
+    <button onClick={() => choose("gemini-omni-flash-1-2")}>Omni 1.2</button>
+    <button onClick={() => choose("gpt-image-2-6-flare")}>GPT 2.6</button>
+    <button onClick={() => setReferenceSeconds(5)}>Short video</button>
     <button onClick={() => setVideoReference((v) => !v)}>Toggle video reference</button>
     <div style={{ width: 1500, height: 1500 }}><GeneratorNodeContext.Provider value={actions}>
       <ReactFlow nodes={graph.nodes} edges={graph.edges} nodeTypes={nodeTypes} defaultViewport={{ x: 220, y: 20, zoom: .5 }} />
