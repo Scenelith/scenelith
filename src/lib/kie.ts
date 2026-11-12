@@ -190,6 +190,7 @@ export type KieTask = {
   status?: string;
   generated?: string[];
   lastFrameUrl?: string;
+  providerCredits?: number;
   error?: unknown;
 };
 
@@ -232,6 +233,7 @@ export function normalizeKieTask(value: unknown): KieTask {
     status: state,
     generated: urls,
     ...(lastFrameUrl ? { lastFrameUrl } : {}),
+    ...(typeof data.creditsConsumed === "number" && Number.isFinite(data.creditsConsumed) && data.creditsConsumed >= 0 ? { providerCredits: data.creditsConsumed } : {}),
     error: failure ? errorMessage || data.failCode || data.errorCode || "Kie.ai generation failed" : undefined,
   };
 }
@@ -454,6 +456,9 @@ export async function startGeneration(input: StartInput) {
     };
   } else {
     let providerModel = model.providerModel;
+    if (model.id.startsWith("gpt-image-2-6-")) providerModel = `gpt-image-2-6/${model.id.slice("gpt-image-2-6-".length)}-${uploaded.length ? "image-to-image" : "text-to-image"}`;
+    if (model.id === "minimax-h3-image") providerModel = uploaded.length ? "minimax-h3/image-edit" : model.providerModel;
+    if (model.id === "seedream-5-5") providerModel = uploaded.length ? "seedream/5-5-image-to-image" : model.providerModel;
     if (model.id.startsWith("gpt-image-2-5-")) providerModel = `${model.id}-${uploaded.length ? "image-to-image" : "text-to-image"}`;
     if (model.id === "grok-image-2") providerModel = uploaded.length ? "grok-imagine-image-2-0/image-edit" : model.providerModel;
     if (model.id === "gpt-image-2") providerModel = uploaded.length ? "gpt-image-2-image-to-image" : "gpt-image-2-text-to-image";

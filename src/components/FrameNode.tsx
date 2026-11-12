@@ -22,7 +22,7 @@ import type { FrameNode, GeneratorInputRole, PersonaRecord, VideoMasterClip, Vid
 import { referenceMentionToken } from "@/lib/reference-mentions";
 import { ImageGeneration } from "@/components/ui/ai-chat-image-generation-1";
 import { GenerationOutline } from "@/components/ui/GenerationOutline";
-import { generationCreditCost } from "@/lib/generation-pricing";
+import { generationCreditCost, usesKieTokenPricing } from "@/lib/generation-pricing";
 import { MAX_GENERATION_BATCH } from "@/lib/generation-queue";
 import { assistantModelCreditDescription, assistantModels, normalizeAssistantModelId } from "@/lib/assistant-models";
 import { VideoSceneTimeline } from "@/components/VideoSceneTimeline";
@@ -141,7 +141,7 @@ export function generatorModelCreditDescription(model: GeneratorModelOption, inp
     hasVideoInput: input.hasVideoInput,
     inputVideoDurationSeconds: input.inputVideoDurationSeconds,
   });
-  return `≈ ${credits.toLocaleString("en-US")} credit${credits === 1 ? "" : "s"}`;
+  return `${usesKieTokenPricing(model.id) ? "Up to" : "≈"} ${credits.toLocaleString("en-US")} credit${credits === 1 ? "" : "s"}`;
 }
 
 export function assetDownloadUrl(url: string) {
@@ -1985,7 +1985,9 @@ function FrameNodeCardComponent({ id, data, selected }: NodeProps<FrameNode>) {
       ? `Connect ${missingRequiredInputs.map((port) => port.label).join(" and ")}`
       : selectedModel?.durationSource === "reference-video" && !inputVideoDurationSeconds
         ? "Run cost follows reference video length"
-        : `Run ${runCredits.toLocaleString("en-US")} credit${runCredits === 1 ? "" : "s"}`);
+        : selectedModel && usesKieTokenPricing(selectedModel.id)
+          ? `Reserve up to ${runCredits.toLocaleString("en-US")} credits · unused credits returned after generation`
+          : `Run ${runCredits.toLocaleString("en-US")} credit${runCredits === 1 ? "" : "s"}`);
     const simultaneousCount = Math.min(generationCount, generator.generationConcurrency);
     const generationCountLabel = generationCount === 1
       ? "Creates 1 generator node"

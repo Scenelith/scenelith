@@ -19,6 +19,7 @@ import { optimizeMp4ForStreaming, probeVideoMetadata, type VideoMetadata } from 
 import { putStorageObject, safeExtension } from "./storage";
 import type { FrameNode, ProjectGraph } from "./types";
 import { videoMasterTimelineDuration } from "./video-master";
+import { usesKieTokenPricing } from "./generation-pricing";
 
 export const completedGenerationStatuses = new Set(["completed", "complete", "succeeded", "success"]);
 export const failedGenerationStatuses = new Set(["fail", "failed", "error", "cancelled", "canceled"]);
@@ -39,6 +40,7 @@ export type GenerationStateRow = {
   operation: string;
   media_execution_version?: number;
   credit_cost: number;
+  provider_credits?: number | string | null;
   created_at: string;
   updated_at: string;
 };
@@ -56,6 +58,17 @@ function providerErrorMessage(value: unknown) {
 
 export async function readGenerationState(id: string) {
   return await db.prepare("SELECT * FROM generations WHERE id = ?").get(id) as GenerationStateRow | undefined;
+}
+
+async function settleCompletedGeneration(generation: GenerationStateRow) {
+  // A successful callback can precede usage availability. Completed jobs retry
+  // this read, so a saved output never forces a guessed token charge.
+  if (usesKieTokenPricing(generation.model_id) && generation.provider_credits == null && generation.provider_task_id) {
+    await db.prepare("UPDATE generations SET updated_at = ? WHERE id = ?").run(new Date().toISOString(), generation.id);
+    const task = await getGeneration(generation.model_id, generation.provider_task_id);
+    if (completedGenerationStatuses.has(String(task.status).toLowerCase()) && !task.error && task.providerCredits !== undefined) await db.prepare("UPDATE generations SET provider_credits = ? WHERE id = ? AND provider_credits IS NULL").run(task.providerCredits, generation.id);
+  }
+  await (await usageAuthority()).settleGeneration(generation.id);
 }
 
 async function updateGenerationNode(generation: GenerationStateRow, changes: {
@@ -392,14 +405,14 @@ export async function generationClientState(generation: GenerationStateRow) {
 }
 
 export async function reconcileGeneration(id: string) {
-  let generation = await readGenerationState(id);
+  const generation = await readGenerationState(id);
   if (!generation) throw new Error("Generation was not found");
   if (failedGenerationStatuses.has(String(generation.status).toLowerCase())) return generation;
   if (generation.output_asset_id && completedGenerationStatuses.has(generation.status.toLowerCase())) {
     // Durable completion does not depend on an expiring provider response.
     await persistGenerationOutput(id, `/api/assets/${generation.output_asset_id}`);
     await processGenerationExtras(id);
-    await (await usageAuthority()).settleGeneration(id);
+    await settleCompletedGeneration(generation);
     return (await readGenerationState(id))!;
   }
   if (!generation.provider_task_id) {
@@ -436,7 +449,7 @@ export async function reconcileGeneration(id: string) {
         ? emptyResultExpired ? "failed" : "finalizing"
         : providerStatus;
     const error = reportedError || (emptyResultExpired ? emptyCompletedMessage : null);
-    return (await finalizeGenerationFromWebhook({ generationId: id, status, outputUrl, error, lastFrameUrl:task.lastFrameUrl }))!;
+    return (await finalizeGenerationFromWebhook({ generationId: id, status, outputUrl, error, lastFrameUrl:task.lastFrameUrl, providerCredits: task.providerCredits }))!;
   } catch (error) {
     if (error instanceof KieRateLimitError) return (await readGenerationState(id))!;
     if (generationTimedOut(generation.created_at, generation.media_type)) {
@@ -455,12 +468,17 @@ export async function finalizeGenerationFromWebhook(input: {
   outputUrl?: string | null;
   error?: string | null;
   lastFrameUrl?: string;
+  providerCredits?: number;
 }) {
   if (input.lastFrameUrl) await db.prepare("INSERT INTO generation_output_extras(generation_id,last_frame_url) VALUES(?,?) ON CONFLICT(generation_id) DO UPDATE SET last_frame_url=excluded.last_frame_url").run(input.generationId,input.lastFrameUrl);
   const normalizedStatus = input.status.toLowerCase();
   const accepted = await db.transaction(async () => {
     const current = await db.prepare("SELECT * FROM generations WHERE id = ? FOR UPDATE").get(input.generationId) as GenerationStateRow | undefined;
     if (!current) return { current, ignored: true, late: false };
+    if (completedGenerationStatuses.has(normalizedStatus) && !input.error && input.providerCredits !== undefined && Number.isFinite(input.providerCredits) && input.providerCredits >= 0 && current.provider_credits == null) {
+      await db.prepare("UPDATE generations SET provider_credits = ? WHERE id = ?").run(input.providerCredits, input.generationId);
+      current.provider_credits = input.providerCredits;
+    }
     const status = current.status.toLowerCase();
     const late = status === "failed" && isGenerationTimeoutError(current.error);
     // Only a successful late timeout result may recover a refunded task.
@@ -475,9 +493,10 @@ export async function finalizeGenerationFromWebhook(input: {
     return { current, ignored: false, late };
   })();
   const current = accepted.current;
+  if (!current) return current;
   if (accepted.ignored) {
-    if (!current?.output_asset_id || !completedGenerationStatuses.has(current.status.toLowerCase())) return current;
-    await (await usageAuthority()).settleGeneration(current.id);
+    if (!current.output_asset_id || !completedGenerationStatuses.has(current.status.toLowerCase())) return current;
+    await settleCompletedGeneration(current);
     return current;
   }
   if (input.error || failedGenerationStatuses.has(normalizedStatus)) {
@@ -490,7 +509,7 @@ export async function finalizeGenerationFromWebhook(input: {
     await persistGenerationOutput(input.generationId, input.outputUrl);
     await processGenerationExtras(input.generationId);
     // The timeout refund is final; saving late media must not charge again.
-    if (!accepted.late && completedGenerationStatuses.has(normalizedStatus)) await (await usageAuthority()).settleGeneration(input.generationId);
+    if (!accepted.late && completedGenerationStatuses.has(normalizedStatus)) await settleCompletedGeneration(current);
   }
   return await readGenerationState(input.generationId);
 }

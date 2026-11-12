@@ -1,5 +1,5 @@
 import type { KieModel } from "./kie";
-import { isKling4, kling4InputError, kling4Prompt, kling4ReferenceNames } from "./kling4";
+import { isKling4, isKling4Flash, isKling4Keyframe, kling4InputError, kling4Prompt, kling4ReferenceNames } from "./kling4";
 
 const imageRatios = ["auto", "1:1", "3:2", "2:3", "4:3", "3:4", "16:9", "9:16", "21:9"];
 const image1KRatios = [...imageRatios, "27:16", "16:27", "9:8", "8:9"];
@@ -9,10 +9,51 @@ const frames: NonNullable<KieModel["inputPorts"]> = [
   { id: "end-frame", label: "End frame", kind: "image", max: 1 },
 ];
 const jobPath = "/api/v1/jobs/createTask";
+const kling4FlashDefaults = {
+  mediaType: "video" as const, providerPath: jobPath,
+  minPromptLength: 1, maxPromptLength: 8_000,
+  resolutions: ["720P"], durations: seconds(3, 20),
+  defaultRatio: "16:9", defaultResolution: "720P", defaultDuration: "5", defaultGenerateAudio: true,
+};
 
 /** Studio contracts checked against docs.kie.ai on 2026-10-08. Optional provider ID,
  * document, web-link and effect-template workflows are not media input ports. */
 export const newKieModels: KieModel[] = [
+  // New model contracts verified against docs.kie.ai on 2026-11-12.
+  { id: "minimax-h3-image", label: "MiniMax H3 Image", mediaType: "image", description: "Image generation and editing · up to 16 references · 1K–4K", providerModel: "minimax-h3/text-to-image", providerPath: jobPath,
+    maxReferences: 16, minPromptLength: 1, maxPromptLength: 5_000,
+    ratios: ["auto", "1:1", "5:4", "4:3", "3:2", "16:9", "21:9", "4:5", "3:4", "2:3", "9:16"],
+    resolutions: ["1K", "2K", "4K"], defaultRatio: "auto", defaultResolution: "2K",
+    inputPorts: [{ id: "reference-image", label: "Reference images", kind: "image", max: 16 }] },
+  { id: "seedream-5-5", label: "Seedream 5.5", mediaType: "image", description: "Image generation and editing · up to 10 references · 1K–2K", providerModel: "seedream/5-5-text-to-image", providerPath: jobPath,
+    maxReferences: 10, minPromptLength: 5, maxPromptLength: 5_000,
+    ratios: ["1:1", "4:3", "3:4", "16:9", "9:16", "2:3", "3:2", "21:9", "auto"], referenceOnlyRatios: ["auto"],
+    resolutions: ["1K", "1.5K", "2K"], defaultRatio: "1:1", defaultResolution: "2K",
+    inputPorts: [{ id: "reference-image", label: "Reference images", kind: "image", max: 10 }] },
+  ...["flare", "sunburst", "economy"].map((variant): KieModel => ({
+    id: `gpt-image-2-6-${variant}`, label: `GPT Image 2.6 ${variant[0].toUpperCase()}${variant.slice(1)}`,
+    mediaType: "image", description: `Image generation and editing · up to 16 references · ${variant === "economy" ? "1K" : "1K–4K"}`,
+    providerModel: `gpt-image-2-6/${variant}-text-to-image`, providerPath: jobPath,
+    maxReferences: 16, minPromptLength: 1, maxPromptLength: variant === "economy" ? 20_000 : 32_000,
+    ratios: variant === "economy" ? ["auto", "1:1", "16:9", "9:16", "3:2", "2:3", "21:9", "4:3"] : ["auto", "1:1", "3:2", "2:3", "4:3", "3:4", "5:4", "4:5", "16:9", "9:16", "2:1", "1:2", "21:9", "9:21", "3:1", "1:3"],
+    resolutions: variant === "economy" ? ["1K"] : ["1K", "2K", "4K"], defaultRatio: "auto", defaultResolution: "1K",
+    inputPorts: [{ id: "reference-image", label: "Reference images", kind: "image", max: 16 }],
+  })),
+  { ...kling4FlashDefaults, id: "kling-4-flash-reference", label: "Kling 4.0 Flash · References", description: "3–20s · image and video references · 720p · native audio",
+    providerModel: "kling-4.0/flash-reference-to-video", maxReferences: 15,
+    ratios: ["auto", "16:9", "9:16", "1:1", "21:9"],
+    referenceMediaDuration: { minSeconds: 2, maxSeconds: 20, maxTotalSeconds: 20 },
+    inputPorts: [{ id: "reference-image", label: "Reference images", kind: "image", max: 10 }, { id: "reference-video", label: "Reference videos · total 2–20s", kind: "video", max: 5 }] },
+  { ...kling4FlashDefaults, id: "kling-4-flash-keyframe", label: "Kling 4.0 Flash · First frame", description: "3–20s · text or first frame · 720p · native audio",
+    providerModel: "kling-4.0/flash-keyframe-to-video", maxReferences: 1,
+    ratios: ["16:9", "9:16", "1:1", "21:9", "auto"], referenceOnlyRatios: ["auto"], referenceRatiosByResolution: { "720P": ["auto"] },
+    inputPorts: [frames[0]] },
+  { id: "gemini-omni-flash-1-2", label: "Gemini Omni 1.2 Flash", mediaType: "video", description: "Native audio · 3–15s · up to 6 images or 5 images + one ≤15s video · video edits follow input length",
+    providerModel: "google/gemini-omni-flash-1-2", providerPath: jobPath,
+    maxReferences: 7, minPromptLength: 1, maxPromptLength: 20_000,
+    ratios: ["16:9", "9:16", "auto"], resolutions: ["360P", "720P", "1080P", "4K"], durations: seconds(3, 15),
+    defaultRatio: "16:9", defaultResolution: "720P", defaultDuration: "8", defaultGenerateAudio: true, durationSourceWithVideo: "model",
+    inputPorts: [...frames, { id: "reference-image", label: "Images · max 5 with video", kind: "image", max: 6 }, { id: "reference-video", label: "Video to edit · ≤15s", kind: "video", max: 1 }] },
   { id: "nano-banana-2-1", label: "Nano Banana 2.1", mediaType: "image", description: "Image generation and editing · up to 10 references · 1K–4K", providerModel: "nano-banana-2-1", providerPath: jobPath,
     maxReferences: 10, minPromptLength: 1, maxPromptLength: 20_000,
     ratios: ["auto", "1:1", "2:3", "3:2", "1:4", "4:1", "3:4", "4:3", "4:5", "5:4", "1:8", "8:1", "9:16", "16:9", "21:9"],
@@ -122,7 +163,7 @@ export function newKieInputError(id: string, input: NewModelInput, options: { al
     const port = model.inputPorts?.find((port) => port.id === (ref.role || "reference-image"));
     if (!port) return fail(`unsupported input ${ref.role || "reference-image"}; disconnect it or select a compatible model`);
     if (ref.mimeType && !ref.mimeType.startsWith(`${port.kind}/`)) return fail(`${port.label} requires ${port.kind} media`);
-    const sizeLimit = isKling4(id) && port.kind !== "audio" ? 10 : (id.startsWith("gpt-image-2-5") || id === "nano-banana-2-1" || id === "flux-3-klein" || (id === "seedance-2-5" && port.kind === "image")) ? 30 : port.kind === "video" ? (id === "pixverse-v6-extend" ? Infinity : id === "seedance-2-5" ? 200 : 100) : port.kind === "audio" ? 15 : 20;
+    const sizeLimit = (isKling4(id) && port.kind !== "audio") || id === "seedream-5-5" ? 10 : (id.startsWith("gpt-image-2-") || id === "nano-banana-2-1" || id === "flux-3-klein" || (id === "seedance-2-5" && port.kind === "image")) ? 30 : port.kind === "video" ? (id === "pixverse-v6-extend" ? Infinity : id === "seedance-2-5" ? 200 : 100) : port.kind === "audio" ? 15 : 20;
     if (ref.sizeBytes && ref.sizeBytes > sizeLimit * 1024 * 1024) return fail(`${port.label} must be at most ${sizeLimit} MB per file`);
     if (id.startsWith("wan-3") && ref.mimeType) {
       const formats = port.kind === "video" ? ["video/mp4", "video/quicktime"] : port.kind === "audio" ? ["audio/mpeg", "audio/mp3", "audio/wav", "audio/x-wav", "audio/wave"] : ["image/jpeg", "image/png", "image/webp", "image/bmp", "image/x-ms-bmp"];
@@ -134,11 +175,13 @@ export function newKieInputError(id: string, input: NewModelInput, options: { al
       }
     } else if (ref.mimeType?.startsWith("image/") && !["image/jpeg", "image/png", "image/webp"].includes(ref.mimeType.toLowerCase())) return fail("images must be JPEG, PNG or WebP");
   }
-  if (input.background === "transparent" && !id.startsWith("gpt-image-2-5")) return fail("this model does not support transparent backgrounds");
-  if (input.seed !== undefined && (!(id.startsWith("wan-3") || id === "flux-3-klein") || !Number.isInteger(input.seed) || input.seed < 0 || input.seed > 2147483647)) return fail("invalid seed");
-  if (input.enhancePrompt !== undefined && id !== "flux-3-klein") return fail("prompt enhancement is not supported by this model");
+  if (input.background === "transparent" && !(id.startsWith("gpt-image-2-") || id === "seedream-5-5")) return fail("this model does not support transparent backgrounds");
+  if (input.background === "transparent" && ["jpg", "jpeg"].includes(input.outputFormat || "")) return fail("transparent backgrounds require PNG or WebP output");
+  if (input.seed !== undefined && (!(id.startsWith("wan-3") || id === "flux-3-klein" || id === "minimax-h3-image" || id === "gemini-omni-flash-1-2") || !Number.isInteger(input.seed) || input.seed < (id === "gemini-omni-flash-1-2" ? 10000 : 0) || input.seed > (id === "gemini-omni-flash-1-2" ? 99999 : 2147483647))) return fail("invalid seed");
+  if (input.enhancePrompt !== undefined && id !== "flux-3-klein" && id !== "minimax-h3-image") return fail("prompt enhancement is not supported by this model");
   if ((input.returnLastFrame || input.webSearch) && id !== "seedance-2-5") return fail("unsupported output options");
-  if (input.outputFormat && !(id === "seedance-2-5" ? ["mp4", "mov"] : id === "nano-banana-2-1" ? ["png", "jpg"] : id === "flux-3-klein" ? ["png", "jpeg", "webp"] : []).includes(input.outputFormat)) return fail("unsupported output format");
+  if (input.outputFormat && !(id === "seedance-2-5" ? ["mp4", "mov"] : id === "nano-banana-2-1" ? ["png", "jpg"] : id === "flux-3-klein" || (id.startsWith("gpt-image-2-6-") && id !== "gpt-image-2-6-economy") ? ["png", "jpeg", "webp"] : id === "minimax-h3-image" || id === "seedream-5-5" ? ["png", "jpeg"] : id === "gpt-image-2-6-economy" ? ["png"] : []).includes(input.outputFormat)) return fail("unsupported output format");
+  if (id === "minimax-h3-image" && refs.some(ref => ref.width && ref.height && ref.width * ref.height > 64_000_000)) return fail("reference images must be at most 64 megapixels");
   if (id === "seedance-2-5") {
     for (const ref of refs) {
       const kind = ref.role === "reference-video" ? "video" : ref.role === "reference-audio" ? "audio" : "image";
@@ -162,11 +205,12 @@ export function newKieInputError(id: string, input: NewModelInput, options: { al
     if (port.max && named(port.id).length > port.max) return fail(`${port.label} accepts at most ${port.max} inputs`);
   }
   if (id !== "kling-4-keyframe" && has("end-frame") && !has("start-frame")) return fail("connect a start frame before an end frame");
-  if ((id.startsWith("wan-3") || id === "seedance-2-5" || id === "gemini-omni-flash-1-1") && (has("start-frame") || has("end-frame")) && ["reference-image", "reference-video", "reference-audio"].some(has)) return fail("use start/end frames or reference media in one request; these modes cannot be combined");
+  if ((id.startsWith("wan-3") || id === "seedance-2-5" || id.startsWith("gemini-omni-flash-")) && (has("start-frame") || has("end-frame")) && ["reference-image", "reference-video", "reference-audio"].some(has)) return fail("use start/end frames or reference media in one request; these modes cannot be combined");
   const resolution = (input.resolution || model.defaultResolution!).toUpperCase();
   if (!model.resolutions.includes(resolution)) return fail(`unsupported resolution ${resolution}`);
   const ratios = model.ratiosByResolution?.[resolution] || model.ratios;
-  if (model.ratioSource !== "reference" && (!ratios.includes(input.aspectRatio || model.defaultRatio!) || (id === "flux-3-klein" && !refs.length && input.aspectRatio === "auto"))) return fail(`unsupported aspect ratio at ${resolution}`);
+  const ratio = input.aspectRatio || model.defaultRatio!;
+  if (model.ratioSource !== "reference" && (!ratios.includes(ratio) || (!refs.length && model.referenceOnlyRatios?.includes(ratio)))) return fail(`unsupported aspect ratio at ${resolution}`);
   if (model.durations && !model.durations.includes(input.duration || model.defaultDuration!)) return fail(`duration must be one of ${model.durations.join(", ")} seconds`);
   if (isKling4(id)) {
     const error = kling4InputError(id, input, options.allowUnmeasuredMedia);
@@ -183,7 +227,9 @@ export function newKieInputError(id: string, input: NewModelInput, options: { al
   }
   if (id.startsWith("gemini-omni")) {
     if (named("reference-image").length + named("reference-video").length * 2 > 7) return fail("a video uses two image slots; use at most 5 images with a video");
-    if (named("reference-video").some((ref) => !(options.allowUnmeasuredMedia && !ref.durationSeconds) && (!Number.isFinite(ref.durationSeconds) || ref.durationSeconds! <= 0 || ref.durationSeconds! > 10))) return fail("select a reference clip of at most 10s with a measured duration before generating");
+    const maxVideoSeconds = id === "gemini-omni-flash-1-2" ? 15 : 10;
+    if (named("reference-video").some((ref) => !(options.allowUnmeasuredMedia && !ref.durationSeconds) && (!Number.isFinite(ref.durationSeconds) || ref.durationSeconds! <= 0 || ref.durationSeconds! > maxVideoSeconds))) return fail(`select a reference clip of at most ${maxVideoSeconds}s with a measured duration before generating`);
+    if (id === "gemini-omni-flash-1-2" && has("end-frame") && Number(input.duration || model.defaultDuration) > 10) return fail("first/last frame mode supports at most 10 seconds");
   }
   return null;
 }
@@ -195,6 +241,7 @@ export function newKieReferenceNames(id: string, refs: ModelReference[]) {
   if (isKling4(id)) return kling4ReferenceNames(id, refs);
   const counts: Record<string, number> = {};
   return refs.map((ref, index) => {
+    if (id === "minimax-h3-image") return `<Picture ${index + 1}>`;
     if (id === "flux-3-klein") return `image ${index + 1}`;
     if (id === "pixverse-v6-reference") return `@image${index + 1}`;
     if (id.startsWith("wan-3") || id === "seedance-2-5") {
@@ -222,15 +269,25 @@ export function newKiePayload(id: string, input: Omit<NewModelInput, "references
   const resolution = (input.resolution || model.defaultResolution!).toUpperCase();
   const duration = Number(input.duration || model.defaultDuration);
   if (isKling4(id)) return { prompt, duration, resolution: resolution.toLowerCase(),
-    ...(id === "kling-4-keyframe" && refs.length ? {} : {aspect_ratio: ratio}),
-    ...(id === "kling-4-reference" ? {
+    ...(isKling4Keyframe(id) && refs.length ? {} : {aspect_ratio: ratio}),
+    ...(!isKling4Keyframe(id) ? {
       image_urls: urls("reference-image"), video_urls: urls("reference-video"), keep_original_sound: false,
-      voices: urls("reference-audio").map((audio_url, index) => ({name: `voice_${index + 1}`, audio_url})),
+      ...(isKling4Flash(id) ? {} : { voices: urls("reference-audio").map((audio_url, index) => ({name: `voice_${index + 1}`, audio_url})) }),
     } : {
       ...(urls("start-frame").length ? {first_frame_url: urls("start-frame")[0]} : {}),
-      keyframe_urls: urls("reference-image"),
+      ...(isKling4Flash(id) ? {} : {keyframe_urls: urls("reference-image")}),
       ...(urls("end-frame").length ? {last_frame_url: urls("end-frame")[0]} : {}),
     }),
+  };
+  if (id.startsWith("gpt-image-2-6-")) return { prompt, ...(refs.length ? { input_urls: refs.map(ref => ref.assetUrl) } : {}), aspect_ratio: ratio, ...(id === "gpt-image-2-6-economy" ? {} : { resolution, quality: "medium" }), output_format: input.outputFormat || "png", ...(input.background ? { background: input.background } : {}) };
+  if (id === "seedream-5-5") return { prompt, ...(refs.length ? { image_urls: refs.map(ref => ref.assetUrl) } : {}), aspect_ratio: ratio, size: resolution, output_format: input.outputFormat || "png", ...(input.background ? { background: input.background } : {}) };
+  if (id === "minimax-h3-image") return { prompt, ...(refs.length ? { image_urls: refs.map(ref => ref.assetUrl) } : {}), aspect_ratio: ratio, resolution, output_format: input.outputFormat || "png", expand_prompt: input.enhancePrompt ?? true, ...(input.seed !== undefined ? { seed: input.seed } : {}) };
+  if (id === "gemini-omni-flash-1-2") return { prompt, resolution: resolution.toLowerCase(), aspect_ratio: ratio,
+    ...(urls("reference-video").length ? { video_list: urls("reference-video") } : { duration }),
+    ...(urls("reference-image").length ? { image_urls: urls("reference-image") } : {}),
+    ...(urls("start-frame").length ? { first_frame_url: urls("start-frame")[0] } : {}),
+    ...(urls("end-frame").length ? { last_frame_url: urls("end-frame")[0] } : {}),
+    ...(input.seed !== undefined ? { seeds: input.seed } : {}),
   };
   if (id.startsWith("gpt-image-2-5")) return { prompt, ...(refs.length ? { input_urls: refs.map((ref) => ref.assetUrl) } : {}), aspect_ratio: ratio, resolution, ...(input.background ? {background:input.background} : {}) };
   if (id === "flux-3-klein") return { prompt, ...(refs.length ? {image_urls: refs.map(ref => ref.assetUrl)} : {}), aspect_ratio: ratio, resolution, output_format: input.outputFormat || "png", num_images: 1, enhance_prompt: input.enhancePrompt ?? !refs.length, ...(input.seed !== undefined ? {seed: input.seed} : {}) };

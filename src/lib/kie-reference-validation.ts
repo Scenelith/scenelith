@@ -15,7 +15,7 @@ export async function prepareNewKieReferences<T extends ModelReference & { path:
     const kling = modelId.startsWith("kling-4-");
     const image = reference.mimeType.startsWith("image/");
     const video = reference.mimeType.startsWith("video/");
-    const strict = wan || modelId === "nano-banana-2-1" || modelId === "gpt-image-2-5-sunburst";
+    const strict = wan || modelId === "nano-banana-2-1" || modelId === "gpt-image-2-5-sunburst" || modelId === "minimax-h3-image" || modelId.startsWith("gpt-image-2-6-");
     const needsDimensions = (wan && video) || ((strict || kling) && image);
     const needsDuration = (wan || (kling && video) || (modelId.startsWith("gemini-omni") && !reference.durationSeconds)) && !image;
     if (reference.sizeBytes && !needsDimensions && !needsDuration) return reference;

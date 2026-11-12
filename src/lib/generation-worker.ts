@@ -21,9 +21,11 @@ export async function tickGenerationWorker() {
     const pollBefore = new Date(Date.now() - 12_000).toISOString();
     const rows = await db.prepare(`SELECT id FROM generations
       WHERE provider_task_id IS NOT NULL
-        AND output_asset_id IS NULL
-        AND (lower(status) NOT IN ${terminal}
-          OR (lower(status) IN ('completed','complete','succeeded','success') AND output_url IS NOT NULL))
+        AND ((output_asset_id IS NULL AND (lower(status) NOT IN ${terminal}
+          OR (lower(status) IN ('completed','complete','succeeded','success') AND output_url IS NOT NULL)))
+          OR (output_asset_id IS NOT NULL AND provider_credits IS NULL
+            AND model_id IN ('gpt-image-2-6-flare','gpt-image-2-6-sunburst')
+            AND lower(status) IN ('completed','complete','succeeded','success')))
         AND updated_at <= ?
       ORDER BY updated_at ASC
       LIMIT 16`).all(pollBefore) as Array<{ id: string }>;
