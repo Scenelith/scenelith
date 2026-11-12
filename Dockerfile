@@ -20,7 +20,7 @@ ENV NODE_ENV=production
 ENV PORT=3000
 ENV HOSTNAME=0.0.0.0
 RUN apt-get update \
-  && apt-get install -y --no-install-recommends ffmpeg python3 python3-pil ca-certificates libbrotli1 libexpat1 libpcre2-8-0 libssh-gcrypt-4 libssl3 openssl \
+  && apt-get install -y --no-install-recommends apt libapt-pkg6.0 ffmpeg python3 python3-pil ca-certificates libbrotli1 libexpat1 libpcre2-8-0 libssh-gcrypt-4 libssl3 openssl \
   && rm -rf \
     /var/lib/apt/lists/* \
     /usr/local/bin/corepack \
